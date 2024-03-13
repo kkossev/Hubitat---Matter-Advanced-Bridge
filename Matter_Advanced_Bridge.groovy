@@ -15,6 +15,7 @@
  *     for the specific language governing permissions and limitations under the License.
  *
  * Thanks to Hubitat for publishing the sample Matter driver https://github.com/hubitat/HubitatPublic/blob/master/examples/drivers/thirdRealityMatterNightLight.groovy
+ *
  * The full revisions history is available at https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge-%E2%80%90-revisions-history
  *
  * ver. 0.0.0  2023-12-29 kkossev  - Inital version;
@@ -23,67 +24,20 @@
  *                                   documented the WindowCovering settings - https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge-%E2%80%90-Window-Covering
  * ver. 0.5.1  2024-03-10 kkossev  - Help/Documentation button in the driver linked to GitHub Wiki page and HE Community thread;
  * ver. 0.5.2  2024-03-11 kkossev  - added parseTest(map as string) _DEBUg command in the 'Matter Generic Component Window Shade' driver; fixed an exception in the same driver; battery attributes name changes; removed the _DiscoverAll options;
- * ver. 0.5.3  2024-03-11 kkossev  - (dev.branch) Window Shade driver exception bug fixed
+ * ver. 0.5.3  2024-03-11 kkossev  - Window Shade driver exception bug fixed
+ * ver. 0.5.4  2024-03-12 kkossev  - (dev.branch) TODO list cleanup
  *
- *
- *                                   TODO: [ENHANCEMENT] add WindowCovering presets (default, Zemismart 1)
- *                                   TODO: [ENHANCEMENT] check why the DeviceType is not populated to child device data ?
- *                                   TODO: [ENHANCEMENT] copy DeviceType list to the child device
- *                                   TODO: [ENHANCEMENT] product_name: Temperature Sensor to be added to the device name
- *                                   TODO: [ENHANCEMENT] use NodeLabel as device label when creating child devices (when available - Hue bridge) !
- *                                   TODO: [ENHANCEMENT] add showChildEvents advanced option
- *                                   TODO: [ENHANCEMENT] DeleteDevice # command (utilities) (0=all)
- *                                   TODO: [ENHANCEMENT] reSubscribe # command (utilities) (0=all)
- *                                   TODO: [ENHANCEMENT] hide Zemismart M1 getSubscribeCmdList(): cluster 0x001D is not in the SupportedMatterClusters list!
- *                                   TODO: [====MVP====] Publish version 0.5.3
- *
- *                                   TODO: [ENHANCEMENT] add an optoon to print the child device logs on the main driver logs (default disabled)
- *                                   TODO: [ENHANCEMENT] add to the device name the product type (e.g. 'Sontact Sensor', 'Battery') when creating devices (Aqara P2 contact sensor)
- *                                   TODO: [ENHANCEMENT] Ping the bridge at the start of the discovery process
- *                                   TODO: [ENHANCEMENT] check the 'healthStatus' attribute at the start of the Discovery process !
- *                                   TODO: [ENHANCEMENT] When deleting device, unsubscribe from all attributes (+Info logs)
- *                                   TODO: [ENHANCEMENT] When subscribing, remove from the subscribe list devices that are disabled ! (+Info logs)
- *                                   TODO: [====MVP====] Publish version 0.5.x
- *
- *                                   TODO: [ENHANCEMENT] distinguish between creating and checking an existing child device
- *                                   TODO: [ENHANCEMENT] When a bridged device is deleted - ReSubscribe() to first delete all subscriptions and then re-discover all the devices, capabilities and subscribe to the known attributes
- *                                   TODO: [====MVP====] Publish version 0.5.x
- *
- *                                   TODO: [====MVP====] Publish version 0.5.0
- *
- *                                   TODO: [====MVP====] **************************** Publish version 1.0.0 for public Beta testing - 16th of March 2024 ******************************
- *
- *                                   TODO: [====MVP====] add support for cluster 0x003B  : 'Switch' / Button? (need to be able to subscribe to the 0x003B EVENTS !)
- *                                   TODO: [====MVP====] add support for Lock cluster 0x0101
- *                                   TODO: [====MVP====] add Thermostat component driver
- *                                   TODO: [====MVP====] add heathStatus to the child devices custom component drivers
- *
- *                                   TODO: [REFACTORING] optimize State Machine variables and code
- *
- *                                   TODO: [ENHANCEMENT] add product_name: Temperature Sensor to the device name when creating devices
- *                                   TODO: [ENHANCEMENT] driverVersion to be stored in child devices states
- *                                   TODO: [ENHANCEMENT] Device Extended Info - expose as a command (needs state machine implementation) or remove the code?
- *                                   TODO: [ENHANCEMENT] option to automatically delete the child devices when missing from the PartsList
- *                                   TODO: [ENHANCEMENT] add initialized() method to the child devices (send 'unknown' events for all attributes)
- *                                   TODO: [ENHANCEMENT] store subscription lists in Hex format
- *                                   TODO: [ENHANCEMENT] add Cluster SoftwareDiagnostics (0x0034) endpoint 0x0 attribute [0001] CurrentHeapFree = 0x00056610 (353808)
- *                                   TODO: [ENHANCEMENT] implement ping() for the child devices (requires individual states for each child device...)
- *                                   TODO: [ENHANCEMENT] add Configure() custom command - perform reSubscribe()
- *                                   TODO: [ENHANCEMENT] make Identify command work !
- *
- *                                   TODO: [ RESEARCH  ] check setSwitch() device# commandsList
- *                                   TODO: [ RESEARCH  ] add a Parent entry in the child devices fingerprints (PartsList)
- *                                   TODO: [ RESEARCH  ] how to  combine 2 endpoints in one device - 'Temperature and Humidity Sensor' - 2 clusters
- *                                   TODO: - template -  [====MVP====] [REFACTORING] [RESEARCH] [ENHANCEMENT]
+ * The TODO list is moved to a GitHub Project : https://github.com/users/kkossev/projects/9  (send me your GitHub username to be added to the project)
  */
+
 /* groovylint-disable-next-line NglParseError */
 #include kkossev.matterLib
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 //#include matterTools.parseDescriptionAsDecodedMap
 
-static String version() { '0.5.3' }
-static String timeStamp() { '2023/03/11 11:35 PM' }
+static String version() { '0.5.4' }
+static String timeStamp() { '2023/03/12 12:06 PM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  COMM_LINK =   "https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009"
