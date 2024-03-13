@@ -1,3 +1,4 @@
+/* groovylint-disable CompileStatic, DuplicateNumberLiteral, DuplicateStringLiteral, ImplicitClosureParameter, LineLength, MethodSize */
 library(
     base: 'driver',
     author: 'Krassimir Kossev',
@@ -5,8 +6,8 @@ library(
     description: 'Matter State Machines',
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/Matter_State_Machines.groovy',
-    version: '0.0.4',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
+    version: '0.0.5',
     documentationLink: ''
 )
 /*
@@ -29,6 +30,7 @@ library(
   * ver. 0.0.2  2024-02-09 kkossev  - all states are cleared at the start of the full discovery
   * ver. 0.0.3  2024-02-13 kkossev  - removed discovering the IDENTIFY cluster; read the 0xFFFB attributes for ALL clusters in the matchedClustersList
   * ver. 0.0.4  2024-02-18 kkossev  - (dev. branch) state error specific Info messages; max retries increased to 35
+  * ver. 0.0.5  2024-03-13 kkossev  - release candidate
   *
   *                                   TODO:
   *
@@ -37,8 +39,8 @@ library(
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '0.0.4'
-@Field static final String matterStateMachinesLibStamp   = '2024/02/18 12:39 AM'
+@Field static final String matterStateMachinesLib = '0.0.5'
+@Field static final String matterStateMachinesLibStamp   = '2024/03/13 9:01 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -699,6 +701,7 @@ void discoverAllStateMachine(Map data = null) {
             // find all elements in the supportedMatterClusters that are in the ServerList
             List<Integer> matchedClustersList = supportedMatterClusters.findAll { serverListCluster.contains(it) }       // empty list [] if nothing found
             logDebug "${fingerprintName} supported clusters : ${matchedClustersList}"
+            /* groovylint-disable-next-line ConfusingTernary */
             Integer supportedCluster =  matchedClustersList != [] ?  matchedClustersList?.first() : 0
             if (supportedCluster != null && supportedCluster != 0) {
                 logDebug "discoverAllStateMachine: st:${st} - ${fingerprintName} <b>found supportedCluster ${supportedCluster} in matchedClustersList ${matchedClustersList}</b> from the SupportedMatterClusters ${supportedMatterClusters} in the ServerList ${serverListCluster}"

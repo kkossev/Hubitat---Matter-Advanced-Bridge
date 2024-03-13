@@ -28,16 +28,17 @@
   * ver. 0.0.7  2024-03-10 kkossev - added help info and community link (credits @jtp10181)
   * ver. 0.0.8  2024-03-11 kkossev - added parseTest(map as string) _DEBUg command in the 'Matter Generic Component Window Shade' driver; battery attributes corrections;
   * ver. 0.0.8  2024-03-11 kkossev - (dev.branch) another exception bug fix;
+  * ver. 0.0.9  2024-03-11 kkossev - release candidate (_DEBUG = false)
   *
-  *                                   TODO:
+  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '0.0.8'
-@Field static final String matterComponentWindowShadeStamp   = '2024/03/11 11:22 PM'
+@Field static final String matterComponentWindowShadeVersion = '0.0.9'
+@Field static final String matterComponentWindowShadeStamp   = '2024/03/13 10:41 PM'
 
-@Field static final Boolean _DEBUG = true
+@Field static final Boolean _DEBUG = false
 
 @Field static final Integer OPEN   = 0      // this is the standard!  Hubitat is inverted?
 @Field static final Integer CLOSED = 100    // this is the standard!  Hubitat is inverted?
@@ -45,7 +46,7 @@ import groovy.transform.Field
 @Field static final Integer MAX_TRAVEL_TIME = 15
 
 metadata {
-    definition(name: 'Matter Generic Component Window Shade', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/Matter_Generic_Component_Window_Shade.groovy', singleThreaded: true) {
+    definition(name: 'Matter Generic Component Window Shade', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Window_Shade.groovy', singleThreaded: true) {
         capability 'Actuator'
         capability 'WindowShade'    // Attributes: position - NUMBER, unit:% windowShade - ENUM ["opening", "partially open", "closed", "open", "closing", "unknown"]
                                     // Commands: close(); open(); setPosition(position) position required (NUMBER) - Shade position (0 to 100);

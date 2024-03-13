@@ -19,13 +19,9 @@
  * The full revisions history is available at https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge-%E2%80%90-revisions-history
  *
  * ver. 0.0.0  2023-12-29 kkossev  - Inital version;
- * ........
- * ver. 0.5.0  2024-03-09 kkossev  - WindowCovering driver refactoring; WindowCovering: added battery attributes; WindowCovering: added a bunch of new options; Minimize State Variables by default is true;
- *                                   documented the WindowCovering settings - https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge-%E2%80%90-Window-Covering
- * ver. 0.5.1  2024-03-10 kkossev  - Help/Documentation button in the driver linked to GitHub Wiki page and HE Community thread;
- * ver. 0.5.2  2024-03-11 kkossev  - added parseTest(map as string) _DEBUg command in the 'Matter Generic Component Window Shade' driver; fixed an exception in the same driver; battery attributes name changes; removed the _DiscoverAll options;
- * ver. 0.5.3  2024-03-11 kkossev  - Window Shade driver exception bug fixed
+ * ...
  * ver. 0.5.4  2024-03-12 kkossev  - (dev.branch) TODO list cleanup
+ * ver. 0.6.0  2024-03-13 kkossev - moved to Github new repository https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/tree/main
  *
  * The TODO list is moved to a GitHub Project : https://github.com/users/kkossev/projects/9  (send me your GitHub username to be added to the project)
  */
@@ -34,14 +30,15 @@
 #include kkossev.matterLib
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
-//#include matterTools.parseDescriptionAsDecodedMap
 
-static String version() { '0.5.4' }
-static String timeStamp() { '2023/03/12 12:06 PM' }
+static String version() { '0.6.0' }
+static String timeStamp() { '2023/03/13 10:44 PM' }
 
 @Field static final Boolean _DEBUG = false
+@Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   "https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009"
 @Field static final String  GITHUB_LINK = "https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge"
+@Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = false
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true  // minimize the state variables
@@ -70,8 +67,7 @@ import java.util.concurrent.ConcurrentHashMap
 import hubitat.matter.DataType
 
 metadata {
-    definition(name: 'Matter Advanced Bridge', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/Matter_Advanced_Bridge.groovy',
-                                singleThreaded: true ) {
+    definition(name: DRIVER_NAME, namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: IMPORT_URL, singleThreaded: true ) {
         capability 'Actuator'
         capability 'Sensor'
         capability 'Initialize'

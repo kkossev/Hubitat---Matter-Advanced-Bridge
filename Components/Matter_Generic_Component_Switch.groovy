@@ -1,4 +1,4 @@
-/* groovylint-disable-next-line CompileStatic */
+/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
   *  'Matter Generic Component Motion Sensor' - component driver for Matter Advanced Bridge
   *
@@ -18,6 +18,7 @@
   * ver. 0.0.1  2024-01-12 kkossev  - ignoring switch events if no change
   * ver. 0.0.2  2024-01-20 kkossev  - debug logs
   * ver. 0.0.3  2024-03-04 kkossev  - matterComponentSwitchVersion, matterComponentSwitchStamp, added importUrl; disabled healthStatus
+  * ver. 0.0.4  2024-03-13 kkossev  - release candidate
   *
   *                                   TODO:
   *
@@ -25,11 +26,11 @@
 
 import groovy.transform.Field
 
-@Field static final String matterComponentSwitchVersion = '0.0.3'
-@Field static final String matterComponentSwitchStamp   = '2024/03/04 8:14 AM'
+@Field static final String matterComponentSwitchVersion = '0.0.4'
+@Field static final String matterComponentSwitchStamp   = '2024/03/13 9:17 PM'
 
 metadata {
-    definition(name: 'Matter Generic Component Switch', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/Matter_Generic_Component_Switch.groovy') {
+    definition(name: 'Matter Generic Component Switch', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Switch.groovy') {
         capability 'Actuator'
         capability 'Switch'             // Commands:[off, on, refresh]
         capability 'Refresh'
@@ -124,12 +125,12 @@ void refresh() {
     parent?.componentRefresh(this.device)
 }
 
-public void setState(String stateName, String stateValue) {
+void setState(String stateName, String stateValue) {
     if (logEnable) { log.debug "${device.displayName} setting state '${stateName}' to '${stateValue}'" }
     state[stateName] = stateValue
 }
 
-public String getState(String stateName) {
+String getState(String stateName) {
     if (logEnable) { log.debug "${device.displayName} getting state '${stateName}'" }
     return state[stateName]
 }

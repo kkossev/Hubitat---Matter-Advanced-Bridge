@@ -1,3 +1,4 @@
+/* groovylint-disable CompileStatic, DuplicateNumberLiteral, DuplicateStringLiteral, ImplicitClosureParameter, LineLength */
 library(
     base: 'driver',
     author: 'Krassimir Kossev',
@@ -5,8 +6,8 @@ library(
     description: 'Matter Utilities Library',
     name: 'matterUtilitiesLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/matterUtilitiesLib.groovy',
-    version: '0.0.1',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterUtilitiesLib.groovy',
+    version: '0.0.2',
     documentationLink: ''
 )
 /*
@@ -26,6 +27,7 @@ library(
   *
   * ver. 0.0.0  2024-02-26 kkossev  - first version
   * ver. 0.0.1  2024-03-01 kkossev  - (dev.branch)
+  * ver. 0.0.2  2024-03-13 kkossev  - release candidate
   *
   *                                   TODO: add resetStats
   *
@@ -34,8 +36,8 @@ library(
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterUtilitiesLibVersion = '0.0.1'
-@Field static final String matterUtilitiesLibStamp   = '2024/03/01 9:45 AM'
+@Field static final String matterUtilitiesLibVersion = '0.0.2'
+@Field static final String matterUtilitiesLibStamp   = '2024/03/13 8:47 PM'
 
 metadata {
     // no capabilities
@@ -224,6 +226,7 @@ void requestExtendedInfo(Integer endpoint = 0, Integer timePar = 15, boolean fas
             return
         }
         logDebug "requestExtendedInfo(): endpointInt:${endpoint} (0x${HexUtils.integerToHexString(safeToInt(endpoint), 1)}),  clusterInt:${clusterInt} (0x${cluster}),  time:${time}"
+        /* groovylint-disable-next-line ParameterReassignment */
         requestAndCollectAttributesValues(endpoint, clusterInt, time, fast = false)
         time += fast ? SHORT_TIMEOUT : LONG_TIMEOUT
     }

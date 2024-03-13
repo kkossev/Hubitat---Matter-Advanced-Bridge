@@ -1,4 +1,4 @@
-/* groovylint-disable-next-line CompileStatic */
+/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods, StaticMethodsBeforeInstanceMethods */
 /*
   *  'Matter Generic Component Battery' - component driver for Matter Advanced Bridge
   *
@@ -19,6 +19,7 @@
   * ver. 0.0.2  2024-03-03 kkossev  - (dev. branch) componentBatteryVersion, componentBatteryStamp bug fix; added importUrl
   * ver. 0.0.3  2024-03-09 kkossev  - (dev. branch) batQuantity typo bug fix;
   * ver. 0.0.4  2024-03-11 kkossev  - (dev. branch) battery attributes corrected;
+  * ver. 0.0.5  2024-03-13 kkossev  - release candidate
   *
   *                                   TODO:
   *
@@ -26,11 +27,11 @@
 
 import groovy.transform.Field
 
-@Field static final String matterComponentBatteryVersion = '0.0.4'
-@Field static final String matterComponentBatteryStamp   = '2024/03/11 9:45 PM'
+@Field static final String matterComponentBatteryVersion = '0.0.5'
+@Field static final String matterComponentBatteryStamp   = '2024/03/13 9:11 PM'
 
 metadata {
-    definition(name: 'Matter Generic Component Battery', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/Matter_Generic_Component_Battery.groovy') {
+    definition(name: 'Matter Generic Component Battery', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Battery.groovy') {
         capability 'Sensor'
         capability 'Battery'
         capability 'Refresh'

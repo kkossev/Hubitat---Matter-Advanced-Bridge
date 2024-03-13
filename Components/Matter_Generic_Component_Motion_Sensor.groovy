@@ -1,4 +1,4 @@
-/* groovylint-disable-next-line CompileStatic */
+/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
   *  'Matter Generic Component Motion Sensor' - component driver for Matter Advanced Bridge
   *
@@ -18,6 +18,7 @@
   * ver. 0.0.1  2024-01-13 kkossev  - added 'Invert Motion' option
   * ver. 0.0.2  2024-01-25 kkossev  - 'Invert Motion' change updates the motion state immediateltely.
   * ver. 0.0.3  2024-03-04 kkossev  - added importUrl; disabled healthStatus
+  * ver. 0.0.4  2024-03-13 kkossev  - release candidate
   *
   *                                   TODO:
   *
@@ -25,11 +26,11 @@
 
 import groovy.transform.Field
 
-@Field static final String matterComponentMotionVersion = '0.0.3'
-@Field static final String matterComponentMotionStamp   = '2024/03/04 8:49 AM'
+@Field static final String matterComponentMotionVersion = '0.0.4'
+@Field static final String matterComponentMotionStamp   = '2024/03/13 9:12 PM'
 
 metadata {
-    definition(name: 'Matter Generic Component Motion Sensor', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/Matter_Generic_Component_Motion_Sensor.groovy') {
+    definition(name: 'Matter Generic Component Motion Sensor', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Motion_Sensor.groovy') {
         capability 'Sensor'
         capability 'MotionSensor'
         capability 'Refresh'

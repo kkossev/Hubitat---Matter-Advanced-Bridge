@@ -1,3 +1,4 @@
+/* groovylint-disable CompileStatic, DuplicateListLiteral, DuplicateMapLiteral, DuplicateStringLiteral, LineLength */
 library(
     base: 'driver',
     author: 'Krassimir Kossev',
@@ -5,8 +6,8 @@ library(
     description: 'Matter Library',
     name: 'matterLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/development/Drivers/Matter%20Advanced%20Bridge/MatterLib.groovy',
-    version: '0.0.5',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
+    version: '0.0.6',
     documentationLink: ''
 )
 /*
@@ -30,6 +31,7 @@ library(
   * ver. 0.0.3  2024-02-04 kkossev  - ThermostatCluster 0x0201 definitions; PowerSourceCluster 0x002F definitions; DoorLockCluster 0x0101 definitions;
   * ver. 0.0.4  2024-02-06 kkossev  - added Color Control Cluster 0x0300;
   * ver. 0.0.5  2024-02-06 kkossev  - (dev. branch)  @CompileStatic getAttributesMapByClusterId; added illuminance and pressure cluster attribute definitions
+  * ver. 0.0.6  2024-03-13 kkossev  - release candidate
   *
   *                                   TODO:
   *
@@ -38,8 +40,8 @@ library(
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '0.0.5'
-@Field static final String matterLibStamp   = '2024/02/12 12:14 PM'
+@Field static final String matterLibVersion = '0.0.6'
+@Field static final String matterLibStamp   = '2024/03/13 8:51 PM'
 
 // no metadata section for matterLib
 
