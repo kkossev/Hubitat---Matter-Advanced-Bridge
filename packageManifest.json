@@ -10,7 +10,7 @@
   {
      "id":"9fa7a4c9-8f3f-4e70-a841-5565e982b35b",
      "name":"MatterAdvancedBridge.zip",
-     "location":"https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/MatterAdvancedBridge.zip",
+     "location":"https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/raw/main/MatterAdvancedBridge.zip",
      "required":true
   }
   ]
