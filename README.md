@@ -1,13 +1,1 @@
-# Hubitat---Matter-Advanced-Bridge
-Matter Advanced Bridge - driver for Hubitat Elevation
-
-Work - In - Progress
-
-Planned release date - 2024-03-16
-
------------------
-
-https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge
-
-
-
+# [Matter Advanced Bridge](https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-Home  )
