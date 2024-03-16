@@ -18,12 +18,8 @@
  *
  * The full revisions history is available at https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge-%E2%80%90-revisions-history
  *
- * ver. 0.0.0  2023-12-29 kkossev  - Inital version;
- * ...
- * ver. 0.5.4  2024-03-12 kkossev  - (dev.branch) TODO list cleanup
- * ver. 0.6.0  2024-03-13 kkossev - moved to Github new repository https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/tree/main
+ * ver. 1.0.0  2024-03-16 kkossev  - public release version.
  *
- * The TODO list is moved to a GitHub Project : https://github.com/users/kkossev/projects/9  (send me your GitHub username to be added to the project)
  */
 
 /* groovylint-disable-next-line NglParseError */
@@ -31,13 +27,13 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '0.6.0' }
-static String timeStamp() { '2023/03/13 10:44 PM' }
+static String version() { '1.0.0' }
+static String timeStamp() { '2023/03/16 9:54 AM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
-@Field static final String  COMM_LINK =   "https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009"
-@Field static final String  GITHUB_LINK = "https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge"
+@Field static final String  COMM_LINK =   'https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009'
+@Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = false
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
@@ -159,7 +155,7 @@ metadata {
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
     */
-    //0x003B : [parser: 'parseSwitch', attributes: 'SwitchClusterAttributes', events: 'SwitchClusterEvents'],       // Switch - DO NOT ENABLE -> CRASHES THE BRIDGE!?
+    //0x003B : [parser: 'parseSwitch', attributes: 'SwitchClusterAttributes', events: 'SwitchClusterEvents'],       // Switch
     // Descriptor Cluster
     /*
     0x001D : [attributes: 'DescriptorClusterAttributes', parser: 'parseDescriptorCluster',      // decimal(29) manually subscribe to the Bridge device ep=0 0x001D 0x0003
@@ -282,7 +278,6 @@ void parse(final String description) {
     gatherAttributesValuesInfo(descMap)
 
     String parserFunc = ParsedMatterClusters[HexUtils.hexStringToInt(descMap.cluster)]
-    //String parserAttr = SupportedMatterClusters[HexUtils.hexStringToInt(descMap.cluster)]?.attributes
 
     if (parserFunc) {
         if (_DEBUG) {

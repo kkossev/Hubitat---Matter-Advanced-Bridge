@@ -7,7 +7,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
-    version: '0.0.6',
+    version: '1.0.0',
     documentationLink: ''
 )
 /*
@@ -25,23 +25,15 @@ library(
   *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
   *  for the specific language governing permissions and limitations under the License.
   *
-  * ver. 0.0.0  2024-01-10 kkossev  - first version
-  * ver. 0.0.1  2024-01-11 kkossev  - added WindowCovering cluster 0x0102;
-  * ver. 0.0.2  2024-01-19 kkossev  - added BridgedDeviceBasicClusterAttributes cluster 0x0102;
-  * ver. 0.0.3  2024-02-04 kkossev  - ThermostatCluster 0x0201 definitions; PowerSourceCluster 0x002F definitions; DoorLockCluster 0x0101 definitions;
-  * ver. 0.0.4  2024-02-06 kkossev  - added Color Control Cluster 0x0300;
-  * ver. 0.0.5  2024-02-06 kkossev  - (dev. branch)  @CompileStatic getAttributesMapByClusterId; added illuminance and pressure cluster attribute definitions
-  * ver. 0.0.6  2024-03-13 kkossev  - release candidate
-  *
-  *                                   TODO:
+  * ver. 1.0.0  2024-03-16 kkossev  - frist release version
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '0.0.6'
-@Field static final String matterLibStamp   = '2024/03/13 8:51 PM'
+@Field static final String matterLibVersion = '1.0.0'
+@Field static final String matterLibStamp   = '2024/03/16 8:50 AM'
 
 // no metadata section for matterLib
 

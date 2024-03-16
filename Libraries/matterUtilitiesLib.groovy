@@ -7,7 +7,7 @@ library(
     name: 'matterUtilitiesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterUtilitiesLib.groovy',
-    version: '0.0.2',
+    version: '1.0.0',
     documentationLink: ''
 )
 /*
@@ -25,19 +25,14 @@ library(
   *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
   *  for the specific language governing permissions and limitations under the License.
   *
-  * ver. 0.0.0  2024-02-26 kkossev  - first version
-  * ver. 0.0.1  2024-03-01 kkossev  - (dev.branch)
-  * ver. 0.0.2  2024-03-13 kkossev  - release candidate
-  *
-  *                                   TODO: add resetStats
-  *
+  * ver. 1.0.0  2024-03-16 kkossev  - first release
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterUtilitiesLibVersion = '0.0.2'
-@Field static final String matterUtilitiesLibStamp   = '2024/03/13 8:47 PM'
+@Field static final String matterUtilitiesLibVersion = '1.0.0'
+@Field static final String matterUtilitiesLibStamp   = '2024/03/16 8:52 AM'
 
 metadata {
     // no capabilities

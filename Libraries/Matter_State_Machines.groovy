@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '0.0.5',
+    version: '1.0.0',
     documentationLink: ''
 )
 /*
@@ -25,22 +25,15 @@ library(
   *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
   *  for the specific language governing permissions and limitations under the License.
   *
-  * ver. 0.0.0  2024-01-27 kkossev  - first published version
-  * ver. 0.0.1  2024-01-28 kkossev  - avoid multiple Subscribe entries
-  * ver. 0.0.2  2024-02-09 kkossev  - all states are cleared at the start of the full discovery
-  * ver. 0.0.3  2024-02-13 kkossev  - removed discovering the IDENTIFY cluster; read the 0xFFFB attributes for ALL clusters in the matchedClustersList
-  * ver. 0.0.4  2024-02-18 kkossev  - (dev. branch) state error specific Info messages; max retries increased to 35
-  * ver. 0.0.5  2024-03-13 kkossev  - release candidate
-  *
-  *                                   TODO:
+  * ver. 1.0.0  2024-03-16 kkossev  - first release version
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '0.0.5'
-@Field static final String matterStateMachinesLibStamp   = '2024/03/13 9:01 PM'
+@Field static final String matterStateMachinesLib = '1.0.0'
+@Field static final String matterStateMachinesLibStamp   = '2024/03/16 8:48 AM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'

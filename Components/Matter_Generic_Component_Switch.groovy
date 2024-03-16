@@ -14,20 +14,14 @@
   *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
   *  for the specific language governing permissions and limitations under the License.
   *
-  * ver. 0.0.0  2024-01-11 kkossev  - first version
-  * ver. 0.0.1  2024-01-12 kkossev  - ignoring switch events if no change
-  * ver. 0.0.2  2024-01-20 kkossev  - debug logs
-  * ver. 0.0.3  2024-03-04 kkossev  - matterComponentSwitchVersion, matterComponentSwitchStamp, added importUrl; disabled healthStatus
-  * ver. 0.0.4  2024-03-13 kkossev  - release candidate
-  *
-  *                                   TODO:
+  * ver. 1.0.0  2024-03-16 kkossev  - first release
   *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentSwitchVersion = '0.0.4'
-@Field static final String matterComponentSwitchStamp   = '2024/03/13 9:17 PM'
+@Field static final String matterComponentSwitchVersion = '1.0.0'
+@Field static final String matterComponentSwitchStamp   = '2024/03/16 9:26 AM'
 
 metadata {
     definition(name: 'Matter Generic Component Switch', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Switch.groovy') {

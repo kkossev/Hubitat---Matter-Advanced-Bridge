@@ -18,25 +18,15 @@
   * For a big portions of code all credits go to Jonathan Bradshaw.
   *
   *
-  * ver. 0.0.0  2022-11-28 bradsjm - original code (Tuya Cloud driver)
-  * ver. 0.0.1  2024-01-14 kkossev - first version for the Matter Advanced Bridge driver
-  * ver. 0.0.2  2024-02-04 kkossev - use device.displayName in logs
-  * ver. 0.0.3  2024-03-02 kkossev - added refresh() command; added a timeout preference for the position change; added reverse option (normal: OPEN=100% CLOSED=0%)
-  * ver. 0.0.4  2024-03-03 kkossev - disabled the ping() command (capability 'Health Check' - not supported yet)
-  * ver. 0.0.5  2024-03-04 kkossev - close() bug fix @kwon2288
-  * ver. 0.0.6  2024-03-09 kkossev - added Battery capability; added batteryVoltage; added invertPosition and targetAsCurrentPosition preferences;
-  * ver. 0.0.7  2024-03-10 kkossev - added help info and community link (credits @jtp10181)
-  * ver. 0.0.8  2024-03-11 kkossev - added parseTest(map as string) _DEBUg command in the 'Matter Generic Component Window Shade' driver; battery attributes corrections;
-  * ver. 0.0.8  2024-03-11 kkossev - (dev.branch) another exception bug fix;
-  * ver. 0.0.9  2024-03-11 kkossev - release candidate (_DEBUG = false)
+  * ver. 1.0.0  2024-03-16 kkossev - first release
   *
   *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '0.0.9'
-@Field static final String matterComponentWindowShadeStamp   = '2024/03/13 10:41 PM'
+@Field static final String matterComponentWindowShadeVersion = '1.0.0'
+@Field static final String matterComponentWindowShadeStamp   = '2024/03/16 9:29 AM'
 
 @Field static final Boolean _DEBUG = false
 
