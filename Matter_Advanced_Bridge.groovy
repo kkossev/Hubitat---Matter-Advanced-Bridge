@@ -1893,7 +1893,7 @@ void componentClose(DeviceWrapper dw) {
     sendToDevice(cmd)
 }
 
-void componentLock(DeviceWrapper dw) {
+/*void componentLock(DeviceWrapper dw) {
     if (!dw.hasCommand('lock')) { logError "componentClose(${dw}) driver '${dw.typeName}' does not have command 'lock' in ${dw.supportedCommands}"; return }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logDebug "sending Lock command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
@@ -1911,7 +1911,7 @@ void componentUnlock(DeviceWrapper dw) {
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x01) // 0x0101 = Door Lock Cluster, 0x01 = Unlock
     logTrace "componentUnlock(): sending command '${cmd}'"
     sendToDevice(cmd)
-}
+}*/
 
 // prestage level : https://community.hubitat.com/t/sengled-element-color-plus-driver/21811/2
 
