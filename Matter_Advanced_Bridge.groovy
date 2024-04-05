@@ -1789,7 +1789,7 @@ Map mapTuyaCategory(Map d) {
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Motion Sensor', product_name: 'Motion Sensor' ]
     }
     if ('0101' in d.ServerList) {   // Door Lock
-        return [driver: 'Generic Component Lock', product_name: 'Door Lock' ]
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Door Lock', product_name: 'Door Lock' ]
     }
     if ('0102' in d.ServerList) {   // Curtain Motor (uses custom driver)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Window Shade', product_name: 'Curtain Motor' ]
