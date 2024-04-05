@@ -1,6 +1,6 @@
 /* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
-  *  'Matter Generic Component Motion Sensor' - component driver for Matter Advanced Bridge
+  *  'Matter Generic Component Door Lock' - component driver for Matter Advanced Bridge
   *
   *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
   *  https://community.hubitat.com/t/project-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009
