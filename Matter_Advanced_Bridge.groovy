@@ -16,9 +16,15 @@
  *
  * Thanks to Hubitat for publishing the sample Matter driver https://github.com/hubitat/HubitatPublic/blob/master/examples/drivers/thirdRealityMatterNightLight.groovy
  *
- * The full revisions history is available at https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge-%E2%80%90-revisions-history
+ * The full revisions history is available at https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-revisions-history
+ * The full TODO list is available at https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-TODO-list
  *
  * ver. 1.0.0  2024-03-16 kkossev  - public release version.
+ * ver. 1.0.1  2024-04-13 kkossev  - (dev. branch) tests; resetStats bug fix;
+ * ver. 1.1.0  2024-07-20 kkossev  - (dev. branch)
+ * 
+ *                                   TODO: merge pull request by dds82 (Matter_Generic_Component_Door_Lock)
+ *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
  */
 
@@ -27,8 +33,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.0.0' }
-static String timeStamp() { '2023/03/16 9:54 AM' }
+static String version() { '1.1.0' }
+static String timeStamp() { '2023/07/20 5:54 PM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -2085,7 +2091,7 @@ void componentStartPositionChange(DeviceWrapper dw, String direction) {
 void componentStopPositionChange(DeviceWrapper dw) {
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logDebug "Stopping position change for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "setSwitch(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentStopPositionChange(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
     String cmd = matter.invoke(deviceNumber, 0x0102, 0x02) // 0x0102 = Window Covering Cluster, 0x02 = StopMotion
     logTrace "componentStopPositionChange(): sending command '${cmd}'"
     sendToDevice(cmd)
@@ -2602,18 +2608,19 @@ void resetStats() {
     state.states = [:]
     state.lastRx = [:]
     state.lastTx = [:]
-    state.lastTx['pingTime'] = state.lastTx['cmdTime'] = now()
-    state.lastTx['subscribeTime'] = state.lastTx['unsubscribeTime'] = now()
+    state.lastTx['pingTime'] = now() ; state.lastTx['cmdTime'] = now()
+    state.lastTx['subscribeTime'] = now() ; state.lastTx['unsubscribeTime'] = now()
     state.health = [:]
     state.bridgeDescriptor  = [:]   // driver specific
     state.subscriptions = []        // driver specific, format EP_CLUSTER_ATTR
     state.stateMachines = [:]       // driver specific
     state.preferences = [:]         // driver specific
-    state.stats['rxCtr'] = state.stats['txCtr'] = 0
-    state.stats['initializeCtr'] = state.stats['duplicatedCtr'] = 0
-    state.states['isDigital'] = state.states['isRefresh'] = state.states['isPing'] =  state.states['isInfo']  = false
-    state.states['isSubscribing'] =  state.states['isUnsubscribing']  = false
-    state.health['offlineCtr'] = state.health['checkCtr3']  = 0
+    state.stats['rxCtr'] = 0 ; state.stats['txCtr'] = 0
+    state.stats['initializeCtr'] = 0 ; state.stats['duplicatedCtr'] = 0
+    state.states['isDigital'] = false ; state.states['isRefresh'] = false ; state.states['isPing'] = false ; state.states['isInfo']  = false
+    state.states['isSubscribing'] = 0
+    state.states['isUnsubscribing']  = false
+    state.health['offlineCtr'] = 0 ; state.health['checkCtr3']  = 0
 }
 
 void initializeVars(boolean fullInit = false) {
@@ -2733,4 +2740,7 @@ void test(par) {
     log.warn "getSubscribeOrRefreshCmdList=${s}"
     */
     //fingerprintsToSubscriptionsList()
+    String cmd
+    cmd = matter.lock()
+    log.trace "cmd=${cmd}"  
 }
