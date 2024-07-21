@@ -527,12 +527,15 @@ Map getAttributesMapByClusterId(String cluster) {
     0x0025  : 'OperatingMode',      // enum8
     0x0026  : 'SupportedOperatingModes'// bitmap8
 ]
+/* moved to the component device driver
 @Field static final Map<Integer, String> DoorLockClusterLockState = [
     0x00    : 'NotFullyLocked',
     0x01    : 'Locked',
     0x02    : 'Unlocked',
     0x03    : 'Unlatched'
 ]
+*/
+
 @Field static final Map<Integer, String> DoorLockClusterCommands = [
     0x00    : 'LockDoor',
     0x01    : 'UnlockDoor',

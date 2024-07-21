@@ -21,9 +21,9 @@
  *
  * ver. 1.0.0  2024-03-16 kkossev  - public release version.
  * ver. 1.0.1  2024-04-13 kkossev  - (dev. branch) tests; resetStats bug fix;
- * ver. 1.1.0  2024-07-20 kkossev  - (dev. branch)
+ * ver. 1.1.0  2024-07-20 kkossev  - (dev. branch) merged pull request from dds82 (added Matter_Generic_Component_Door_Lock); added Identify command; reduced battery attribute subscriptions;
  * 
- *                                   TODO: merge pull request by dds82 (Matter_Generic_Component_Door_Lock)
+ *                                   TODO: finalize the Matter Thermostat driver
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
  */
@@ -34,7 +34,7 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.1.0' }
-static String timeStamp() { '2023/07/20 5:54 PM' }
+static String timeStamp() { '2023/07/20 23:59 PM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -103,12 +103,12 @@ metadata {
         //command 'initialize', [[name: 'Invoked automatically during the hub reboot, do not click!']]
         command 'reSubscribe', [[name: 're-subscribe to the Matter controller events']]
         command 'loadAllDefaults', [[name: 'panic button: Clear all States and scheduled jobs']]
+        command 'identify'      // works with Nuki Lock!
         if (_DEBUG) {
             command 'getInfo', [
                     [name:'infoType', type: 'ENUM', description: 'Bridge Info Type', constraints: ['Basic', 'Extended']],   // if the parameter name is 'type' - shows a drop-down list of the available drivers!
                     [name:'endpoint', type: 'STRING', description: 'Endpoint', constraints: ['STRING']]
             ]
-            command 'identify'      // can't make it work ... :(
             command 'test', [[name: 'test', type: 'STRING', description: 'test', defaultValue : '']]
         }
         // do not expose the known Matter Bridges fingerprints for now ... Let the stock driver be assigned automatically.
@@ -149,12 +149,13 @@ metadata {
     ],
     0x002F : [parser: 'parsePowerSource', attributes: 'PowerSourceClusterAttributes',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Status
-                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // Order
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // Description
-                               [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // BatVoltage
-                               [0x000C: [min: 0, max: 0xFFFF, delta: 0]],   // BatPercentRemaining
-                               [0x000E: [min: 0, max: 0xFFFF, delta: 0]],   // BatChargeLevel
-                               [0x000F: [min: 0, max: 0xFFFF, delta: 0]]]   // BatReplacementNeeded
+                            //   [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // Order
+                            //   [0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // Description
+                               [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // BatVoltage (11)
+                               [0x000C: [min: 0, max: 0xFFFF, delta: 0]],   // BatPercentRemaining (12)
+                            //   [0x000E: [min: 0, max: 0xFFFF, delta: 0]],   // BatChargeLevel (14)
+                            //   [0x000F: [min: 0, max: 0xFFFF, delta: 0]]    // BatReplacementNeeded (15)
+              ]
     ],
     /*
     0x0039 : [attributes: 'BridgedDeviceBasicAttributes', commands: 'BridgedDeviceBasicCommands', parser: 'parseBridgedDeviceBasic',            // BridgedDeviceBasic
@@ -547,8 +548,10 @@ void parsePowerSource(final Map descMap) {
             eventMap = [name: 'batteryVoltage', value: value / 1000, descriptionText: descriptionText]
             break
         case 'Status' :  // PowerSourceStatus 0x0000
-            descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Power source status is ${descMap.value}"
-            eventMap = [name: 'powerSourceStatus', value: descMap.value, descriptionText: descriptionText]
+            String statusDesc = PowerSourceClusterStatus[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
+            statusDesc = statusDesc[0].toLowerCase() + statusDesc[1..-1]  // change the powerSourceStatus attribute value first letter to lower case
+            descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Power source status is ${statusDesc} (raw:${descMap.value})"
+            eventMap = [name: 'powerSourceStatus', value: statusDesc, descriptionText: descriptionText]
             break
         case 'Order' :   // PowerSourceOrder 0x0001
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Power source order is ${descMap.value}"
@@ -845,7 +848,13 @@ void parseDoorLock(final Map descMap) { // 0101
             descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} lock is ${lockState}"
         ], descMap)
     } else {
-        logTrace "parseDoorLock: ${(DoorLockClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+        logTrace "parseDoorLock: <b>UNPROCESSED</b> ${(DoorLockClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+        // added in version 1.1.0 - send the unprocessed attributes to the child driver for further processing
+        sendMatterEvent([
+            name: 'unprocessed',
+            value: descMap.toString(),
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> clsuter ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+        ], descMap, ignoreDuplicates = false)
     }
 }
 
@@ -1794,7 +1803,7 @@ Map mapTuyaCategory(Map d) {
     if ('0406' in d.ServerList) {   // OccupancySensing (motion)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Motion Sensor', product_name: 'Motion Sensor' ]
     }
-    if ('0101' in d.ServerList) {   // Door Lock
+    if ('0101' in d.ServerList) {   // Door Lock (since version 1.1.0)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Door Lock', product_name: 'Door Lock' ]
     }
     if ('0102' in d.ServerList) {   // Curtain Motor (uses custom driver)
@@ -1840,6 +1849,18 @@ void componentRefresh(DeviceWrapper dw) {
         sendToDevice(matter.readAttributes(attributePaths))
         logDebug "componentRefresh(${dw}) id=${id} : refreshing attributePaths=${attributePaths}"
     }
+}
+
+void componentIdentify(DeviceWrapper dw) {
+    if (!dw.hasCommand('identify')) { logError "componentIdentify(${dw}) driver '${dw.typeName}' does not have command 'identify' in ${dw.supportedCommands}"; return }
+    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
+    logDebug "sending Identify command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
+    String cmd
+    Integer time = 10
+    List<Map<String, String>> cmdFields = []
+    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(time, 2))))
+    cmd = matter.invoke(deviceNumber, 0x0003, 0x0000, cmdFields)
+    sendToDevice(cmd)
 }
 
 // Component command to ping the device

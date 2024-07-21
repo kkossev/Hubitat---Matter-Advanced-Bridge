@@ -1,4 +1,4 @@
-/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
+/* groovylint-disable BitwiseOperatorInConditional, CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
   *  'Matter Generic Component Door Lock' - component driver for Matter Advanced Bridge
   *
@@ -14,19 +14,43 @@
   *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
   *  for the specific language governing permissions and limitations under the License.
   *
-  * ver. 1.0.0  2024-03-16 kkossev  - first release
+  * ver. 1.0.0  2024-04-05 dds82   - first version
+  * ver. 1.1.0  2024-07-20 kkossev - added Battery capability; added Identify command; added warning state and log messages; added handling of unprocessed Door Lock events
+  * 
+  *                                  TODO: filter duplicated events
   *
 */
 
 import groovy.transform.Field
+import groovy.transform.CompileStatic
 
-@Field static final String matterComponentSwitchVersion = '1.0.0'
-@Field static final String matterComponentSwitchStamp   = '2024/03/16 9:26 AM'
+@Field static final String matterComponentLockVersion = '1.1.0'
+@Field static final String matterComponentLockStamp   = '2024/07/20 23:59 PM'
+
+@Field static final Boolean _DEBUG_LOCK = false
 
 metadata {
     definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Daniel Segall', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Switch.groovy') {
-        capability 'Lock'
+        capability 'Sensor'
+        capability 'Battery'
+        capability 'Lock'       // lock - ENUM ["locked", "unlocked with timeout", "unlocked", "unknown"]
         capability 'Refresh'
+
+        command    'identify'
+        command    'refreshAll'
+
+        attribute 'lockType', 'ENUM', ['deadbolt', 'magnetic', 'other', 'mortise', 'rim', 'latchbolt', 'cylindricalLock', 'tubularLock', 'interconnectedLock', 'deadLatch', 'doorFurniture', 'eurocylinder']
+        attribute 'actuatorEnabled', 'ENUM', ['enabled', 'disabled']
+        attribute 'operatingMode', 'ENUM', ['Normal', 'Vacation', 'Privacy', 'NoRemoteLockUnlock', 'Passage']
+        attribute 'supportedOperatingModes', 'STRING'
+
+        if (_DEBUG_LOCK) {
+            command 'getInfo', [
+                    [name:'infoType', type: 'ENUM', description: 'Bridge Info Type', constraints: ['Basic', 'Extended']],   // if the parameter name is 'type' - shows a drop-down list of the available drivers!
+                    [name:'endpoint', type: 'STRING', description: 'Endpoint', constraints: ['STRING']]
+            ]
+            command 'testLock', [[name: 'testLock', type: 'STRING', description: 'test', defaultValue : '']]
+        }
     }
 }
 
@@ -59,14 +83,22 @@ void parse(List<Map> description) {
                 sendEvent(d)
             }
             else {
-                if (logEnable) { log.debug "${device.displayName} : ignored switch event '${d.value}' (no change)" }
+                if (logEnable) { log.debug "${device.displayName} : ignored lock event '${d.value}' (no change)" }
             }
+        }
+        else if (d.name == 'unprocessed') {
+            processUnprocessed(d)
         }
         else {
             if (d.descriptionText && txtEnable) { log.info "${d.descriptionText}" }
             sendEvent(d)
         }
     }
+}
+
+void identify() {
+    if (logEnable) { log.debug "${device.displayName} identifying ..." }
+    parent?.componentIdentify(device)
 }
 
 // Component command to lock device
@@ -89,6 +121,10 @@ void ping() {
 // Called when the device is first created
 void installed() {
     log.info "${device.displayName} driver installed"
+    state.warning = 'WARNING! Matter Locks lock and unlock commands are not supported by Hubitat. This driver is a placeholder for future compatibility.'
+    log.warn "${device.displayName} ${state.warning}"
+    state.working = 'What is working: lock status, battery level, refresh, identify'
+    log.info "${device.displayName} ${state.working}"
 }
 
 // Called when the device is removed
@@ -124,3 +160,123 @@ String getState(String stateName) {
     if (logEnable) { log.debug "${device.displayName} getting state '${stateName}'" }
     return state[stateName]
 }
+
+void getInfo(String infoType, String endpoint) {
+    parent?.componentGetInfo(device, infoType, endpoint)
+}
+
+void processUnprocessed(Map description) {
+    if (logEnable) { log.debug "${device.displayName} processing unprocessed: ${description}" }
+
+    String inputString = description.value
+    if (logEnable) { log.debug "${device.displayName} inputString: ${inputString}" }
+    inputString = inputString.replaceAll('\\[', '').replaceAll('\\]', '')
+    String[] keyValuePairs = inputString.split(', ')
+    Map<String, String> resultMap = [:]
+    keyValuePairs.each { pair ->
+        String[] parts = pair.split(':')
+        resultMap[parts[0].trim()] = parts[1].trim()
+    }
+    Map descMap = resultMap
+    if (logEnable) { log.debug "${device.displayName} descMap: ${descMap}" }
+    //
+    if (descMap.cluster != '0101') { logWarn "processUnprocessed: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    String eventValue = descMap.value
+    String descriptionText = "${device.displayName} ${descMap.cluster}:${descMap.attrId} value:${eventValue}"
+    switch (descMap.attrId) {
+        case '0001': // LockType
+            eventValue= DooorLockClusterLockType[Integer.parseInt(descMap.value, 16)]
+            descriptionText = "${device.displayName} lockType: ${eventValue} (raw:${descMap.value})"
+            sendEvent(name: 'lockType', value: eventValue, descriptionText: descriptionText)
+            if (logEnable) { log.debug "${descriptionText}" }
+            break
+        case '0002': // ActuatorEnabled
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            descriptionText = "${device.displayName} ActuatorEnabled: ${eventValue} (raw:${descMap.value})"
+            sendEvent(name: 'actuatorEnabled', value: eventValue, descriptionText: descriptionText)
+            if (logEnable) { log.debug "${descriptionText}" }
+            break
+        case '0025' : // OperatingMode
+            // OperatingMode: 00 (raw:00)
+            eventValue = DoorLockClusterOperatingModeEnum[Integer.parseInt(descMap.value, 16)]
+            descriptionText = "${device.displayName} OperatingMode: ${eventValue} (raw:${descMap.value})"
+            sendEvent(name: 'operatingMode', value: eventValue, descriptionText: descriptionText)
+            if (logEnable) { log.debug "${descriptionText}" }
+            break
+        case '0026' : // SupportedOperatingModes
+            // SupportedOperatingModes: FFF6 (raw:FFF6)
+            Integer intValue = Integer.parseInt(descMap.value, 16)
+            List<String> supportedModes = []
+            // Iterate through each bit position and check if the corresponding bit in eventValue is set to 0
+            DoorLockClusterSupportedOperatingModes.each { bitPosition, modeName ->
+                if ((intValue & (1 << bitPosition)) == 0) {
+                    supportedModes.add(modeName)
+                }
+            }
+            String supportedModesString = supportedModes.join(', ')
+            descriptionText = "${device.displayName} SupportedOperatingModes: ${supportedModesString} (raw:${descMap.value})"
+            sendEvent(name: 'supportedOperatingModes', value: supportedModesString, descriptionText: descriptionText)
+            if (logEnable) { log.debug "${descriptionText}" }
+            break
+        default:
+            if (logEnable) { log.warn "processUnprocessed: unexpected attrId:${descMap.attrId}" }
+    }
+}
+
+void refreshAll() {
+    log.warn "${device.displayName} refreshAll:"
+    parent?.readAttribute(['1', '257', '0'])    // LockState    (Mandatory)
+    parent?.readAttribute(['1', '257', '1'])    // LockType     (Mandatory)
+    parent?.readAttribute(['1', '257', '2'])    // ActuatorEnabled   (Mandatory)
+    parent?.readAttribute(['1', '257', '37'])   // (25) OperatingMode (Mandatory)
+    parent?.readAttribute(['1', '257', '38'])   // (26) SupportedOperatingModes (Mandatory)
+}
+
+// 5.2.6.2. LockState Attribute (0x0000)
+@Field static final Map<Integer, String> DoorLockClusterLockState = [
+    0x00    : 'NotFullyLocked',
+    0x01    : 'Locked',
+    0x02    : 'Unlocked',
+    0x03    : 'Unlatched'   // optional
+]
+
+// 5.2.6.3. LockType Attribute (0x0001)
+@Field static final Map<String, String> DooorLockClusterLockType = [
+    0x00    : 'deadbolt',   // Physical lock type is dead bolt
+    0x01    : 'magnetic',   // Physical lock type is magnetic
+    0x02    : 'other',      // Physical lock type is other
+    0x03    : 'mortise',    // Physical lock type is mortise
+    0x04    : 'rim',        // Physical lock type is rim
+    0x05    : 'latchbolt',  // Physical lock type is latch bolt
+    0x06    : 'cylindricalLock',// Physical lock type is cylindrical lock
+    0x07    : 'tubularLock',    // Physical lock type is tubular lock
+    0x08    : 'interconnectedLock', // Physical lock type is interconnected lock
+    0x09    : 'deadLatch',  // Physical lock type is dead latch
+    0x0A    : 'doorFurniture', // Physical lock type is door furniture
+    0x0B    : 'eurocylinder'   // Physical lock type is eurocylinder
+]
+
+/*
+The ActuatorEnabled attribute indicates if the lock is currently able to (Enabled) or not able to (Disabled)
+process remote Lock, Unlock, or Unlock with Timeout commands.
+This attribute has the following possible values:
+Boolean Value Summary
+0 Disabled
+1 Enabled
+*/
+
+@Field static final Map<Integer, String> DoorLockClusterSupportedOperatingModes = [
+    0x00    : 'Normal',             // (mandatory)
+    0x01    : 'Vacation',
+    0x02    : 'Privacy',
+    0x03    : 'NoRemoteLockUnlock', // (mandatory)
+    0x04    : 'Passage'
+]
+
+@Field static final Map<Integer, String> DoorLockClusterOperatingModeEnum = [
+    0x00    : 'Normal',
+    0x01    : 'Vacation',
+    0x02    : 'Privacy',
+    0x03    : 'NoRemoteLockUnlock',
+    0x04    : 'Passage'
+]
