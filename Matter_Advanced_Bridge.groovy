@@ -20,8 +20,9 @@
  * The full TODO list is available at https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-TODO-list
  *
  * ver. 1.0.0  2024-03-16 kkossev  - public release version.
- * ver. 1.0.1  2024-04-13 kkossev  - (dev. branch) tests; resetStats bug fix;
- * ver. 1.1.0  2024-07-20 kkossev  - (dev. branch) merged pull request from dds82 (added Matter_Generic_Component_Door_Lock); added Identify command; reduced battery attribute subscriptions;
+ * ver. 1.0.1  2024-04-13 kkossev  - tests; resetStats bug fix;
+ * ver. 1.1.0  2024-07-20 kkossev  - merged pull request from dds82 (added Matter_Generic_Component_Door_Lock); added Identify command; reduced battery attribute subscriptions;
+ * ver. 1.1.1  2024-07-23 kkossev  - (dev.branch) Added Switch capability to the Matter Door Lock component driver.
  * 
  *                                   TODO: finalize the Matter Thermostat driver
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
@@ -33,8 +34,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.1.0' }
-static String timeStamp() { '2023/07/20 23:59 PM' }
+static String version() { '1.1.1' }
+static String timeStamp() { '2023/07/23 10:05 PM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'

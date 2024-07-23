@@ -16,7 +16,9 @@
   *
   * ver. 1.0.0  2024-04-05 dds82   - first version
   * ver. 1.1.0  2024-07-20 kkossev - added Battery capability; added Identify command; added warning state and log messages; added handling of unprocessed Door Lock events
+  * ver. 1.1.1  2024-07-23 kkossev - (dev.branch) added switch capability (for Apple Home integration workaround)
   * 
+  *                                  TODO: initialize lock with 'unknown' attributes when the device is created
   *                                  TODO: filter duplicated events
   *
 */
@@ -24,16 +26,18 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String matterComponentLockVersion = '1.1.0'
-@Field static final String matterComponentLockStamp   = '2024/07/20 23:59 PM'
+@Field static final String matterComponentLockVersion = '1.1.1'
+@Field static final String matterComponentLockStamp   = '2024/07/23 10:04 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false
 
 metadata {
     definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Daniel Segall', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Switch.groovy') {
         capability 'Sensor'
+        capability 'Actuator'
         capability 'Battery'
         capability 'Lock'       // lock - ENUM ["locked", "unlocked with timeout", "unlocked", "unknown"]
+        capability 'Switch'     // switch - ENUM ["on", "off"]
         capability 'Refresh'
 
         command    'identify'
@@ -56,17 +60,25 @@ metadata {
 
 preferences {
     section {
+	    input name: "helpInfo", type: "hidden", title: fmtHelpInfo("Community Link")
         input name: 'logEnable',
               type: 'bool',
-              title: 'Enable debug logging',
+              title: '<b>Enable debug logging</b>',
               required: false,
               defaultValue: true
 
         input name: 'txtEnable',
               type: 'bool',
-              title: 'Enable descriptionText logging',
+              title: '<b>Enable descriptionText logging</b>',
               required: false,
               defaultValue: true
+
+        input name: 'onOffSwitch',
+              type: 'bool',
+              title: '<b>Enable switch capability</b>',
+              description: '<i>Enable switch capability for Apple Home integration</i>',
+              required: false,
+              defaultValue: false
     }
 }
 
@@ -103,14 +115,34 @@ void identify() {
 
 // Component command to lock device
 void lock() {
-    if (logEnable) { log.debug "${device.displayName} locking ..." }
-    parent?.componentLock(device)
+    if (settings?.onOffSwitch) {
+        on()
+    }
+    else {
+        if (logEnable) { log.debug "${device.displayName} locking ..." }
+        parent?.componentLock(device)
+    }
 }
 
 // Component command to unlock device
 void unlock() {
-    if (logEnable) { log.debug "${device.displayName} unlocking ..." }
-    parent?.componentUnlock(device)
+    if (settings?.onOffSwitch) {
+        off()
+    }
+    else {
+        if (logEnable) { log.debug "${device.displayName} unlocking ..." }
+        parent?.componentUnlock(device)
+    }
+}
+
+void on() {
+    if (logEnable) { log.debug "${device.displayName} on ..." }
+    sendEvent(name: 'switch', value: 'on', type: 'digital')
+}
+
+void off() {
+    if (logEnable) { log.debug "${device.displayName} off ..." }
+    sendEvent(name: 'switch', value: 'off', type: 'digital')
 }
 
 // Component command to ping the device
@@ -280,3 +312,20 @@ Boolean Value Summary
     0x03    : 'NoRemoteLockUnlock',
     0x04    : 'Passage'
 ]
+
+@Field static final String DRIVER = 'Matter Advanced Bridge'
+@Field static final String COMPONENT = 'Matter Generic Component Door Lock'
+@Field static final String WIKI   = 'Get help on GitHub Wiki page:'
+@Field static final String COMM_LINK =   "https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252/1"
+@Field static final String GITHUB_LINK = "https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-Door-Locks"
+// credits @jtp10181
+String fmtHelpInfo(String str) {
+	String info = "${DRIVER} v${parent?.version()}<br> ${COMPONENT} v${matterComponentLockVersion}"
+	String prefLink = "<a href='${GITHUB_LINK}' target='_blank'>${WIKI}<br><div style='font-size: 70%;'>${info}</div></a>"
+    String topStyle = "style='font-size: 18px; padding: 1px 12px; border: 2px solid green; border-radius: 6px; color: green;'"
+    String topLink = "<a ${topStyle} href='${COMM_LINK}' target='_blank'>${str}<br><div style='font-size: 14px;'>${info}</div></a>"
+
+	return "<div style='font-size: 160%; font-style: bold; padding: 2px 0px; text-align: center;'>${prefLink}</div>" +
+		"<div style='text-align: center; position: absolute; top: 46px; right: 60px; padding: 0px;'><ul class='nav'><li>${topLink}</ul></li></div>"
+}
+
