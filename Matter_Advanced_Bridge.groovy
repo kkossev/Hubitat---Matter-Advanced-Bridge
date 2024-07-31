@@ -22,7 +22,8 @@
  * ver. 1.0.0  2024-03-16 kkossev  - public release version.
  * ver. 1.0.1  2024-04-13 kkossev  - tests; resetStats bug fix;
  * ver. 1.1.0  2024-07-20 kkossev  - merged pull request from dds82 (added Matter_Generic_Component_Door_Lock); added Identify command; reduced battery attribute subscriptions;
- * ver. 1.1.1  2024-07-23 kkossev  - (dev.branch) Added Switch capability to the Matter Door Lock component driver.
+ * ver. 1.1.1  2024-07-23 kkossev  - added Switch capability to the Matter Door Lock component driver.
+ * ver. 1.1.2  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 firmware 4.1.7_0013 returns error reading attribute 0x0000
  * 
  *                                   TODO: finalize the Matter Thermostat driver
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
@@ -34,8 +35,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.1.1' }
-static String timeStamp() { '2023/07/23 10:05 PM' }
+static String version() { '1.1.2' }
+static String timeStamp() { '2023/07/31 6:52 AM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'

@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '1.0.0',
+    version: '1.0.1',
     documentationLink: ''
 )
 /*
@@ -26,14 +26,15 @@ library(
   *  for the specific language governing permissions and limitations under the License.
   *
   * ver. 1.0.0  2024-03-16 kkossev  - first release version
+  * ver. 1.0.1  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.0.0'
-@Field static final String matterStateMachinesLibStamp   = '2024/03/16 8:48 AM'
+@Field static final String matterStateMachinesLib = '1.0.1'
+@Field static final String matterStateMachinesLibStamp   = '2024/07/31 6:46 AM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -493,7 +494,9 @@ void discoverAllStateMachine(Map data = null) {
             if (state['stateMachines']['Confirmation'] == true) {
                 logTrace "discoverAllStateMachine: st:${st} - received bridgeDescriptor Basic Info reading confirmation!"
                 logRequestedClusterAttrResult([cluster:0x28, endpoint:0])
-                st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
+                //st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS`
+                // 07/31/20204  skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
+                st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
             }
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
@@ -505,7 +508,7 @@ void discoverAllStateMachine(Map data = null) {
                 }
             }
             break
-        case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS :
+        case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS :    // skipped - 07/31/20204
             // check if the General Diagnostics cluster 0x0033 is in the ServerList
             List<String> serverList = state.bridgeDescriptor['ServerList']
             logDebug "discoverAllStateMachine: DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS - serverList:${serverList}"
