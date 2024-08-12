@@ -16,7 +16,8 @@
   *
   * ver. 1.0.0  2024-04-05 dds82   - first version
   * ver. 1.1.0  2024-07-20 kkossev - added Battery capability; added Identify command; added warning state and log messages; added handling of unprocessed Door Lock events
-  * ver. 1.1.1  2024-07-23 kkossev - (dev.branch) added switch capability (for Apple Home integration workaround)
+  * ver. 1.1.1  2024-07-23 kkossev - added switch capability (for Apple Home integration workaround)
+  * ver. 1.1.2  2024-08-12 kkossev - fixed importURL
   * 
   *                                  TODO: initialize lock with 'unknown' attributes when the device is created
   *                                  TODO: filter duplicated events
@@ -26,13 +27,13 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String matterComponentLockVersion = '1.1.1'
-@Field static final String matterComponentLockStamp   = '2024/07/23 10:04 PM'
+@Field static final String matterComponentLockVersion = '1.1.2'
+@Field static final String matterComponentLockStamp   = '2024/08/12 7:05 AM'
 
 @Field static final Boolean _DEBUG_LOCK = false
 
 metadata {
-    definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Daniel Segall', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Switch.groovy') {
+    definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Daniel Segall', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Door_Lock') {
         capability 'Sensor'
         capability 'Actuator'
         capability 'Battery'

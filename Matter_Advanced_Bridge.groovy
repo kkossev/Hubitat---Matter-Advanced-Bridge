@@ -24,8 +24,9 @@
  * ver. 1.1.0  2024-07-20 kkossev  - merged pull request from dds82 (added Matter_Generic_Component_Door_Lock); added Identify command; reduced battery attribute subscriptions;
  * ver. 1.1.1  2024-07-23 kkossev  - added Switch capability to the Matter Door Lock component driver.
  * ver. 1.1.2  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 firmware 4.1.7_0013 returns error reading attribute 0x0000
+ * ver. 1.1.3  2024-08-09 kkossev  - (dev. branch) fixed sendSubsribeList() typo; 
  * 
- *                                   TODO: finalize the Matter Thermostat driver
+ *                                   TODO: finalize the Matter Thermostat driver  
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
  */
@@ -35,8 +36,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.1.2' }
-static String timeStamp() { '2023/07/31 6:52 AM' }
+static String version() { '1.1.3' }
+static String timeStamp() { '2023/08/09 7:49 AM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -1391,13 +1392,13 @@ void initialize() {
         initializeVars(fullInit = true)
         sendInfoEvent('initialize()...', 'full initialization - all settings are reset to default')
     }
-    log.warn "initialize(): calling sendSubsribeList()! (last unsubscribe was more than ${timeSinceLastSubscribe} seconds ago)"
+    log.warn "initialize(): calling sendSubscribeList()! (last unsubscribe was more than ${timeSinceLastSubscribe} seconds ago)"
     state.lastTx['subscribeTime'] = now()
     state.states['isUnsubscribe'] = false
     state.states['isSubscribe'] = true  // should be set to false in the parse() method
     sendEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} initializeCtr is ${state.stats['initializeCtr']}", type: 'digital'])
     scheduleCommandTimeoutCheck(delay = 55)
-    sendSubsribeList()
+    sendSubscribeList()
     updated()   // added 02/03/2024
 }
 
@@ -1462,11 +1463,11 @@ String updateStateSubscriptionsList(String addOrRemove, Integer endpoint, Intege
     return cmd
 }
 
-void sendSubsribeList() {
-    sendInfoEvent('sendSubsribeList()...Please wait.', 'sent device subscribe command')
+void sendSubscribeList() {
+    sendInfoEvent('sendSubscribeList()...Please wait.', 'sent device subscribe command')
     List<String> cmds = getSubscribeOrRefreshCmdList('SUBSCRIBE_ALL')
     if (cmds != null && cmds != []) {
-        logTrace "sendSubsribeList(): cmds = ${cmds}"
+        logTrace "sendSubscribeList(): cmds = ${cmds}"
         sendToDevice(cmds)
     }
 }
