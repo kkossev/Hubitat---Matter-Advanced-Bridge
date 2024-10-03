@@ -38,9 +38,9 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.2.0' }
-static String timeStamp() { '2023/10/02 12:57 PM' }
+static String timeStamp() { '2023/10/02 1:39 PM' }
 
-@Field static final Boolean _DEBUG = true
+@Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
