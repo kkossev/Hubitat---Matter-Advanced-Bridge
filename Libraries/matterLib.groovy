@@ -7,7 +7,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
-    version: '1.0.0',
+    version: '1.2.0',
     documentationLink: ''
 )
 /*
@@ -26,14 +26,15 @@ library(
   *  for the specific language governing permissions and limitations under the License.
   *
   * ver. 1.0.0  2024-03-16 kkossev  - frist release version
+  * ver. 1.2.0  2024-10-02 kkossev  - ThermostatClusterAttributes
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.0.0'
-@Field static final String matterLibStamp   = '2024/03/16 8:50 AM'
+@Field static final String matterLibVersion = '1.2.0'
+@Field static final String matterLibStamp   = '2024/10/02 1:38 PM'
 
 // no metadata section for matterLib
 
@@ -169,6 +170,7 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0045') { return BooleanStateClusterAttributes }
     if (cluster == '0101') { return DoorLockClusterAttributes }
     if (cluster == '0102') { return WindowCoveringClusterAttributes }
+    if (cluster == '0201') { return ThermostatClusterAttributes }
     if (cluster == '0300') { return ColorControlClusterAttributes }
     if (cluster == '0400') { return IlluminanceMeasurementClusterAttributes }   // TODO
     if (cluster == '0402') { return TemperatureMeasurementClusterAttributes }
@@ -639,6 +641,45 @@ Map getAttributesMapByClusterId(String cluster) {
     0x0B    : 'GetDayOfWeekForDailyScheduleRsp',
     0x0C    : 'GetRelayStatusLogRsp'
 ]
+
+// 4.3.8.18. 0x001B ThermostatControlSequence Type, (ControlSequenceOfOperation) -> supportedThermostatModes
+@Field static final Map<Integer, String> ThermostatControlSequences = [
+    0x00    : 'CoolingOnly',            // Heat and Emergency are not possible  [COOL]
+    0x01    : 'CoolingWithReheat',      // Heat and Emergency are not possible  [COOL]
+    0x02    : 'HeatingOnly',            // Cool and precooling (see Terms) are not possible [HEAT]
+    0x03    : 'HeatingWithReheat',      // Cool and precooling are not possible [HEAT]
+    0x04    : 'CoolingAndHeating',      // All modes are possible [HEAT & COOL]
+    0x05    : 'CoolingAndHeatingithReheat',     // All modes are possible [HEAT & COOL]
+    0x06    : 'FanOnly',
+    0x07    : 'Dry',
+    0x08    : 'Sleep'
+]
+
+@Field static final Map<Integer, List<String>> HubitatThermostatModes  = [
+    0x00    : ['off','cool'],
+    0x01    : ['off','cool'],
+    0x02    : ['off','heat'],
+    0x03    : ['off','heat'],
+    0x04    : ['off','heat', 'cool'],
+    0x05    : ['off','heat', 'cool'],
+    0x06    : ['off'],
+    0x07    : ['off','emergencyHeat'],
+    0x08    : ['off','eco']
+]
+
+// 4.3.8.21. 0x001C ThermostatSystemModes Type (SystemMode)-> thermostatMode 
+@Field static final Map<Integer, String> ThermostatSystemModes = [
+    0x00    : 'off',                    // The Thermostat does not generate demand for Cooling or Heating
+    0x01    : 'auto',                   //Demand is generated for either Cooling or Heating, as required    [AUTO]
+    0x03    : 'cool',                   // Demand is only generated for Cooling [COOL]
+    0x04    : 'heat',                   // Demand is only generated for Heating [HEAT]
+    0x05    : 'emergencyHeat',          // 2nd stage heating is in use to achieve desired temperature [HEAT]
+    0x06    : 'precooling',             // [COOL]
+    0x07    : 'fanOnly',
+    0x08    : 'dry',
+    0x09    : 'sleep'
+]
+
 
 // 5.3.7 Window Covering Controller Cluster Commands
 @Field static final  Map<Integer, String> WindowCoveringClusterCommands = [

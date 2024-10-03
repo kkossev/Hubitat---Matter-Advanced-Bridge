@@ -24,9 +24,10 @@
  * ver. 1.1.0  2024-07-20 kkossev  - merged pull request from dds82 (added Matter_Generic_Component_Door_Lock); added Identify command; reduced battery attribute subscriptions;
  * ver. 1.1.1  2024-07-23 kkossev  - added Switch capability to the Matter Door Lock component driver.
  * ver. 1.1.2  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 firmware 4.1.7_0013 returns error reading attribute 0x0000
- * ver. 1.1.3  2024-08-09 kkossev  - (dev. branch) fixed sendSubsribeList() typo; 
+ * ver. 1.1.3  2024-08-09 kkossev  - fixed sendSubsribeList() typo; 
+ * ver. 1.2.0  2024-10-03 kkossev  - [2.3.9.186] platform: cleanSubscribe; decoded events for child devices w/o the attribute defined are sent anyway; added Matter Thermostats.
  * 
- *                                   TODO: finalize the Matter Thermostat driver  
+ *                                   TODO:  
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
  */
@@ -36,10 +37,10 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.1.3' }
-static String timeStamp() { '2023/08/09 7:49 AM' }
+static String version() { '1.2.0' }
+static String timeStamp() { '2023/10/02 12:57 PM' }
 
-@Field static final Boolean _DEBUG = false
+@Field static final Boolean _DEBUG = true
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
@@ -165,7 +166,12 @@ metadata {
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
     */
-    //0x003B : [parser: 'parseSwitch', attributes: 'SwitchClusterAttributes', events: 'SwitchClusterEvents'],       // Switch
+    /*
+    0x003B : [parser: 'parseSwitch', attributes: 'SwitchClusterAttributes', events: 'SwitchClusterEvents',       // Switch
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],
+                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]]]
+    ],
+    */
     // Descriptor Cluster
     /*
     0x001D : [attributes: 'DescriptorClusterAttributes', parser: 'parseDescriptorCluster',      // decimal(29) manually subscribe to the Bridge device ep=0 0x001D 0x0003
@@ -188,13 +194,19 @@ metadata {
     ],
     // Thermostat
     0x0201 : [attributes: 'ThermostatClusterAttributes', commands: 'ThermostatClusterCommands', parser: 'parseThermostat',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // LocalTemperature
-                               [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // OccupiedCoolingSetpoint  // TODO - not implemented!
-                               [0x0004: [min: 0, max: 0xFFFF, delta: 0]],   // OccupiedHeatingSetpoint
-                               [0x0007: [min: 0, max: 0xFFFF, delta: 0]],   // SystemMode
-                               [0x0008: [min: 0, max: 0xFFFF, delta: 0]],   // AlarmMask
-                               [0x0009: [min: 0, max: 0xFFFF, delta: 0]],   // RunningState
-                               [0x0011: [min: 0, max: 0xFFFF, delta: 0]]]   // ControlSequenceOfOperation
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // LocalTemperature +Aqara
+                               [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // AbsMinHeatSetpointLimit  +Aqaea
+                               [0x0004: [min: 0, max: 0xFFFF, delta: 0]],   // AbsMaxHeatSetpointLimit  +Aqara
+                               [0x0010: [min: 0, max: 0xFFFF, delta: 0]],   // LocalTemperatureCalibration
+                               [0x0012: [min: 0, max: 0xFFFF, delta: 0]],   // OccupiedHeatingSetpoint  +Aqara
+                               [0x0015: [min: 0, max: 0xFFFF, delta: 0]],   // MinHeatSetpointLimit +Aqara
+                               [0x0016: [min: 0, max: 0xFFFF, delta: 0]],   // MaxHeatSetpointLimit +Aqara
+                               [0x001A: [min: 0, max: 0xFFFF, delta: 0]],   // RemoteSensing
+                               [0x001B: [min: 0, max: 0xFFFF, delta: 0]],   // ControlSequenceOfOperation   +Aqara
+                               [0x001C: [min: 0, max: 0xFFFF, delta: 0]],   // SystemMode   +Aqara
+                               [0x001D: [min: 0, max: 0xFFFF, delta: 0]],   // AlarmMask
+                               [0x001E: [min: 0, max: 0xFFFF, delta: 0]],   // ThermostatRunningMode
+                               [0x0029: [min: 0, max: 0xFFFF, delta: 0]]]   // ThermostatRunningState
     ],
     // ColorControl Cluster
     0x0300 : [attributes: 'ColorControlClusterAttributes', commands: 'ColorControlClusterCommands', parser: 'parseColorControl',
@@ -437,7 +449,6 @@ void parseGlobalElements(final Map descMap) {
         case 'FFFD' :   // ClusterRevision      uint16
         case 'FFFB' :   // AttributeList        list[attribid]
             String fingerprintName = getFingerprintName(descMap)
-            //String attributeName = getAttributeName(descMap)
             String attributeName = getStateClusterName(descMap)
             String action = 'stored in'
             if (state[fingerprintName] == null) {
@@ -447,7 +458,6 @@ void parseGlobalElements(final Map descMap) {
                 state[fingerprintName][attributeName] = [:]
                 action = 'created in'
             }
-            //state[fingerprintName][attributeName] = descMap.value
             state[fingerprintName][attributeName] = descMap.value
             logTrace "parseGlobalElements: cluster: <b>${getClusterName(descMap.cluster)}</b> (0x${descMap.cluster}) attr: <b>${attributeName}</b> (0x${descMap.attrId})  value:${descMap.value} <b>-> ${action}</b> [$fingerprintName][$attributeName]"
             //logTrace "parseGlobalElements: state[${fingerprintName}][${attributeName}] = ${state[fingerprintName][attributeName]}"
@@ -1016,34 +1026,92 @@ void sendColorNameEvent(final Map descMap, final Integer huePar=null, final Inte
     ], descMap, true)
 }
 
+String getTemperatureUnit() {
+    return location.temperatureScale == 'F' ? "\u00B0" + 'F' : "\u00B0" + 'C'
+}
+
+Double convertTemperature(String value) {
+    Double valueInt = HexUtils.hexStringToInt(value) / 100.0
+    String unit
+    //log.debug "convertTemperature: location.temperatureScale:${location.temperatureScale}"
+    if (location.temperatureScale == 'F') {
+        valueInt = (valueInt * 1.8) + 32
+    }
+    Double valueIntCorrected = valueInt.round(1)
+    return valueIntCorrected
+}
+
 void parseThermostat(final Map descMap) {
     if (descMap.cluster != '0201') { logWarn "parseThermostat: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    if (descMap.attrId == '0000') { // LocalTemperature
-        Double valueInt = HexUtils.hexStringToInt(descMap.value) / 100.0
-        String unit
-        //log.debug "parseThermostat: location.temperatureScale:${location.temperatureScale}"
-        if (location.temperatureScale == 'F') {
-            valueInt = (valueInt * 1.8) + 32
-            unit = "\u00B0" + 'F'
-        }
-        else {
-            unit = "\u00B0" + 'C'
-        }
-        Double valueIntCorrected = valueInt.round(1)
-
-        sendMatterEvent([
-            name: 'temperature',
-            value: valueIntCorrected,
-            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} temperature is ${valueInt} ${unit}",
-            unit: unit
-        ], descMap, true)
-    }
-    else {
-        logDebug "parseThermostat: ${(ThermostatClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    Double valueIntCorrected = 0.0
+    String unit = getTemperatureUnit()
+    switch (descMap.attrId) {
+        case '0000' : // LocalTemperature -> temperature
+            valueIntCorrected = convertTemperature(descMap.value)
+            sendMatterEvent([
+                name: 'temperature',
+                value: valueIntCorrected,
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} temperature is ${valueIntCorrected} ${unit}",
+                unit: unit
+            ], descMap, false)
+            break
+        case '0012' : // OccupiedHeatingSetpoint -> heatingSetpoint
+            valueIntCorrected = convertTemperature(descMap.value)
+            sendMatterEvent([
+                name: 'heatingSetpoint',
+                value: valueIntCorrected,
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} heatingSetpoint is ${valueIntCorrected} ${unit}",
+                unit: unit
+            ], descMap, false)
+            break
+        case '001B' : // ControlSequenceOfOperation -> supportedThermostatModes
+            String controlSequenceMatter = ThermostatControlSequences[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
+            List<String> supportedThermostatModes = HubitatThermostatModes[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
+            sendMatterEvent([
+                name: 'supportedThermostatModes',
+                value:  JsonOutput.toJson(supportedThermostatModes),
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} supportedThermostatModes is ${supportedThermostatModes} (${controlSequenceMatter})"
+            ], descMap, false)
+            break
+        case '001C' : // SystemMode -> ThermostatSystemMode -> thermostatMode 
+            String systemMode = ThermostatSystemModes[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
+            // change the attribute name first letter to lower case
+            systemMode = systemMode[0].toLowerCase() + systemMode[1..-1]
+            sendMatterEvent([
+                name: 'thermostatMode',
+                value: systemMode,      // off, heat, ......
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatMode is ${systemMode}"
+            ], descMap, false)
+            break
+        case ['FFF8', 'FFF9', 'FFFA', 'FFFB', 'FFFC', 'FFFD', '00FE'] :
+            logTrace "parseThermostat: ${getAttributeName(descMap)} = ${descMap.value}"
+            break
+        default :
+            Map eventMap = [:]
+            String attrName = getAttributeName(descMap)
+            String fingerprintName = getFingerprintName(descMap)
+            logDebug "parseThermostat: fingerprintName:${fingerprintName} attrName:${attrName}"
+            if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
+            String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
+            if (attrName in ThermostatClusterAttributes.values().toList()) {
+                String valueFormatted = descMap.value
+                if (attrName in ['AbsMinHeatSetpointLimit', 'AbsMaxHeatSetpointLimit', 'MinHeatSetpointLimit', 'MaxHeatSetpointLimit']) {
+                    valueFormatted = convertTemperature(descMap.value).toString()   
+                }
+                eventMap = [name: eventName, value:valueFormatted, descriptionText: "${eventName} is: ${valueFormatted}"]
+                if (logEnable) { logInfo "parseThermostat: ${attrName} = ${valueFormatted}" }
+            }
+            else {
+                logWarn "parseThermostat: unsupported: ${attrName} = ${descMap.value}"
+            }
+            if (eventMap != [:]) {
+                eventMap.type = 'physical'; eventMap.isStateChange = true
+                sendMatterEvent(eventMap, descMap, true) // child events
+            }
+            break
     }
 }
 
-//events
 
 // Common code method for sending events
 void sendMatterEvent(final Map<String, String> eventParams, DeviceWrapper dw, ignoreDuplicates = false) {
@@ -1123,9 +1191,20 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
         logTrace "sendMatterEvent: <b>ignoreDuplicates=false</b> or isRefresh=${state.states['isRefresh'] } for event: ${eventMap.descriptionText} (value:${value})"
     }
     if (dw != null && dw?.disabled != true) {
+        // added 2024/10/02 - check if the child device has such an attribute and if not -> use dw.sendEvent instead of dw.parse
+        if (dw?.hasAttribute(name) != true) {
+            logTrace "sendMatterEvent: <b>cannot send </b> for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            dw.sendEvent(eventMap)
+            logInfo "${eventMap.descriptionText}"
+            // updateDataValue 'ServerList', JsonOutput.toJson(d.ServerList)
+            // added 2024/10/02 - update the data value in the child device
+            dw.updateDataValue(name, value)
+        }
+        else {
         // send events to child for parsing. Any filtering of duplicated events will be potentially done in the child device handler.
-        logDebug "sendMatterEvent: sending for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
-        dw.parse([eventMap])
+            logDebug "sendMatterEvent: sending for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            dw.parse([eventMap])
+        }
     } else if (descMap?.endpoint == null || descMap?.endpoint == '00') {
         // Bridge event
         sendEvent(eventMap)
@@ -1289,6 +1368,7 @@ void readAttribute(Integer endpoint, Integer cluster, Integer attrId) {
     sendToDevice(matter.readAttributes(attributePaths))
 }
 
+// not used
 void configure() {
     log.warn 'configure...'
     sendToDevice(subscribeCmd())
@@ -1369,8 +1449,6 @@ void loadAllDefaults() {
     deleteAllStates()
     //deleteAllChildDevices()
     initializeVars(fullInit = true)
-    //initialize()
-    //configure()
     updated()
     sendInfoEvent('All Defaults Loaded! F5 to refresh')
 }
@@ -1406,9 +1484,18 @@ void clearStates() {
     logWarn 'clearStates()...'
 }
 
+// device driver command 
 void reSubscribe() {
-    logWarn 'reSubscribe() ...'
-    unsubscribe()
+    logWarn "reSubscribe() ...(${location.hub.firmwareVersionString >= '2.3.9.186'})"
+    if (location.hub.firmwareVersionString >= '2.3.9.186') {
+        sendToDevice(cleanSubscribeCmd())
+        sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device reSubscribe command')
+        runIn(3, 'clearInfoEvent')
+    }
+    else {
+        unsubscribe()
+        logWarn 'cleanSubscribe() is not supported for this Hub firmware version!'
+    }
 }
 
 void unsubscribe() {
@@ -1554,6 +1641,21 @@ String subscribeCmd() {
     return matter.subscribe(0, 0xFFFF, attributePaths)
 }
 
+// availabe from HE platform version [2.3.9.186]
+String cleanSubscribeCmd() {
+    List<Map<String, String>> attributePaths = []
+    attributePaths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
+    attributePaths.addAll(state.subscriptions?.collect { sub ->
+        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
+    })
+    if (attributePaths.isEmpty()) {
+        logWarn 'cleanSubscribeCmd(): attributePaths is empty!'
+        return null
+    }
+    return matter.cleanSubscribe(0, 0xFFFF, attributePaths)
+}
+
+
 // TODO - check if this is still needed ?
 void checkSubscriptionStatus() {
     if (state.states == null) { state.states = [:] }
@@ -1595,14 +1697,14 @@ void fingerprintsToSubscriptionsList() {
             // Subscribe=[6, 8, 768]
             subscribeList.each { cluster  ->
                 Integer clusterInt = safeToInt(cluster)
-                List supportedClustersKeys = SupportedMatterClusters.keySet().collect { it as Integer }
+                List supportedClustersKeys = SupportedMatterClusters.keySet()?.collect { it as Integer }
                 if (!supportedClustersKeys.contains(clusterInt)) {
                     logWarn "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} is not in the SupportedMatterClusters list!"
                     return  // continue with the next cluster
                 }
                 def supportedSubscriptions = SupportedMatterClusters[clusterInt]['subscriptions']
-                def supportedSubscriptionsKeys = supportedSubscriptions*.keySet().flatten()
-                logTrace "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} subscribeList=${subscribeList} supportedSubscriptions=${supportedSubscriptions} supportedSubscriptionsKeys=${supportedSubscriptionsKeys}"
+                def supportedSubscriptionsKeys = supportedSubscriptions*.keySet()?.flatten()
+                logDebug "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} subscribeList=${subscribeList} supportedSubscriptions=${supportedSubscriptions} supportedSubscriptionsKeys=${supportedSubscriptionsKeys}"
                 String endpointId = fingerprintName.substring(fingerprintName.length() - 2, fingerprintName.length())
                 // Add the supported subscriptions to the state.subscriptions list
                 supportedSubscriptionsKeys.each { attribute ->
@@ -1616,7 +1718,7 @@ void fingerprintsToSubscriptionsList() {
                         // 0006_FFFB=[00, 4000, 4001, 4002, 4003, FFF8, FFF9, FFFB, FFFC, FFFD]
                         // check if the attribute is in the clusterAttrList
                         if (!clusterAttrList.contains(attribute)) {
-                            logWarn "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} is not in the clusterAttrList ${clusterAttrList}!"
+                            logWarn "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} is not in the clusterListName=${clusterListName} clusterAttrList ${clusterAttrList}!"
                             return  // continue with the next attribute
                         }
                         logDebug "fingerprintsToSubscriptionsList: updateStateSubscriptionsList: adding endpointId=${endpointId} clusterInt:${clusterInt} attribute:${attribute} clusterListName=${clusterListName} to the state.subscriptions list!"
@@ -1997,7 +2099,7 @@ void componentSetColorTemperature(DeviceWrapper dw, BigDecimal colorTemperature,
 
 void componentSetHue(DeviceWrapper dw, BigDecimal hue) {
     if (!dw.hasCommand('setHue')) { logError "componentSetHue(${dw}) driver '${dw.typeName}' does not have command 'setHue' in ${dw.supportedCommands}"; return }
-    Integer deviceNumber =
+    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logDebug "Setting hue ${hue} for device ${dw.getDataValue('id')} ${dw}"
     Integer hueScaled = Math.min(Math.max(Math.round(hue * 2.54), 0), 254)
     String hueHex = byteReverseParameters(HexUtils.integerToHexString(hueScaled, 1))
@@ -2093,7 +2195,6 @@ void componentSetPosition(DeviceWrapper dw, BigDecimal positionPar) {
     if (position > 100) { position = 100 }
     logDebug "Setting position ${position} for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
     List<Map<String, String>> cmdFields = []
-    //cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString((100 - position) * 100, 2))))
     cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(position * 100, 2))))
     cmd = matter.invoke(deviceNumber, 0x0102, 0x05, cmdFields)  // 0x0102 = Window Covering Cluster, 0x05 = GoToLiftPercentage
     sendToDevice(cmd)
@@ -2123,24 +2224,44 @@ void componentStopPositionChange(DeviceWrapper dw) {
 
 void componentSetThermostatMode(DeviceWrapper dw, String mode) {
     if (dw.currentValue('supportedThermostatModes') == null) { initializeThermostat(dw) }
-    logWarn "componentSetThermostatMode(${dw}, ${mode}) is not implemented!"
-    return
+    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
+    Integer key = ThermostatSystemModes.find { k, v -> v == mode }?.key
+    Boolean isSupportedMode = dw.currentValue('supportedThermostatModes')?.contains(mode)
+    logDebug "componentSetThermostatMode: setting thermostatMode to <b>${mode}</b> (key=${key}) for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetThermostatMode(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
+    if (key == null || !isSupportedMode) { logWarn "componentSetThermostatMode(): mode '${mode}' is not valid!" ; return }
+    List<Map<String, String>> attrWriteRequests = []
+    attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x201, 0x001C, DataType.UINT8, intToHexStr(key,1))) // 0x0201 = Thermostat Cluster, 0x001C = SetThermostatMode
+    String cmd = matter.writeAttributes(attrWriteRequests)
+    sendToDevice(cmd)
 }
 
 void componentSetThermostatFanMode(DeviceWrapper dw, String mode) {
-    if (dw.currentValue('supportedThermostatModes') == null) { initializeThermostat(dw) }
+    if (dw.currentValue('supportedThermostatFanModes') == null) { initializeThermostat(dw) }
     logWarn "componentSetThermostatFanMode(${dw}, ${mode}) is not implemented!"
     return
 }
 
-void componentSetHeatingSetpoint(DeviceWrapper dw, BigDecimal temperature) {
-    if (dw.currentValue('supportedThermostatModes') == null) { initializeThermostat(dw) }
-    logWarn "componentSetHeatingSetpoint(${dw}, ${temperature}) is not implemented!"
-    return
+void componentSetHeatingSetpoint(DeviceWrapper dw, BigDecimal temperaturePar) {
+    if (dw.currentValue('heatingSetpoint') == null) { initializeThermostat(dw) }
+    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
+    logDebug "componentSetHeatingSetpoint: setting heatingSetpoint to <b>${temperature}</b> for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetThermostatMode(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
+    Double temperature = temperaturePar as Double
+    Double minHeatSetpoint = safeToDouble(dw?.getDataValue('minHeatSetpointLimit')) ?: 5.0
+    Double maxHeatSetpoint = safeToDouble(dw?.getDataValue('maxHeatSetpointLimit')) ?: 35.0
+    //log.trace "parseThermostat: minHeatSetpoint:${minHeatSetpoint} maxHeatSetpoint:${maxHeatSetpoint}"
+    if (temperature < minHeatSetpoint) { temperature = minHeatSetpoint }
+    if (temperature > maxHeatSetpoint) { temperature = maxHeatSetpoint }
+    Integer temperatureScaled = temperature * 100
+    List<Map<String, String>> attrWriteRequests = []
+    attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x201, 0x0012, DataType.INT16, intToHexStr(temperatureScaled,2))) // 0x0201 = Thermostat Cluster, 0x0012 = OccupiedHeatingSetpoint
+    String cmd = matter.writeAttributes(attrWriteRequests)
+    sendToDevice(cmd)
 }
 
 void componentSetCoolingSetpoint(DeviceWrapper dw, BigDecimal temperature) {
-    if (dw.currentValue('supportedThermostatModes') == null) { initializeThermostat(dw) }
+    if (dw.currentValue('coolingSetpoint') == null) { initializeThermostat(dw) }
     logWarn "componentSetCoolingSetpoint(${dw}, ${temperature}) is not implemented!"
     return
 }
@@ -2158,8 +2279,8 @@ void componentLock(DeviceWrapper dw) {
     List<Map<String, String>> cmdFields = []
     //cmdFields.add(matter.cmdField(DataType.STRING_OCTET8, 0x00, ""))
     cmdFields.add(matter.cmdField(DataType.STRING_OCTET8, 0x00))
-    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, cmdFields) // 0x0101 = DoorLock Cluster, 0x00 = LockDoor
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x00) // 0x0101 = DoorLock Cluster, 0x00 = LockDoor
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, cmdFields) // 0x0101 = DoorLock Cluster, 0x00 = LockDoor
+    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x00) // 0x0101 = DoorLock Cluster, 0x00 = LockDoor
 
     /*
     List<Map<String, String>> attrWriteRequests = [matter.attributeWriteRequest(deviceNumber, 0x0101, 0x0000, DataType.UINT8, '10')]
@@ -2210,17 +2331,17 @@ void componentSetCodeLength(DeviceWrapper dw, BigDecimal codeLength) {
 void initializeThermostat(DeviceWrapper dw) {
     logWarn "initializeThermostat(${dw}) is not implemented!"
     def supportedThermostatModes = []
-    supportedThermostatModes = ["off", "heat", "auto"]
+    supportedThermostatModes = ["off", "heat"]  // removed "auto" 2024/10/02
     logInfo "supportedThermostatModes: ${supportedThermostatModes}"
-    sendMatterEvent([name: "supportedThermostatModes", value:  JsonOutput.toJson(supportedThermostatModes), isStateChange: true], dw)
-    sendMatterEvent([name: "supportedThermostatFanModes", value: JsonOutput.toJson(["auto"]), isStateChange: true], dw)
-    sendMatterEvent([name: "thermostatMode", value: "heat", isStateChange: true, description: "inital attribute setting"], dw)
-    sendMatterEvent([name: "thermostatFanMode", value: "auto", isStateChange: true, description: "inital attribute setting"], dw)
-    sendMatterEvent([name: "thermostatOperatingState", value: "idle", isStateChange: true, description: "inital attribute setting"], dw)
-    sendMatterEvent([name: "thermostatSetpoint", value:  12.3, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw)        // Google Home compatibility
-    sendMatterEvent([name: "heatingSetpoint", value: 12.3, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw)
-    sendMatterEvent([name: "coolingSetpoint", value: 34.5, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw)
-    sendMatterEvent([name: "temperature", value: 23.4, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw)
+    if (dw.currentValue('supportedThermostatModes') == null) { sendMatterEvent([name: "supportedThermostatModes", value:  JsonOutput.toJson(supportedThermostatModes), isStateChange: true], dw) }
+    if (dw.currentValue('supportedThermostatFanModes') == null) { sendMatterEvent([name: "supportedThermostatFanModes", value: JsonOutput.toJson(["auto"]), isStateChange: true], dw)  }
+    if (dw.currentValue('thermostatMode') == null) { sendMatterEvent([name: "thermostatMode", value: "heat", isStateChange: true, description: "inital attribute setting"], dw) }
+    if (dw.currentValue('thermostatFanMode') == null) { sendMatterEvent([name: "thermostatFanMode", value: "auto", isStateChange: true, description: "inital attribute setting"], dw) }
+    if (dw.currentValue('thermostatOperatingState') == null) { sendMatterEvent([name: "thermostatOperatingState", value: "idle", isStateChange: true, description: "inital attribute setting"], dw) }
+    if (dw.currentValue('thermostatSetpoint') == null) { sendMatterEvent([name: "thermostatSetpoint", value:  12.3, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }       // Google Home compatibility
+    if (dw.currentValue('heatingSetpoint') == null) { sendMatterEvent([name: "heatingSetpoint", value: 12.3, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }
+    if (dw.currentValue('coolingSetpoint') == null) { sendMatterEvent([name: "coolingSetpoint", value: 34.5, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }
+    if (dw.currentValue('temperature') == null) { sendMatterEvent([name: "temperature", value: 23.4, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }
 }
 
 /*
@@ -2764,7 +2885,33 @@ void test(par) {
     log.warn "getSubscribeOrRefreshCmdList=${s}"
     */
     //fingerprintsToSubscriptionsList()
-    String cmd
-    cmd = matter.lock()
-    log.trace "cmd=${cmd}"  
+   // def  cmd = matter.getMatterEndpoints()
+   
+   // log.trace "cmd=${cmd}"  
+
+/*
+    List<Map<String, String>> attributePaths = []
+    attributePaths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
+    attributePaths.addAll(state.subscriptions?.collect { sub ->
+        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
+    })
+    if (attributePaths.isEmpty()) {
+        logWarn 'subscribeCmd(): attributePaths is empty!'
+        return null
+    }
+    def xx = matter.cleanSubscribe(0, 0xFFFF, attributePaths)
+*/
+    def xx = location.hub.firmwareVersionString
+    /*
+    sendToDevice(xx)
+    log.trace "xx=${xx}"
+    log.trace "${location.hub.firmwareVersionString >= '2.3.9.186'}"
+    */
+    /*
+      ChildDeviceWrapper dw = getDw(descMap)
+      dw.sendEvent(name: 'test', value: 'thermostat', descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostat is active")
+
+    */
+
+    fingerprintsToSubscriptionsList()
 }

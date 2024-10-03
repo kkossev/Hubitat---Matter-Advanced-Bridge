@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '1.0.1',
+    version: '1.0.2',
     documentationLink: ''
 )
 /*
@@ -27,14 +27,15 @@ library(
   *
   * ver. 1.0.0  2024-03-16 kkossev  - first release version
   * ver. 1.0.1  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
+  * ver. 1.0.2  2024-09-29 kkossev  - (HE platform 2.3.9.186 optimizations)
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.0.1'
-@Field static final String matterStateMachinesLibStamp   = '2024/07/31 6:46 AM'
+@Field static final String matterStateMachinesLib = '1.0.2'
+@Field static final String matterStateMachinesLibStamp   = '2024/09/29 5:20 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -787,7 +788,7 @@ void discoverAllStateMachine(Map data = null) {
             state.states['isInfo'] = false
             logDebug "discoverAllStateMachine: st:${st} - THE END"
             sendInfoEvent('*** END of the Matter Bridge and Devices discovery ***')
-            sendInfoEvent('<b>Please wait for the re-subscribe process to complete...</b>')
+            //sendInfoEvent('<b>Please wait for the re-subscribe process to complete...</b>')
             state['stateMachines']['discoverAllResult'] = SUCCESS
             st = 0
             break
