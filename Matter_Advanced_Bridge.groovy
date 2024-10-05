@@ -26,8 +26,10 @@
  * ver. 1.1.2  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 firmware 4.1.7_0013 returns error reading attribute 0x0000
  * ver. 1.1.3  2024-08-09 kkossev  - fixed sendSubsribeList() typo; 
  * ver. 1.2.0  2024-10-03 kkossev  - [2.3.9.186] platform: cleanSubscribe; decoded events for child devices w/o the attribute defined are sent anyway; added Matter Thermostats.
+ * ver. 1.2.1  2024-10-05 kkossev  - (dev. branch) thermostatSetpoint attribute is also updated; Matter Events basic decoding (buttons and Locks are still NOT working!); thermostat driver automatic assignment bug fix; 
+ *                                   checking both 'maxHeatSetpointLimit' and 'absMaxHeatSetpointLimit' when setting the thermostatSetpoint; thermostatOperatingState is updated (digital); thermostat on() and of() commands bug fix;
  * 
- *                                   TODO:  
+ *                                   TODO: Matter events subscription - buttons and locks
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
  */
@@ -37,12 +39,12 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.2.0' }
-static String timeStamp() { '2023/10/02 1:39 PM' }
+static String version() { '1.2.1' }
+static String timeStamp() { '2023/10/05 11:42 AM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
-@Field static final String  COMM_LINK =   'https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009'
+@Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = false
@@ -166,12 +168,13 @@ metadata {
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
     */
-    /*
+    
     0x003B : [parser: 'parseSwitch', attributes: 'SwitchClusterAttributes', events: 'SwitchClusterEvents',       // Switch
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],
-                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // NumberOfPositions
+                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // CurrentPosition
+                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // MultiPressMax
     ],
-    */
+    
     // Descriptor Cluster
     /*
     0x001D : [attributes: 'DescriptorClusterAttributes', parser: 'parseDescriptorCluster',      // decimal(29) manually subscribe to the Bridge device ep=0 0x001D 0x0003
@@ -295,8 +298,8 @@ void parse(final String description) {
     if (!(((descMap.attrId in ['FFF8', 'FFF9', 'FFFA', 'FFFC', 'FFFD', '00FE']) && DO_NOT_TRACE_FFFX) || state['states']['isDiscovery'] == true)) {
         logDebug "parse: descMap:${descMap}  description:${description}"
     }
-
     parseGlobalElements(descMap)
+//return
     gatherAttributesValuesInfo(descMap)
 
     String parserFunc = ParsedMatterClusters[HexUtils.hexStringToInt(descMap.cluster)]
@@ -372,7 +375,7 @@ void checkStateMachineConfirmation(final Map descMap) {
 }
 
 String getClusterName(final String cluster) { return MatterClusters[HexUtils.hexStringToInt(cluster)] ?: UNKNOWN }
-String getAttributeName(final Map descMap) { return getAttributeName(descMap.cluster, descMap.attrId) }
+String getAttributeName(final Map descMap) { return (descMap.attrId != null) ? getAttributeName(descMap.cluster, descMap.attrId) : UNKNOWN }
 String getAttributeName(final String cluster, String attrId) { return getAttributesMapByClusterId(cluster)?.get(HexUtils.hexStringToInt(attrId)) ?: GlobalElementsAttributes[HexUtils.hexStringToInt(attrId)] ?: UNKNOWN }
 String getFingerprintName(final Map descMap) { return descMap.endpoint == '00' ? 'bridgeDescriptor' : "fingerprint${descMap.endpoint}" }
 String getFingerprintName(final Integer endpoint) { return getFingerprintName([endpoint: HexUtils.integerToHexString(endpoint, 1)]) }
@@ -469,6 +472,9 @@ void parseGlobalElements(final Map descMap) {
 }
 
 void gatherAttributesValuesInfo(final Map descMap) {
+    if (descMap == null || descMap?.attrId == null) {
+        return
+    }
     Integer attrInt = descMap.attrInt as Integer
     String  attrName = getAttributeName(descMap)
     Integer tempIntValue
@@ -748,18 +754,42 @@ void parseOccupancySensing(final Map descMap) {
     }
 }
 
-// Method for parsing switch
+String getEventName(final Map descMap) { 
+    return (descMap.evtId != null) ? getEventName(descMap.cluster, descMap.evtId) : 'NONE' 
+}
+String getEventName(final String cluster, String evtId) {
+     return getEventsMapByClusterId(cluster)?.get(HexUtils.hexStringToInt(evtId)) ?: UNKNOWN 
+}
+
+
+// Method for parsing 003B Switch cluster attributes and events
 void parseSwitch(final Map descMap) {
     if (descMap.cluster != '003B') { logWarn "parseSwitch: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    if (descMap.attrId == '0000') { // Switch
-        String switchState = descMap.value == '01' ? 'on' : 'off'
-        sendMatterEvent([
-            name: 'switch',
-            value: switchState,
-            descriptionText: "${getDeviceDisplayName(descMap.endpoint)} switch is ${switchState}"
-        ], descMap, true)
-    } else {
-        logTrace "parseSwitch: ${(SwitchClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    Map eventMap = [:]
+    String attrName = getAttributeName(descMap)
+    String evtName = getEventName(descMap)                  // switch event - added 2024/10/04
+    String fingerprintName = getFingerprintName(descMap)
+    logDebug "parseSwitch: fingerprintName:${fingerprintName} attrName:${attrName} evtName:${evtName}"
+    if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
+    String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
+    if (descMap.evtId != null) {    // event
+        eventName = evtName[0].toLowerCase() + evtName[1..-1]  // change the event name first letter to lower case
+        eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} EVENT ${eventName} : ${descMap.value}"]
+        if (logEnable) { logDebug "parseSwitch: EVENT ${eventName} : ${descMap.value}" }
+    }
+    else {  // attribute
+        if (attrName in SwitchClusterAttributes.values().toList()) {
+            String valueFormatted = descMap.value
+            eventMap = [name: eventName, value:valueFormatted, descriptionText: "${eventName} : ${valueFormatted}"]
+            if (logEnable) { logInfo "parseSwitch: ${attrName} is ${valueFormatted}" }
+        }
+        else {
+            logWarn "parseSwitch: unsupported: ${attrName} = ${descMap.value}"
+        }
+    }
+    if (eventMap != [:]) {
+        eventMap.type = 'physical'; eventMap.isStateChange = true
+        sendMatterEvent(eventMap, descMap, true) // child events
     }
 }
 
@@ -1043,6 +1073,7 @@ Double convertTemperature(String value) {
 
 void parseThermostat(final Map descMap) {
     if (descMap.cluster != '0201') { logWarn "parseThermostat: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    ChildDeviceWrapper dw = getDw(descMap)
     Double valueIntCorrected = 0.0
     String unit = getTemperatureUnit()
     switch (descMap.attrId) {
@@ -1063,6 +1094,13 @@ void parseThermostat(final Map descMap) {
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} heatingSetpoint is ${valueIntCorrected} ${unit}",
                 unit: unit
             ], descMap, false)
+            sendMatterEvent([name: 'thermostatSetpoint', value: valueIntCorrected, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} heatingSetpoint is ${valueIntCorrected} ${unit}", unit: unit], descMap, false)
+            if ( valueIntCorrected > safeToDouble(dw?.currentValue('temperature'))) {
+                sendMatterEvent([name: 'thermostatOperatingState', value: 'heating', type: 'digital', descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatOperatingState was set to heating"], descMap, true)
+            }
+            else {
+                sendMatterEvent([name: 'thermostatOperatingState', value: 'idle', type: 'digital', descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatOperatingState was set to idle"], descMap, true)
+            }
             break
         case '001B' : // ControlSequenceOfOperation -> supportedThermostatModes
             String controlSequenceMatter = ThermostatControlSequences[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
@@ -1896,6 +1934,15 @@ Map mapTuyaCategory(Map d) {
     if ('45' in d.ServerList) {   // Contact Sensor
         return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
     }
+    if ('0101' in d.ServerList) {   // Door Lock (since version 1.1.0)
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Door Lock', product_name: 'Door Lock' ]
+    }
+    if ('0102' in d.ServerList) {   // Curtain Motor (uses custom driver)
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Window Shade', product_name: 'Curtain Motor' ]
+    }
+    if ('0201' in d.ServerList) {   // Thermostat (since version 1.2.0)
+        return [ driver: 'Generic Component Thermostat', product_name: 'Thermostat' ]
+    }
     if ('0400' in d.ServerList) {   // Illuminance Sensor
         return [ driver: 'Generic Component Omni Sensor', product_name: 'Illuminance Sensor' ]
     }
@@ -1907,15 +1954,6 @@ Map mapTuyaCategory(Map d) {
     }
     if ('0406' in d.ServerList) {   // OccupancySensing (motion)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Motion Sensor', product_name: 'Motion Sensor' ]
-    }
-    if ('0101' in d.ServerList) {   // Door Lock (since version 1.1.0)
-        return [ namespace: 'kkossev', driver: 'Matter Generic Component Door Lock', product_name: 'Door Lock' ]
-    }
-    if ('0102' in d.ServerList) {   // Curtain Motor (uses custom driver)
-        return [ namespace: 'kkossev', driver: 'Matter Generic Component Window Shade', product_name: 'Curtain Motor' ]
-    }
-    if ('0201' in d.ServerList) {   // Thermostat
-        return [ driver: 'Generic Component Thermostat', product_name: 'Thermostat' ]
     }
     if ('06' in d.ServerList) {   // OnOff
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Switch', product_name: 'Switch' ]
@@ -1977,28 +2015,47 @@ void componentPing(DeviceWrapper dw) {
 // Component command to turn on device
 void componentOn(DeviceWrapper dw) {
     if (!dw.hasCommand('on')) { logError "componentOn(${dw}) driver '${dw.typeName}' does not have command 'on' in ${dw.supportedCommands}"; return }
-    // TODO: check if the device has cluster 0x0006 in the ServerList=[06, ....
-    // TODO: check if the device has command 'on' in the {0006={FFF8=1618, FFF9=[00, 01, 02],
-    code = 'Go agead!'
-    if (code != null) {
-        logDebug "Turning ${dw} on"
+    String serverListString = dw.getDataValue('ServerList')
+    if (serverListString == null) {
+         logWarn "componentOn(${dw}) 'ServerList' is null!"
+         // return
+    }
+    List<String> serverList = serverListString?.replaceAll("[\\[\\]\"]", "").split(",").collect { it.trim() }
+    if ('0006' in serverList) {
+        logDebug "componentOn(${dw}) 'ServerList' contains '0006'! Turning on"
         setSwitch('On', '0x' + dw.getDataValue('id'))
-    } else {
-        logError "Unable to determine on function code in ${functions}"
+    }
+    else if ('0201' in serverList) {
+        logDebug "thermostat on() command -> replaced with heat() !"
+        componentSetThermostatMode(dw, 'heat')
+    }
+    else {
+        logWarn "componentOn(${dw}) 'ServerList' ${serverList} does not contain '0006' or '0201'!"
+        logDebug 'sending the on() command anyway...'
+        setSwitch('On', '0x' + dw.getDataValue('id'))
     }
 }
 
 // Component command to turn off device
 void componentOff(DeviceWrapper dw) {
-    if (!dw.hasCommand('off')) { logError "componentOff(${dw}) driver '${dw.typeName}' does not have command 'off' in ${dw.supportedCommands}"; return }
-    // TODO: check if the device has cluster 0x0006 in the ServerList=[06, ....
-    // TODO: check if the device has command 'off' in the {0006={FFF8=1618, FFF9=[00, 01, 02],
-    code = 'Go agead!'
-    if (code != null) {
-        logDebug "Turning ${dw} off"
+    String serverListString = dw.getDataValue('ServerList')
+    if (serverListString == null) {
+         logWarn "componentOff(${dw}) 'ServerList' is null!"
+         // return
+    }
+    List<String> serverList = serverListString?.replaceAll("[\\[\\]\"]", "").split(",").collect { it.trim() }
+    if ('0006' in serverList) {
+        logDebug "componentOn(${dw}) 'ServerList' contains '0006'! Turning on"
         setSwitch('Off', '0x' + dw.getDataValue('id'))
-    } else {
-        logError "Unable to determine off function code in ${functions}"
+    }
+    else if ('0201' in serverList) {
+        logDebug "thermostat off() command!"
+        componentSetThermostatMode(dw, 'off')
+    }
+    else {
+        logWarn "componentOn(${dw}) 'ServerList' ${serverList} does not contain '0006' or '0201'!"
+        logDebug 'sending the off() command anyway...'
+        setSwitch('Off', '0x' + dw.getDataValue('id'))
     }
 }
 
@@ -2245,11 +2302,11 @@ void componentSetThermostatFanMode(DeviceWrapper dw, String mode) {
 void componentSetHeatingSetpoint(DeviceWrapper dw, BigDecimal temperaturePar) {
     if (dw.currentValue('heatingSetpoint') == null) { initializeThermostat(dw) }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
-    logDebug "componentSetHeatingSetpoint: setting heatingSetpoint to <b>${temperature}</b> for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
+    logDebug "componentSetHeatingSetpoint: setting heatingSetpoint to <b>${temperaturePar}</b> for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
     if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetThermostatMode(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
     Double temperature = temperaturePar as Double
-    Double minHeatSetpoint = safeToDouble(dw?.getDataValue('minHeatSetpointLimit')) ?: 5.0
-    Double maxHeatSetpoint = safeToDouble(dw?.getDataValue('maxHeatSetpointLimit')) ?: 35.0
+    Double minHeatSetpoint = safeToDouble(dw?.getDataValue('minHeatSetpointLimit')) ?: safeToDouble(dw?.getDataValue('absMinHeatSetpointLimit')) ?: 5.0
+    Double maxHeatSetpoint = safeToDouble(dw?.getDataValue('maxHeatSetpointLimit')) ?: safeToDouble(dw?.getDataValue('absMaxHeatSetpointLimit')) ?: 35.0
     //log.trace "parseThermostat: minHeatSetpoint:${minHeatSetpoint} maxHeatSetpoint:${maxHeatSetpoint}"
     if (temperature < minHeatSetpoint) { temperature = minHeatSetpoint }
     if (temperature > maxHeatSetpoint) { temperature = maxHeatSetpoint }
@@ -2338,7 +2395,7 @@ void initializeThermostat(DeviceWrapper dw) {
     if (dw.currentValue('thermostatMode') == null) { sendMatterEvent([name: "thermostatMode", value: "heat", isStateChange: true, description: "inital attribute setting"], dw) }
     if (dw.currentValue('thermostatFanMode') == null) { sendMatterEvent([name: "thermostatFanMode", value: "auto", isStateChange: true, description: "inital attribute setting"], dw) }
     if (dw.currentValue('thermostatOperatingState') == null) { sendMatterEvent([name: "thermostatOperatingState", value: "idle", isStateChange: true, description: "inital attribute setting"], dw) }
-    if (dw.currentValue('thermostatSetpoint') == null) { sendMatterEvent([name: "thermostatSetpoint", value:  12.3, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }       // Google Home compatibility
+    //if (dw.currentValue('thermostatSetpoint') == null) { sendMatterEvent([name: "thermostatSetpoint", value:  12.3, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }       // Google Home compatibility
     if (dw.currentValue('heatingSetpoint') == null) { sendMatterEvent([name: "heatingSetpoint", value: 12.3, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }
     if (dw.currentValue('coolingSetpoint') == null) { sendMatterEvent([name: "coolingSetpoint", value: 34.5, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }
     if (dw.currentValue('temperature') == null) { sendMatterEvent([name: "temperature", value: 23.4, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }
@@ -2913,5 +2970,5 @@ void test(par) {
 
     */
 
-    fingerprintsToSubscriptionsList()
+    //fingerprintsToSubscriptionsList()
 }

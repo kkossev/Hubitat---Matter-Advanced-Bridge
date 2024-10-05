@@ -7,7 +7,7 @@ library(
     name: 'matterUtilitiesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterUtilitiesLib.groovy',
-    version: '1.1.0',
+    version: '1.2.0',
     documentationLink: ''
 )
 /*
@@ -26,14 +26,15 @@ library(
   *  for the specific language governing permissions and limitations under the License.
   *
   * ver. 1.0.0  2024-03-16 kkossev  - first release
-  * ver. 1.1.0  2024-07-20 kkossev  - (dev.branch)
+  * ver. 1.1.0  2024-07-20 kkossev  - release 1.1.2
+  * ver. 1.2.0  2024-10-03 kkossev  - (dev.branch)
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterUtilitiesLibVersion = '1.1.0'
-@Field static final String matterUtilitiesLibStamp   = '2024/07/20 8:53 PM'
+@Field static final String matterUtilitiesLibVersion = '1.2.0'
+@Field static final String matterUtilitiesLibStamp   = '2024/10/03 11:20 PM'
 
 metadata {
     // no capabilities
@@ -266,4 +267,21 @@ void testMatter(String parameters) {
     log.debug "testMatter(): configureCmd=${configureCmd}"
     sendToDevice(configureCmd)
     */
+
+    List<Map<String, String>> eventPaths = []
+    /*
+//    eventPaths.add(matter.eventPath('1E', 0x003B, 0x00))
+    eventPaths.add(matter.eventPath('24', 0x003B, 0x01))
+//    eventPaths.add(matter.eventPath('1E', 0x003B, 0x02))
+    eventPaths.add(matter.eventPath('24', 0x003B, 0x03))
+//    eventPaths.add(matter.eventPath('1E', 0x003B, 0x04))
+    eventPaths.add(matter.eventPath('24', 0x003B, 0x05))
+    eventPaths.add(matter.eventPath('24', 0x003B, 0x06))
+*/
+    eventPaths.add(matter.eventPath('24', 0x003B, -1))
+    //def xxx = matter.cleanSubscribe(0, 0xFFFF, eventPaths)
+    def xxx = matter.subscribe(0, 0xFFFF, eventPaths)
+    log.warn "testMatter(): sending : ${xxx}"
+    //def xxx = 'he cleanSubscribe 0x00 0xFFFF [{"ep":"0xFFFFFFFF","cluster":"0xFFFFFFFF","evt":"0xFFFFFFFF", "priority": "1", "pri": "1"}]'
+    sendToDevice(xxx)
 }

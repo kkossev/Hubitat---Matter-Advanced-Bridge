@@ -7,7 +7,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
-    version: '1.2.0',
+    version: '1.2.1',
     documentationLink: ''
 )
 /*
@@ -27,14 +27,15 @@ library(
   *
   * ver. 1.0.0  2024-03-16 kkossev  - frist release version
   * ver. 1.2.0  2024-10-02 kkossev  - ThermostatClusterAttributes
+  * ver. 1.2.1  2024-10-04 kkossev  - SwitchClusterAttributes; getEventsMapByClusterId()
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.2.0'
-@Field static final String matterLibStamp   = '2024/10/02 1:38 PM'
+@Field static final String matterLibVersion = '1.2.1'
+@Field static final String matterLibStamp   = '2024/10/04 11:05 AM'
 
 // no metadata section for matterLib
 
@@ -162,6 +163,7 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0034') { return SoftwareDiagnosticsClusterAttributes }
     if (cluster == '0037') { return EthernetNetworkDiagnosticsClusterAttributes }
     if (cluster == '0039') { return BridgedDeviceBasicClusterAttributes }
+    if (cluster == '003B') { return SwitchClusterAttributes }
     if (cluster == '003C') { return AdministratorCommissioningClusterAttributes }
     if (cluster == '003E') { return OperationalCredentialsClusterAttributes }
     if (cluster == '003F') { return GroupKeyManagementClusterAttributes }
@@ -177,6 +179,17 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0403') { return PressureMeasurementClusterAttributes }      // TODO
     if (cluster == '0405') { return RelativeHumidityMeasurementClusterAttributes }
     if (cluster == '0406') { return OccupancySensingClusterAttributes }
+    /* groovylint-disable-next-line ReturnsNullInsteadOfEmptyCollection */
+    return null
+}
+
+@CompileStatic
+Map getEventsMapByClusterId(String cluster) {
+    /* groovylint-disable-next-line CouldBeSwitchStatement, ReturnsNullInsteadOfEmptyCollection */
+    if (cluster == null) { return null }
+    if (cluster == '003B') { return SwitchClusterEvents }
+    if (cluster == '0045') { return BooleanStateClusterEvents }
+    if (cluster == '0101') { return DoorLockClusterEvents }
     /* groovylint-disable-next-line ReturnsNullInsteadOfEmptyCollection */
     return null
 }
@@ -499,9 +512,9 @@ Map getAttributesMapByClusterId(String cluster) {
 ]
 // 1.12.5. Switch Cluster 0x003B attributes
 @Field static final Map<Integer, String> SwitchClusterAttributes = [
-    0x0000  : 'NumberOfPositions',
-    0x0001  : 'CurrentPosition',
-    0x0002  : 'MultiPressMax'
+    0x0000  : 'NumberOfPositions',          //  indicate the maximum number of positions the switch has. Any kind of switch has a minimum of 2 positions.
+    0x0001  : 'CurrentPosition',            //  indicate the position of the switch. The valid range is zero to NumberOfPositions-1.
+    0x0002  : 'MultiPressMax'               //  indicate how many consecutive presses can be detected and reported by a momentary switch which supports multi-press
 ]
 
 // 1.12.6. Switch Events Cluster 0x003B
@@ -520,6 +533,11 @@ Map getAttributesMapByClusterId(String cluster) {
     0x0000  : 'StateValue'
 ]
 
+// 1.7.5. Events 0x0045 
+@Field static final Map<Integer, String> BooleanStateClusterEvents = [
+    0x00    : 'StateChange'          // generated when the StateValue attribute changes. (INFO, V, O)
+]
+
 // 5.2.6 Door Lock Cluster 0x0101 (257)
 @Field static final Map<Integer, String> DoorLockClusterAttributes = [
     0x0000  : 'LockState',          // enum8
@@ -529,6 +547,15 @@ Map getAttributesMapByClusterId(String cluster) {
     0x0025  : 'OperatingMode',      // enum8
     0x0026  : 'SupportedOperatingModes'// bitmap8
 ]
+
+@Field static final Map<Integer, String> DoorLockClusterEvents = [
+    0x00    : 'DoorLockAlarm',      // generated when the door lock alarm is triggered. (CRITICAL, V, M)
+    0x01    : 'DoorStateChange',    // generated when the door state changes. (INFO, V, DPS)
+    0x02    : 'LockOperation',      // generated when a lock operation is initiated. (INFO, V, M)
+    0x03    : 'LockOperationError', // generated when a lock operation fails. (INFO, V, M)
+    0x04    : 'LockUserChange'      // generated when a user is added or removed from the lock. (INFO, V, US)
+]
+
 /* moved to the component device driver
 @Field static final Map<Integer, String> DoorLockClusterLockState = [
     0x00    : 'NotFullyLocked',
