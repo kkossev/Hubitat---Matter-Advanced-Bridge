@@ -278,7 +278,7 @@ void testMatter(String parameters) {
     eventPaths.add(matter.eventPath('24', 0x003B, 0x05))
     eventPaths.add(matter.eventPath('24', 0x003B, 0x06))
 */
-    eventPaths.add(matter.eventPath('24', 0x003B, -1))
+    eventPaths.add(matter.eventPath('21', 0x003B, -1))
     //def xxx = matter.cleanSubscribe(0, 0xFFFF, eventPaths)
     def xxx = matter.subscribe(0, 0xFFFF, eventPaths)
     log.warn "testMatter(): sending : ${xxx}"
