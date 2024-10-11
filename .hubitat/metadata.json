@@ -4,19 +4,19 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1218
+      "version": 1228
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
       "id": 162,
       "codeType": "library",
-      "version": 69
+      "version": 70
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterLib.groovy",
       "id": 145,
       "codeType": "library",
-      "version": 53
+      "version": 55
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/Matter_State_Machines.groovy",
@@ -53,6 +53,12 @@
       "codeType": "driver",
       "id": 3188,
       "version": 37
+    },
+    {
+      "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Air_Purifier.groovy",
+      "codeType": "driver",
+      "id": 3429,
+      "version": 15
     }
   ]
 }

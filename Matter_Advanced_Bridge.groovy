@@ -28,8 +28,12 @@
  * ver. 1.2.0  2024-10-03 kkossev  - [2.3.9.186] platform: cleanSubscribe; decoded events for child devices w/o the attribute defined are sent anyway; added Matter Thermostats.
  * ver. 1.2.1  2024-10-05 kkossev  - thermostatSetpoint attribute is also updated; Matter Events basic decoding (buttons and Locks are still NOT working!); thermostat driver automatic assignment bug fix; 
  *                                   checking both 'maxHeatSetpointLimit' and 'absMaxHeatSetpointLimit' when setting the thermostatSetpoint; thermostatOperatingState is updated (digital); thermostat on() and of() commands bug fix;
- * ver. 1.2.2  2024-10-05 kkossev  - (dev. branch)
+ * ver. 1.3.0  2024-10-10 kkossev  - (dev. branch) adding 'Matter Generic Component Air Purifier' (W.I.P.) : cluster 005B 'AirQuality'
  * 
+ *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
+ *
+ *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
+ *                                   TODO: add cluster 0202 'Window Covering'
  *                                   TODO: Matter events subscription - buttons and locks
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
@@ -40,8 +44,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.2.2' }
-static String timeStamp() { '2023/10/05 1:17 PM' }
+static String version() { '1.3.0' }
+static String timeStamp() { '2023/10/10 11:31 PM' }
 
 @Field static final Boolean _DEBUG = true
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -186,6 +190,10 @@ metadata {
     0x0045 : [attributes: 'BooleanStateClusterAttributes', parser: 'parseContactSensor',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
+    // Air Quality Cluster
+    0x005B : [attributes: 'AirQualityClusterAttributes', parser: 'parseAirQuality',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+    ],
     // DoorLock Cluster
     0x0101 : [attributes: 'DoorLockClusterAttributes', commands: 'DoorLockClusterCommands', parser: 'parseDoorLock',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]   // LockState
@@ -234,7 +242,11 @@ metadata {
     // OccupancySensing (motion) Cluster
     0x0406 : [attributes: 'OccupancySensingClusterAttributes', parser: 'parseOccupancySensing',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
-    ]
+    ],
+    // PM25ConcentrationMeasurement Cluster
+    0x042A : [attributes: 'ConcentrationMeasurementClustersAttributes', parser: 'parseConcentrationMeasurement',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+    ],    
 ]
 
 @Field static final Map<Integer, String> ParsedMatterClusters = [
@@ -247,6 +259,7 @@ metadata {
     0x0039 : 'parseBridgedDeviceBasic',
     0x003B : 'parseSwitch',
     0x0045 : 'parseContactSensor',
+    0x005B : 'parseAirQuality',
     0x0101 : 'parseDoorLock',
     0x0102 : 'parseWindowCovering',
     0x0201 : 'parseThermostat',
@@ -254,7 +267,8 @@ metadata {
     0x0400 : 'parseIlluminanceMeasurement',
     0x0402 : 'parseTemperatureMeasurement',
     0x0405 : 'parseHumidityMeasurement',
-    0x0406 : 'parseOccupancySensing'
+    0x0406 : 'parseOccupancySensing',
+    0x042A : 'parseConcentrationMeasurement'
 ]
 
 // Json Parsing Cache
@@ -897,10 +911,34 @@ void parseDoorLock(final Map descMap) { // 0101
         sendMatterEvent([
             name: 'unprocessed',
             value: descMap.toString(),
-            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> clsuter ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
         ], descMap, ignoreDuplicates = false)
     }
 }
+
+void parseAirQuality(final Map descMap) { // 005B
+    if (descMap.cluster != '005B') { logWarn "parseAirQuality: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    logTrace "parseAirQuality: <b>UNPROCESSED</b> ${(AirQualityClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    // send the unprocessed attributes to the child driver for further processing
+    sendMatterEvent([
+        name: 'unprocessed',
+        value: descMap.toString(),
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = false)
+}
+
+// to be used in multiple clusters !
+void parseConcentrationMeasurement(final Map descMap) { // 042A
+    if (descMap.cluster != '042A') { logWarn "parseConcentrationMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    logTrace "parseConcentrationMeasurement: <b>UNPROCESSED</b> ${(ConcentrationMeasurementClustersAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    // send the unprocessed attributes to the child driver for further processing
+    sendMatterEvent([
+        name: 'unprocessed',
+        value: descMap.toString(),
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = false)
+}
+
 
 void parseWindowCovering(final Map descMap) { // 0102
     if (descMap.cluster != '0102') { logWarn "parseWindowCovering: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
@@ -1525,7 +1563,7 @@ void clearStates() {
 
 // device driver command 
 void reSubscribe() {
-    logWarn "reSubscribe() ...(${location.hub.firmwareVersionString >= '2.3.9.186'})"
+    logDebug "reSubscribe() ...(${location.hub.firmwareVersionString >= '2.3.9.186'})"
     if (location.hub.firmwareVersionString >= '2.3.9.186') {
         sendToDevice(cleanSubscribeCmd())
         sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device reSubscribe command')
@@ -1935,6 +1973,9 @@ Map mapTuyaCategory(Map d) {
     if ('45' in d.ServerList) {   // Contact Sensor
         return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
     }
+    if ('5B' in d.ServerList) {   // Air Quality Sensor
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Quality Sensor' ]
+    }
     if ('0101' in d.ServerList) {   // Door Lock (since version 1.1.0)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Door Lock', product_name: 'Door Lock' ]
     }
@@ -1955,6 +1996,9 @@ Map mapTuyaCategory(Map d) {
     }
     if ('0406' in d.ServerList) {   // OccupancySensing (motion)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Motion Sensor', product_name: 'Motion Sensor' ]
+    }
+    if ('042A' in d.ServerList) {   // Concentration Measurement Sensor
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Quality Sensor' ]
     }
     if ('06' in d.ServerList) {   // OnOff
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Switch', product_name: 'Switch' ]

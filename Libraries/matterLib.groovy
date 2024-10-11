@@ -7,7 +7,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
-    version: '1.2.1',
+    version: '1.3.0',
     documentationLink: ''
 )
 /*
@@ -28,14 +28,15 @@ library(
   * ver. 1.0.0  2024-03-16 kkossev  - frist release version
   * ver. 1.2.0  2024-10-02 kkossev  - ThermostatClusterAttributes
   * ver. 1.2.1  2024-10-04 kkossev  - SwitchClusterAttributes; getEventsMapByClusterId()
+  * ver. 1.3.0  2024-10-04 kkossev  - (dev. branch) 0x005B  : 'AirQuality'
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.2.1'
-@Field static final String matterLibStamp   = '2024/10/04 11:05 AM'
+@Field static final String matterLibVersion = '1.3.0'
+@Field static final String matterLibStamp   = '2024/10/10 9:50 PM'
 
 // no metadata section for matterLib
 
@@ -120,7 +121,7 @@ Matter cluster names = [$FaultInjection, $UnitTesting, $ElectricalMeasurement, $
     0x040D  : 'CarbonDioxideConcentrationMeasurement',
     0x0413  : 'NitrogenDioxideConcentrationMeasurement',
     0x0415  : 'OzoneConcentrationMeasurement',
-    0x042A  : 'PM2.5ConcentrationMeasurement',
+    0x042A  : 'PM25ConcentrationMeasurement',
     0x042B  : 'FormaldehydeConcentrationMeasurement',
     0x042C  : 'PM1ConcentrationMeasurement',
     0x042D  : 'PM10ConcentrationMeasurement',
@@ -170,6 +171,7 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0040') { return FixedLabelClusterAttributes }
     if (cluster == '0041') { return UserLabelClusterAttributes }
     if (cluster == '0045') { return BooleanStateClusterAttributes }
+    if (cluster == '005B') { return AirQualityClusterAttributes }
     if (cluster == '0101') { return DoorLockClusterAttributes }
     if (cluster == '0102') { return WindowCoveringClusterAttributes }
     if (cluster == '0201') { return ThermostatClusterAttributes }
@@ -179,6 +181,7 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0403') { return PressureMeasurementClusterAttributes }      // TODO
     if (cluster == '0405') { return RelativeHumidityMeasurementClusterAttributes }
     if (cluster == '0406') { return OccupancySensingClusterAttributes }
+    if (cluster == '042A') { return ConcentrationMeasurementClustersAttributes }    // used for PM2.5 and others!
     /* groovylint-disable-next-line ReturnsNullInsteadOfEmptyCollection */
     return null
 }
@@ -426,6 +429,22 @@ Map getEventsMapByClusterId(String cluster) {
 @Field static final Map<Integer, String> UserLabelClusterAttributes = [
     0x0000  : 'LabelList'
 ]
+
+// 2.9.6. Air Quality Cluster 0x005B
+@Field static final Map<Integer, String> AirQualityClusterAttributes = [
+    0x0000  : 'AirQuality'
+]
+
+@Field static final Map<Integer, String> ConcentrationMeasurementClustersAttributes = [
+    0x0000  : 'MeasuredValue',          // Constraint: MinMeasuredValue to MaxMeasuredValue, MEA
+    0x0001  : 'MinMeasuredValue',       // Constraint: MaxMeasuredValue, MEA
+    0x0002  : 'MaxMeasuredValue',       // Constraint: MinMeasuredValue, MEA
+    0x0003  : 'PeakMeasuredValue',      // Constraint: MinMeasuredValue to MaxMeauredValue, PEA
+    0x0007  : 'Uncertainty',            // Constraint: MS, [MEA]
+    0x0008  : 'MeasurementUnit',        // MEA
+    0x0009  : 'MeasurementMedium'     // M
+]
+
 // Identify Cluster 0x0003
 @Field static final Map<Integer, String> IdentifyClusterAttributes = [
     0x0000  : 'IdentifyTime',

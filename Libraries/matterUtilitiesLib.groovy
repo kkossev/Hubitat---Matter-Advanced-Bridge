@@ -34,7 +34,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterUtilitiesLibVersion = '1.2.0'
-@Field static final String matterUtilitiesLibStamp   = '2024/10/03 11:20 PM'
+@Field static final String matterUtilitiesLibStamp   = '2024/10/03 11:55 PM'
 
 metadata {
     // no capabilities
