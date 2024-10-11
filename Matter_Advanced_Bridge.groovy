@@ -28,6 +28,7 @@
  * ver. 1.2.0  2024-10-03 kkossev  - [2.3.9.186] platform: cleanSubscribe; decoded events for child devices w/o the attribute defined are sent anyway; added Matter Thermostats.
  * ver. 1.2.1  2024-10-05 kkossev  - thermostatSetpoint attribute is also updated; Matter Events basic decoding (buttons and Locks are still NOT working!); thermostat driver automatic assignment bug fix; 
  *                                   checking both 'maxHeatSetpointLimit' and 'absMaxHeatSetpointLimit' when setting the thermostatSetpoint; thermostatOperatingState is updated (digital); thermostat on() and of() commands bug fix;
+ * ver. 1.2.2  2024-10-11 kkossev -  added 'Matter Generic Component SwitchBot Button' by @ymerj
  * ver. 1.3.0  2024-10-10 kkossev  - (dev. branch) adding 'Matter Generic Component Air Purifier' (W.I.P.) : cluster 005B 'AirQuality'
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'

@@ -27,19 +27,22 @@ library(
   *
   * ver. 1.0.0  2024-03-16 kkossev  - first release
   * ver. 1.1.0  2024-07-20 kkossev  - release 1.1.2
-  * ver. 1.2.0  2024-10-03 kkossev  - (dev.branch)
+  * ver. 1.2.0  2024-10-11 kkossev  - (dev.branch) added testParse()
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterUtilitiesLibVersion = '1.2.0'
-@Field static final String matterUtilitiesLibStamp   = '2024/10/03 11:55 PM'
+@Field static final String matterUtilitiesLibStamp   = '2024/10/11 9:46 PM'
 
 metadata {
     // no capabilities
     // no attributes
     command 'utilities', [[name:'command', type: 'STRING', description: 'for advanced users: ? for help', constraints: ['STRING']]]
+    if (_DEBUG == true) {
+        command 'testParse', [[name: 'testParse', type: 'STRING', description: 'testParse', defaultValue : '']]
+    }
 // no preferences
 }
 
@@ -258,6 +261,14 @@ void resetStats(List<String> parameters) {
     // stats : {duplicatedCtr=0, pingsMax=288, rxCtr=264, pingsMin=80, pingsAvg=135, txCtr=51, pingsOK=6, pingsFail=1, initializeCtr=5}
     state.stats = [initializeCtr: 0, rxCtr: 0, txCtr: 0, duplicatedCtr: 0, pingsOK: 0, pingsFail: 0, pingsMin: 0, pingsMax: 0, pingsAvg: 0]
     sendMatterEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} statistics were reset!", type: 'digital'])
+}
+
+void testParse(String par) {
+    log.trace '------------------------------------------------------'
+    log.warn "testParse - <b>START</b> (${par})"
+    parse(par)
+    log.warn "testParse -   <b>END</b> (${par})"
+    log.trace '------------------------------------------------------'
 }
 
 void testMatter(String parameters) {
