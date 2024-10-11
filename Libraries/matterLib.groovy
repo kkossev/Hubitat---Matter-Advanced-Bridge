@@ -533,7 +533,7 @@ Map getEventsMapByClusterId(String cluster) {
     0x0000  : 'StateValue'
 ]
 
-// 1.7.5. Events 0x0045 
+// 1.7.5. Events 0x0045
 @Field static final Map<Integer, String> BooleanStateClusterEvents = [
     0x00    : 'StateChange'          // generated when the StateValue attribute changes. (INFO, V, O)
 ]
@@ -683,18 +683,18 @@ Map getEventsMapByClusterId(String cluster) {
 ]
 
 @Field static final Map<Integer, List<String>> HubitatThermostatModes  = [
-    0x00    : ['off','cool'],
-    0x01    : ['off','cool'],
-    0x02    : ['off','heat'],
-    0x03    : ['off','heat'],
-    0x04    : ['off','heat', 'cool'],
-    0x05    : ['off','heat', 'cool'],
+    0x00    : ['off', 'cool'],
+    0x01    : ['off', 'cool'],
+    0x02    : ['off', 'heat'],
+    0x03    : ['off', 'heat'],
+    0x04    : ['off', 'heat', 'cool'],
+    0x05    : ['off', 'heat', 'cool'],
     0x06    : ['off'],
-    0x07    : ['off','emergencyHeat'],
-    0x08    : ['off','eco']
+    0x07    : ['off', 'emergencyHeat'],
+    0x08    : ['off', 'eco']
 ]
 
-// 4.3.8.21. 0x001C ThermostatSystemModes Type (SystemMode)-> thermostatMode 
+// 4.3.8.21. 0x001C ThermostatSystemModes Type (SystemMode)-> thermostatMode
 @Field static final Map<Integer, String> ThermostatSystemModes = [
     0x00    : 'off',                    // The Thermostat does not generate demand for Cooling or Heating
     0x01    : 'auto',                   //Demand is generated for either Cooling or Heating, as required    [AUTO]
@@ -706,7 +706,6 @@ Map getEventsMapByClusterId(String cluster) {
     0x08    : 'dry',
     0x09    : 'sleep'
 ]
-
 
 // 5.3.7 Window Covering Controller Cluster Commands
 @Field static final  Map<Integer, String> WindowCoveringClusterCommands = [

@@ -28,8 +28,9 @@
  * ver. 1.2.0  2024-10-03 kkossev  - [2.3.9.186] platform: cleanSubscribe; decoded events for child devices w/o the attribute defined are sent anyway; added Matter Thermostats.
  * ver. 1.2.1  2024-10-05 kkossev  - thermostatSetpoint attribute is also updated; Matter Events basic decoding (buttons and Locks are still NOT working!); thermostat driver automatic assignment bug fix; 
  *                                   checking both 'maxHeatSetpointLimit' and 'absMaxHeatSetpointLimit' when setting the thermostatSetpoint; thermostatOperatingState is updated (digital); thermostat on() and of() commands bug fix;
- * ver. 1.2.2  2024-10-05 kkossev  - (dev. branch)
+ * ver. 1.2.2  2024-10-11 kkossev - added 'Matter Generic Component SwitchBot Button' by @ymerj
  * 
+ *                                   TODO: 
  *                                   TODO: Matter events subscription - buttons and locks
  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
@@ -41,9 +42,9 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.2.2' }
-static String timeStamp() { '2023/10/05 1:17 PM' }
+static String timeStamp() { '2023/10/11 9:48 PM' }
 
-@Field static final Boolean _DEBUG = true
+@Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
