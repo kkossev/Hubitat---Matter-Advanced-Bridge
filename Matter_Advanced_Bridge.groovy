@@ -47,9 +47,9 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.3.1' }
-static String timeStamp() { '2023/11/12 9:32 PM' }
+static String timeStamp() { '2023/11/12 9:55 PM' }
 
-@Field static final Boolean _DEBUG = true
+@Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
