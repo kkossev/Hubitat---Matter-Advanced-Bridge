@@ -28,7 +28,7 @@ library(
   * ver. 1.0.0  2024-03-16 kkossev  - frist release version
   * ver. 1.2.0  2024-10-02 kkossev  - ThermostatClusterAttributes
   * ver. 1.2.1  2024-10-04 kkossev  - SwitchClusterAttributes; getEventsMapByClusterId()
-  * ver. 1.3.0  2024-10-04 kkossev  - (dev. branch) 0x005B  : 'AirQuality'
+  * ver. 1.3.0  2024-10-11 kkossev  - (dev. branch) 0x005B  : 'AirQuality'
   *
 */
 
@@ -36,7 +36,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterLibVersion = '1.3.0'
-@Field static final String matterLibStamp   = '2024/10/10 9:50 PM'
+@Field static final String matterLibStamp   = '2024/10/11 10:49 PM'
 
 // no metadata section for matterLib
 

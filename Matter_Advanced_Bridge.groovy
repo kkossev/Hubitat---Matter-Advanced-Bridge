@@ -30,6 +30,7 @@
  *                                   checking both 'maxHeatSetpointLimit' and 'absMaxHeatSetpointLimit' when setting the thermostatSetpoint; thermostatOperatingState is updated (digital); thermostat on() and of() commands bug fix;
  * ver. 1.2.2  2024-10-11 kkossev -  added 'Matter Generic Component SwitchBot Button' by @ymerj
  * ver. 1.3.0  2024-10-10 kkossev  - (dev. branch) adding 'Matter Generic Component Air Purifier' (W.I.P.) : cluster 005B 'AirQuality'
+ * ver. 1.3.1  2024-11-12 kkossev  - (dev. branch) bugfix: nullpointer exception in discoverAllStateMachine()
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *
@@ -45,8 +46,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.3.0' }
-static String timeStamp() { '2023/10/10 11:31 PM' }
+static String version() { '1.3.1' }
+static String timeStamp() { '2023/11/12 9:32 PM' }
 
 @Field static final Boolean _DEBUG = true
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -338,9 +339,9 @@ void parse(final String description) {
 
 Map myParseDescriptionAsMap(description) {
     Map descMap
-    //JvmDescMap = parseDescriptionAsDecodedMap(description)
     try {
         descMap = matter.parseDescriptionAsMap(description)
+        //log.trace "myParseDescriptionAsMap: descMap:${descMap} description:${description}"
     } catch (e) {
         logWarn "parse: exception ${e} <br> Failed to parse description: ${description}"
         return null
@@ -350,9 +351,15 @@ Map myParseDescriptionAsMap(description) {
         return null
     }
     // parse: descMap:[endpoint:00, cluster:0028, attrId:0000, value:01, clusterInt:40, attrInt:0] description:read attr - endpoint: 00, cluster: 0028, attrId: 0000, value: 0401
-    if (descMap.value != null && descMap.value in ['1518', '1618', '1818']) {
+    
+    if (descMap.value != null && descMap.attrId != null && descMap.value in ['1518', '1618', '1818'] 
+        && ( descMap.attrId in ['FFF8', 'FFF9','FFFA', 'FFFB', 'FFFC', 'FFFD', 'FFFE', 'FFFF']
+        || descMap.cluster == '001D')
+    ) {
         descMap.value = []
+        if (settings?.traceEnable) { log.warn "myParseDescriptionAsMap: descMap:${descMap} description:${description}" }
     }
+    
     //descMap.value = JvmDescMap.decodedValue.toString()
     return descMap
 }

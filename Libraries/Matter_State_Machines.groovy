@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '1.0.2',
+    version: '1.0.3',
     documentationLink: ''
 )
 /*
@@ -27,15 +27,16 @@ library(
   *
   * ver. 1.0.0  2024-03-16 kkossev  - first release version
   * ver. 1.0.1  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
-  * ver. 1.0.2  2024-09-29 kkossev  - (HE platform 2.3.9.186 optimizations)
+  * ver. 1.0.2  2024-09-29 kkossev  - HE platform 2.3.9.186 optimizations
+  * ver. 1.0.3  2024-09-29 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine(); secured all . operations with ?.
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.0.2'
-@Field static final String matterStateMachinesLibStamp   = '2024/09/29 5:20 PM'
+@Field static final String matterStateMachinesLib = '1.0.3'
+@Field static final String matterStateMachinesLibStamp   = '2024/11/12 9:32 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -107,10 +108,10 @@ void readSingeAttrStateMachine(Map data = null) {
             }
             logTrace "readSingeAttrStateMachine: st:${st} - found serverList ${serverList}"
             // convert the serverList to a list of Integers
-            List<Integer> serverListInt = serverList.collect { HexUtils.hexStringToInt(it) }
+            List<Integer> serverListInt = serverList?.collect { HexUtils.hexStringToInt(it) }
             logTrace "readSingeAttrStateMachine: st:${st} - found serverListInt ${serverListInt}"
             // check whether the cluster is in the fingerprint serverListInt
-            if (!serverListInt.contains(data.cluster)) {
+            if (!serverListInt?.contains(data.cluster)) {
                 logWarn "readAttributeSafe(): state[${fingerprintName}]['ServerList'] does not contain cluster ${data.cluster} (0x${HexUtils.integerToHexString(data.cluster, 2)}) !"
                 logWarn "valid clusters are: ${serverList}"
                 state['stateMachines']['readSingeAttrResult'] = ERROR
@@ -130,10 +131,10 @@ void readSingeAttrStateMachine(Map data = null) {
             }
             logTrace "readSingeAttrStateMachine: st:${st} - found attributeList ${attributeList}"
             // convert the attributeList to a list of Integers
-            List<Integer> attributeListInt = attributeList.collect { HexUtils.hexStringToInt(it) }
+            List<Integer> attributeListInt = attributeList?.collect { HexUtils.hexStringToInt(it) }
             logTrace "readSingeAttrStateMachine: st:${st} - found attributeListInt ${attributeListInt}"
             // check whether the attribute is in the fingerprint attributeListInt
-            if (!attributeListInt.contains(data.attribute)) {
+            if (!attributeListInt?.contains(data.attribute)) {
                 logWarn "readAttributeSafe(): state[${fingerprintName}]['AttributeList'] does not contain attribute ${data.attribute} (0x${HexUtils.integerToHexString(data.attribute, 2)}) !"
                 logWarn "valid attributes are: ${attributeList}"
                 state['stateMachines']['readSingeAttrResult'] = ERROR
@@ -255,7 +256,7 @@ void disoverGlobalElementsStateMachine(Map data) {
                 //logWarn "disoverGlobalElementsStateMachine: st:${st} - fingerprintName:${fingerprintName}, stateClusterName:${stateClusterName}, state[fingerprintName][stateClusterName]:${state[fingerprintName][stateClusterName]}"
                 List<Integer> attributeList = []
                 if (state[fingerprintName] != null && state[fingerprintName][stateClusterName] != null) {
-                    attributeList = state[fingerprintName][stateClusterName].collect { HexUtils.hexStringToInt(it) }
+                    attributeList = state[fingerprintName][stateClusterName]?.collect { HexUtils.hexStringToInt(it) }
                 } else {
                     logWarn "disoverGlobalElementsStateMachine: st:${st} - attributeList is null !"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
@@ -267,10 +268,10 @@ void disoverGlobalElementsStateMachine(Map data) {
                     break
                 }
                 attributeList.each { attrId ->
-                    attributePaths.add(matter.attributePath(data.endpoint, data.cluster, attrId))
+                    attributePaths?.add(matter.attributePath(data.endpoint, data.cluster, attrId))
                 }
                 state['stateMachines']['Confirmation'] = false
-                state['stateMachines']['toBeConfirmed'] = [data.endpoint, data.cluster, attributeList.last()]
+                state['stateMachines']['toBeConfirmed'] = [data.endpoint, data.cluster, attributeList?.last()]
                 sendToDevice(matter.readAttributes(attributePaths))
                 retry = 0; st = STATE_DISCOVER_GLOBAL_ELEMENTS_GLOBAL_ELEMENTS_WAIT
             }
@@ -424,9 +425,9 @@ void discoverAllStateMachine(Map data = null) {
             state.states['isInfo'] = true
             state['stateMachines']['discoverAllResult'] = RUNNING
             // TODO
-            boolean oldLogEnable = settings.logEnable
+            boolean oldLogEnable = settings?.logEnable
             initializeVars(fullInit = true)            // added 02/09/2024
-            if (_DEBUG == true) { device.updateSetting('logEnable', oldLogEnable) }
+            if (_DEBUG == true) { device?.updateSetting('logEnable', oldLogEnable) }
             sendInfoEvent('Removing all current subscriptions ...')
             clearSubscriptionsState()                  // clear the subscriptions state
             st = DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS
@@ -478,15 +479,15 @@ void discoverAllStateMachine(Map data = null) {
             // here we have bridgeDescriptor :  0028_FFFB=[00, 01, 02, 03, 04, 05, 06, 07, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F, 10, 11, 12, 13, FFF8, FFF9, FFFB, FFFC, FFFD]
             // read all the attributes from the bridgeDescriptor['0028_FFFB']
             List<Map<String, String>> attributePaths = []
-            List<Integer> attributeList = state.bridgeDescriptor['0028_FFFB'].collect { HexUtils.hexStringToInt(it) }
-            attributeList.each { attrId ->
-                attributePaths.add(matter.attributePath(0, 0x0028, attrId))
+            List<Integer> attributeList = state.bridgeDescriptor['0028_FFFB']?.collect { HexUtils.hexStringToInt(it) }
+            attributeList?.each { attrId ->
+                attributePaths?.add(matter.attributePath(0, 0x0028, attrId))
             }
             state.states['isInfo'] = true
             state.states['cluster'] = '0028'
             state.tmp = null
             state['stateMachines']['Confirmation'] = false
-            state['stateMachines']['toBeConfirmed'] = [0, 0x0028, attributeList.last()]
+            state['stateMachines']['toBeConfirmed'] = [0, 0x0028, attributeList?.last()]
             // here we fill in 'toBeConfirmed' and 'Confirmation', because the readAttributes() is called directly !
             sendToDevice(matter.readAttributes(attributePaths))
             retry = 0; st = DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_VALUES_WAIT
@@ -615,7 +616,7 @@ void discoverAllStateMachine(Map data = null) {
             Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
             String fingerprintName = getFingerprintName(partEndpointInt)
             logDebug "discoverAllStateMachine: st:${st} - Getting the BridgedDeviceBasicInformationCluster attributes for endpoint ${partEndpoint} ...<br><br><br>"
-            if (state[fingerprintName]['ServerList'].contains('39')) {
+            if (state[fingerprintName]['ServerList']?.contains('39')) {
                 state.states['isInfo'] = true
                 state.states['cluster'] = '0039'     // HexUtils.integerToHexString(partEndpointInt, 2)
                 state.tmp = null
@@ -693,10 +694,10 @@ void discoverAllStateMachine(Map data = null) {
                 break
             }
             List<Integer> supportedMatterClusters = SupportedMatterClusters*.key      // The spread-dot operator (*.) is used to invoke an action on all items of an aggregate object.
-            List<Integer> serverListCluster = state[fingerprintName]['ServerList'].collect { HexUtils.hexStringToInt(it) }
+            List<Integer> serverListCluster = state[fingerprintName]['ServerList']?.collect { HexUtils.hexStringToInt(it) }
             logTrace "discoverAllStateMachine: st:${st} DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE- ServerListCluster = ${serverListCluster} (${state[fingerprintName]['ServerList']})"
             // find all elements in the supportedMatterClusters that are in the ServerList
-            List<Integer> matchedClustersList = supportedMatterClusters.findAll { serverListCluster.contains(it) }       // empty list [] if nothing found
+            List<Integer> matchedClustersList = supportedMatterClusters?.findAll { serverListCluster?.contains(it) }       // empty list [] if nothing found
             logDebug "${fingerprintName} supported clusters : ${matchedClustersList}"
             /* groovylint-disable-next-line ConfusingTernary */
             Integer supportedCluster =  matchedClustersList != [] ?  matchedClustersList?.first() : 0
@@ -717,11 +718,11 @@ void discoverAllStateMachine(Map data = null) {
                 else {
                     logDebug "discoverAllStateMachine: st:${st} - createChildDevice(${deviceData}) returned ${result}"
                     // fingerPrintToData: deviceData:[id:08, fingerprintName:fingerprint08, product_name:Humidity Sensor, name:Device#08, ServerList:[1D, 03, 0405]]
-                    sendInfoEvent("Created child device ${deviceData.name} (${deviceData.product_name})")
+                    sendInfoEvent("Created child device ${deviceData?.name} (${deviceData?.product_name})")
                 }
                 // 02/12/2024 - read the 0xFFFB attributes for ALL clusters in the matchedClustersList
                 List<Map<String, String>> attributePaths = []
-                matchedClustersList.each { cluster ->
+                matchedClustersList?.each { cluster ->
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFB))
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFC))  // added 02/19/2024 - read the FeatureMap also !
                 }
