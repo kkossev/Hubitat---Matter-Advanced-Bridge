@@ -29,8 +29,9 @@
  * ver. 1.2.1  2024-10-05 kkossev  - thermostatSetpoint attribute is also updated; Matter Events basic decoding (buttons and Locks are still NOT working!); thermostat driver automatic assignment bug fix; 
  *                                   checking both 'maxHeatSetpointLimit' and 'absMaxHeatSetpointLimit' when setting the thermostatSetpoint; thermostatOperatingState is updated (digital); thermostat on() and of() commands bug fix;
  * ver. 1.2.2  2024-10-11 kkossev -  added 'Matter Generic Component SwitchBot Button' by @ymerj
- * ver. 1.3.0  2024-10-10 kkossev  - (dev. branch) adding 'Matter Generic Component Air Purifier' (W.I.P.) : cluster 005B 'AirQuality'
- * ver. 1.3.1  2024-11-12 kkossev  - (dev. branch) bugfix: nullpointer exception in discoverAllStateMachine()
+ * ver. 1.3.0  2024-10-10 kkossev  - adding 'Matter Generic Component Air Purifier' (W.I.P.) : cluster 005B 'AirQuality'
+ * ver. 1.3.1  2024-11-12 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine()
+ * ver. 1.4.0  2024-12-26 kkossev  - HE Platform 2.4.0.x compatibility update
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *
@@ -46,8 +47,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.3.1' }
-static String timeStamp() { '2023/11/12 9:55 PM' }
+static String version() { '1.4.0' }
+static String timeStamp() { '2023/12/26 2:03 PM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -112,10 +113,9 @@ metadata {
             'ready'
         ]
 
-        command '_DiscoverAll',  [[name:'Discover all bridged devices!' /*', type:ENUM', description: 'Type', constraints: ['All', 'BasicInfo', 'PartsList', 'ChildDevices', 'Subscribe']*/]]
-        //command 'initialize', [[name: 'Invoked automatically during the hub reboot, do not click!']]
-        command 'reSubscribe', [[name: 're-subscribe to the Matter controller events']]
-        command 'loadAllDefaults', [[name: 'panic button: Clear all States and scheduled jobs']]
+        command '_DiscoverAll'  //,  [[name:'Discover all bridged devices!' , type:ENUM, description: 'Type', constraints: ['All', 'BasicInfo', 'PartsList', 'ChildDevices', 'Subscribe']]]
+        command 'reSubscribe'   //, [[name: 're-subscribe to the Matter controller events']]
+        command 'loadAllDefaults'//, [[description: 'panic button: Clear all States and scheduled jobs']]
         command 'identify'      // works with Nuki Lock!
         if (_DEBUG) {
             command 'getInfo', [
@@ -1430,7 +1430,8 @@ void requestAndCollectServerListAttributesList(Map data)
 /*
  *  Discover all the endpoints and clusters for the Bridge and all the Bridged Devices
  */
-void _DiscoverAll(statePar = null) {
+void _DiscoverAll() { _DiscoverAllPatched('All') }     // patch for HE platform version 2.4.0.x 
+void _DiscoverAllPatched(String statePar/* = null*/) {
     logWarn "_DiscoverAll()"
     Integer stateSt = DISCOVER_ALL_STATE_INIT
     state.stateMachines = [:]
