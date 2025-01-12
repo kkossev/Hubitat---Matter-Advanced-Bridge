@@ -32,6 +32,7 @@
  * ver. 1.3.0  2024-10-10 kkossev  - adding 'Matter Generic Component Air Purifier' (W.I.P.) : cluster 005B 'AirQuality'
  * ver. 1.3.1  2024-11-12 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine()
  * ver. 1.4.0  2024-12-26 kkossev  - HE Platform 2.4.0.x compatibility update
+ * ver. 1.4.1  2025-01-12 kkossev  - (dev.branch) restored the commands descriptions;
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *
@@ -47,8 +48,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.4.0' }
-static String timeStamp() { '2023/12/26 2:03 PM' }
+static String version() { '1.4.1' }
+static String timeStamp() { '2025/01/12 10:56 PM' }
 
 @Field static final Boolean _DEBUG = false
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -113,9 +114,9 @@ metadata {
             'ready'
         ]
 
-        command '_DiscoverAll'  //,  [[name:'Discover all bridged devices!' , type:ENUM, description: 'Type', constraints: ['All', 'BasicInfo', 'PartsList', 'ChildDevices', 'Subscribe']]]
-        command 'reSubscribe'   //, [[name: 're-subscribe to the Matter controller events']]
-        command 'loadAllDefaults'//, [[description: 'panic button: Clear all States and scheduled jobs']]
+        command '_DiscoverAll',  [[name:'Discover all bridged devices!' , type:ENUM, description: 'Type', constraints: ['All', 'BasicInfo', 'PartsList', 'ChildDevices', 'Subscribe']]]
+        command 'reSubscribe', [[name: 're-subscribe to the Matter controller events']]
+        command 'loadAllDefaults', [[name: 'panic button: Clear all States and scheduled jobs']]
         command 'identify'      // works with Nuki Lock!
         if (_DEBUG) {
             command 'getInfo', [

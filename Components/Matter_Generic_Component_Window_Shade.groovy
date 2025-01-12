@@ -19,14 +19,15 @@
   *
   *
   * ver. 1.0.0  2024-03-16 kkossev - first release
+  * ver. 1.1.0  2025-01-12 kkossev - (dev.branch) added capabilities 'Switch' and 'SwitchLevel'
   *
   *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '1.0.0'
-@Field static final String matterComponentWindowShadeStamp   = '2024/03/16 9:29 AM'
+@Field static final String matterComponentWindowShadeVersion = '1.1.0'
+@Field static final String matterComponentWindowShadeStamp   = '2025/01/12 8:39 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -34,6 +35,7 @@ import groovy.transform.Field
 @Field static final Integer CLOSED = 100    // this is the standard!  Hubitat is inverted?
 @Field static final Integer POSITION_DELTA = 5
 @Field static final Integer MAX_TRAVEL_TIME = 15
+@Field static final Boolean SIMULATE_LEVEL = true
 
 metadata {
     definition(name: 'Matter Generic Component Window Shade', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Window_Shade.groovy', singleThreaded: true) {
@@ -44,6 +46,8 @@ metadata {
                                     //            stopPositionChange()
         capability 'Refresh'
         capability 'Battery'
+        capability 'Switch'
+        capability 'SwitchLevel'        
         //capability 'Health Check'       // Commands:[ping]
 
         //attribute 'healthStatus', 'enum', ['unknown', 'offline', 'online']
@@ -61,6 +65,7 @@ metadata {
         attribute 'batReplacementDescription', 'string'
         attribute 'batQuantity', 'string'
 
+        command 'initialize', [[name: 'initialize all attributes']]
 
         if (_DEBUG) {
             command 'parseTest', [[name: 'parseTest', type: 'STRING', description: 'parseTest', defaultValue : '']]
@@ -147,6 +152,9 @@ void processCurrentPosition(final Map d) {
     }
     if (txtEnable) { log.info "${map.descriptionText}" }
     sendEvent(map)
+    if (SIMULATE_LEVEL == true) {
+        sendEvent(name: 'level', value: map.value, descriptionText: "${device.displayName} level is ${map.value}%", unit: '%', type: 'digital')
+    }
     updateWindowShadeStatus(map.value as int, device.currentValue('targetPosition') as int, /*isFinal =*/ true, /*isDigital =*/ false)
 }
 
@@ -190,11 +198,17 @@ void updateWindowShadeStatus(int currentPositionPar, int targetPositionPar, Bool
     sendEvent(name: 'windowShade', value: value, descriptionText: descriptionText, type: type)
     if (logEnable) { log.debug "${device.displayName} updateWindowShadeStatus: isFinal: ${isFinal}, substituteOpenClose: ${settings?.substituteOpenClose}, targetPosition: ${targetPosition}, currentPosition: ${currentPosition}, windowShade: ${device.currentValue('windowShade')}" }
     if (txtEnable) { log.info "${descriptionText}" }
+    if (SIMULATE_LEVEL == true) {
+        sendEvent(name: 'switch', value: value == 'open' ? 'on' : 'off', descriptionText: "${device.displayName} switch is ${value == 'open' ? 'on' : 'off'}", type: 'digital')
+    }
 }
 
 void sendWindowShadeEvent(String value, String descriptionText) {
     sendEvent(name: 'windowShade', value: value, descriptionText: descriptionText)
     if (txtEnable) { log.info "${device.displayName} windowShade is ${value}" }
+    if (SIMULATE_LEVEL == true) {
+        sendEvent(name: 'switch', value: value == 'open' ? 'on' : 'off', descriptionText: "${device.displayName} switch is ${value == 'open' ? 'on' : 'off'}", type: 'digital')
+    }
 }
 
 void processTargetPositionBridgeEvent(final Map d) {
@@ -241,7 +255,20 @@ void processOperationalStatusBridgeEvent(Map d) {
 // Called when the device is first created
 void installed() {
     log.info "${device.displayName} driver installed"
+    // added 01/12/2025 - initialize all attributes
+    initialize()
 }
+
+void initialize() {
+    sendEvent(name: 'position', value: 0, descriptionText: "${device.displayName} initializing position to 0%", unit: '%', type: 'digital')
+    sendEvent(name: 'targetPosition', value: 0, descriptionText: "${device.displayName} initializing targetPosition to 0%", unit: '%', type: 'digital')
+    sendEvent(name: 'windowShade', value: 'open', descriptionText: "${device.displayName} initializeing windowShade to open", type: 'digital')
+    sendEvent(name: 'level', value: 0, descriptionText: "${device.displayName} initializing level to 0%", unit: '%', type: 'digital')
+    sendEvent(name: 'switch', value: 'on', descriptionText: "${device.displayName} initializing switch to on", type: 'digital')
+}
+
+void on() { open() }
+void off() { close() }  
 
 // Component command to open device
 void open() {
@@ -272,6 +299,8 @@ void close() {
     startOperationTimeoutTimer()
     sendWindowShadeEvent('closing', "${device.displayName} windowShade is closing [digital]")
 }
+
+void setLevel(BigDecimal targetPosition) { setPosition(targetPosition) }
 
 // Component command to set position of device
 void setPosition(BigDecimal targetPosition) {
