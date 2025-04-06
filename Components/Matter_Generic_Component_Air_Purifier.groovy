@@ -348,7 +348,7 @@ void processUnprocessed(Map description) {
     if (logEnable) { log.debug "${device.displayName} processing unprocessed: ${description}" }
 
     String inputString = description.value
-    if (logEnable) { log.debug "${device.displayName} inputString: ${inputString}" }
+    //if (logEnable) { log.debug "${device.displayName} inputString: ${inputString}" }
     inputString = inputString.replaceAll('\\[', '').replaceAll('\\]', '')
     String[] keyValuePairs = inputString.split(', ')
     Map<String, String> resultMap = [:]

@@ -4,7 +4,7 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1253
+      "version": 1266
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
@@ -16,7 +16,7 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterLib.groovy",
       "id": 145,
       "codeType": "library",
-      "version": 57
+      "version": 58
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/Matter_State_Machines.groovy",
@@ -59,6 +59,18 @@
       "codeType": "driver",
       "id": 3429,
       "version": 15
+    },
+    {
+      "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter Generic Component_Energy.groovy",
+      "codeType": "driver",
+      "id": 3802,
+      "version": 26
+    },
+    {
+      "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom Component_Power_Energy.groovy",
+      "id": 3802,
+      "codeType": "driver",
+      "version": 28
     }
   ]
 }

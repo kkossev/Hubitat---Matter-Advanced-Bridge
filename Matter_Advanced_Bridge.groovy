@@ -32,7 +32,8 @@
  * ver. 1.3.0  2024-10-10 kkossev  - adding 'Matter Generic Component Air Purifier' (W.I.P.) : cluster 005B 'AirQuality'
  * ver. 1.3.1  2024-11-12 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine()
  * ver. 1.4.0  2024-12-26 kkossev  - HE Platform 2.4.0.x compatibility update
- * ver. 1.4.1  2025-01-12 kkossev  - (dev.branch) restored the commands descriptions;
+ * ver. 1.4.1  2025-01-12 kkossev  - restored the commands descriptions;
+ * ver. 1.5.0  2025-04-04 kkossev  - added 'Matter Custom Component Power Energy'
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *
@@ -48,15 +49,15 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.4.1' }
-static String timeStamp() { '2025/01/12 10:56 PM' }
+static String version() { '1.5.0' }
+static String timeStamp() { '2025/04/06 5:42 PM' }
 
-@Field static final Boolean _DEBUG = false
+@Field static final Boolean _DEBUG = false                   // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false
+@Field static final Boolean DEFAULT_LOG_ENABLE = false       // MAKE IT false for PRODUCTION !
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true  // minimize the state variables
 @Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
@@ -197,6 +198,25 @@ metadata {
     0x005B : [attributes: 'AirQualityClusterAttributes', parser: 'parseAirQuality',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
+    // Electrical Power Measurement Cluster
+    0x0090 : [attributes: 'ElectricalPowerMeasurementAttributes',  parser: 'parseElectricalPowerMeasurement',
+              subscriptions : [//[0x0004: [min: 0, max: 0xFFFF, delta: 0]],   // 'Voltage',
+                               //[0x0005: [min: 0, max: 0xFFFF, delta: 0]],   // 'ActiveCurrent',
+                               [0x0008: [min: 0, max: 0xFFFF, delta: 0]],   // 'ActivePower',
+                               [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // 'RMSVoltage',
+                               [0x000C: [min: 0, max: 0xFFFF, delta: 0]],   // 'RMSCurrent',
+                               [0x000E: [min: 0, max: 0xFFFF, delta: 0]],   // 'Frequency',
+                               [0x0011: [min: 0, max: 0xFFFF, delta: 0]]    // 'PowerFactor'
+              ]
+    ],
+    // Electrical Energy Measurement Cluster
+    0x0091 : [attributes: 'ElectricalEnergyMeasurementAttributes', parser: 'parseElectricalEnergyMeasurement',
+              subscriptions : [//[0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // 'CumulativeEnergyImported',
+                            //   [0x0002: [min: 0, max: 0xFFFF, delta: 0]]    // 'CumulativeEnergyExported'
+                            // [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // 
+                            // [0x0004: [min: 0, max: 0xFFFF, delta: 0]]    // 
+              ]
+    ],
     // DoorLock Cluster
     0x0101 : [attributes: 'DoorLockClusterAttributes', commands: 'DoorLockClusterCommands', parser: 'parseDoorLock',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]   // LockState
@@ -263,6 +283,8 @@ metadata {
     0x003B : 'parseSwitch',
     0x0045 : 'parseContactSensor',
     0x005B : 'parseAirQuality',
+    0x0090 : 'parseElectricalPowerMeasurement',
+    0x0091 : 'parseElectricalEnergyMeasurement',
     0x0101 : 'parseDoorLock',
     0x0102 : 'parseWindowCovering',
     0x0201 : 'parseThermostat',
@@ -935,6 +957,31 @@ void parseAirQuality(final Map descMap) { // 005B
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
+
+void parseElectricalPowerMeasurement(final Map descMap) { // 0090
+    if (descMap.cluster != '0090') { logWarn "parseElectricalPowerMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    logTrace "parseElectricalPowerMeasurement: <b>UNPROCESSED</b> ${(AirQualityClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    // send the unprocessed attributes to the child driver for further processing
+    sendMatterEvent([
+        name: 'unprocessed',
+        value: descMap.toString(),
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = false)
+}
+
+void parseElectricalEnergyMeasurement(final Map descMap) { // 0091
+    if (descMap.cluster != '0091') { logWarn "parseElectricalEnergyMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    logTrace "parseElectricalEnergyMeasurement: <b>UNPROCESSED</b> ${(AirQualityClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    // send the unprocessed attributes to the child driver for further processing
+    sendMatterEvent([
+        name: 'unprocessed',
+        value: descMap.toString(),
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = false)
+}
+
+
+
 
 // to be used in multiple clusters !
 void parseConcentrationMeasurement(final Map descMap) { // 042A
@@ -2009,6 +2056,9 @@ Map mapTuyaCategory(Map d) {
     }
     if ('042A' in d.ServerList) {   // Concentration Measurement Sensor
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Quality Sensor' ]
+    }
+    if ('90' in d.ServerList) {   // Electrical Power Measurement Cluster
+        return [ namespace: 'kkossev', driver: 'Matter Custom Component Power Energy', product_name: 'Power Measurement' ]
     }
     if ('06' in d.ServerList) {   // OnOff
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Switch', product_name: 'Switch' ]

@@ -7,7 +7,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
-    version: '1.3.0',
+    version: '1.4.0',
     documentationLink: ''
 )
 /*
@@ -28,7 +28,8 @@ library(
   * ver. 1.0.0  2024-03-16 kkossev  - frist release version
   * ver. 1.2.0  2024-10-02 kkossev  - ThermostatClusterAttributes
   * ver. 1.2.1  2024-10-04 kkossev  - SwitchClusterAttributes; getEventsMapByClusterId()
-  * ver. 1.3.0  2024-10-11 kkossev  - (dev. branch) 0x005B  : 'AirQuality'
+  * ver. 1.3.0  2024-10-11 kkossev  - added 0x005B  : 'AirQuality'
+  * ver. 1.4.0  2025-04-02 kkossev  - (dev. branch) adding 0x0091 : 'Electrical Energy Measuremen'; adding 0x0090 : 'Electrical Power Measurement'
   *
 */
 
@@ -101,6 +102,8 @@ Matter cluster names = [$FaultInjection, $UnitTesting, $ElectricalMeasurement, $
     0x0061  : 'RVCOperationalState',        // Commands and attributes for monitoring and controlling the operational state of an RVC device.
     0x0071  : 'HEPAFilterMonitoring',       // HEPA Filter
     0x0072  : 'ActivatedCarbonFilterMonitoring', // Activated Carbon Filter
+    0x0090  : 'ElectricalPowerMeasurement', // This cluster provides a mechanism for querying data about electrical power as measured by the server.
+    0x0091  : 'ElectricalEnergyMeasurement',    // Attributes and commands for measuring electrical energy
     0x0101  : 'DoorLock',                   // An interface to a generic way to secure a door
     0x0102  : 'WindowCovering',             // Commands and attributes for controlling a window covering
     0x0200  : 'PumpConfigurationAndControl',// An interface for configuring and controlling pumps.
@@ -172,6 +175,8 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0041') { return UserLabelClusterAttributes }
     if (cluster == '0045') { return BooleanStateClusterAttributes }
     if (cluster == '005B') { return AirQualityClusterAttributes }
+    if (cluster == '0090') { return ElectricalPowerMeasurementAttributes}
+    if (cluster == '0091') { return ElectricalEnergyMeasurementAttributes}
     if (cluster == '0101') { return DoorLockClusterAttributes }
     if (cluster == '0102') { return WindowCoveringClusterAttributes }
     if (cluster == '0201') { return ThermostatClusterAttributes }
@@ -433,6 +438,26 @@ Map getEventsMapByClusterId(String cluster) {
 // 2.9.6. Air Quality Cluster 0x005B
 @Field static final Map<Integer, String> AirQualityClusterAttributes = [
     0x0000  : 'AirQuality'
+]
+
+// Matter 1.3 : 2.13. Electrical Power Measurement Cluster 0x0090
+@Field static final Map<Integer, String> ElectricalPowerMeasurementAttributes = [
+    0x0000  : 'PowerMode',
+    0x0001  : 'NumberOfMeasurementTypes',
+    0x0002  : 'Accuracy',
+    0x0004  : 'Voltage',
+    0x0005  : 'ActiveCurrent',
+    0x0008  : 'ActivePower',
+    0x000E  : 'Frequency',
+    0x0011  : 'PowerFactor'
+
+]
+
+// Matter 1.3 : 2.12. Electrical Energy Measurement Cluster 0x0091
+@Field static final Map<Integer, String> ElectricalEnergyMeasurementAttributes = [
+    0x0000  : 'Accuracy',
+    0x0001  : 'CumulativeEnergyImported',
+    0x0002  : 'CumulativeEnergyExported'
 ]
 
 @Field static final Map<Integer, String> ConcentrationMeasurementClustersAttributes = [
