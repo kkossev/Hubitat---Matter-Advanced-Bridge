@@ -34,6 +34,7 @@
  * ver. 1.4.0  2024-12-26 kkossev  - HE Platform 2.4.0.x compatibility update
  * ver. 1.4.1  2025-01-12 kkossev  - restored the commands descriptions;
  * ver. 1.5.0  2025-04-04 kkossev  - added 'Matter Custom Component Power Energy'
+ * ver. 1.5.1  2025-04-07 kkossev  - RMSVoltage and RMSCurrent fix
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *
@@ -49,8 +50,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.5.0' }
-static String timeStamp() { '2025/04/06 5:42 PM' }
+static String version() { '1.5.1' }
+static String timeStamp() { '2025/04/07 12:10 PM' }
 
 @Field static final Boolean _DEBUG = false                   // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'

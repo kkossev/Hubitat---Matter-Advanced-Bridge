@@ -448,6 +448,8 @@ Map getEventsMapByClusterId(String cluster) {
     0x0004  : 'Voltage',
     0x0005  : 'ActiveCurrent',
     0x0008  : 'ActivePower',
+    0x000B  : 'RMSVoltage',
+    0x000C  : 'RMSCurrent',
     0x000E  : 'Frequency',
     0x0011  : 'PowerFactor'
 
