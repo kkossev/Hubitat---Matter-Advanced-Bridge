@@ -4,13 +4,13 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1267
+      "version": 1309
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
       "id": 162,
       "codeType": "library",
-      "version": 74
+      "version": 80
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterLib.groovy",
@@ -71,6 +71,12 @@
       "id": 3802,
       "codeType": "driver",
       "version": 28
+    },
+    {
+      "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom_Component_Signal.groovy",
+      "codeType": "driver",
+      "id": 3947,
+      "version": 13
     }
   ]
 }

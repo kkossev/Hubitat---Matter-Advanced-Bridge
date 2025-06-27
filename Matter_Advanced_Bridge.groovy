@@ -35,9 +35,10 @@
  * ver. 1.4.1  2025-01-12 kkossev  - restored the commands descriptions;
  * ver. 1.5.0  2025-04-04 kkossev  - added 'Matter Custom Component Power Energy'
  * ver. 1.5.1  2025-04-07 kkossev  - RMSVoltage and RMSCurrent fix
+ * ver. 1.5.2  2025-05-23 kkossev  - added 'Matter Custom Component Signal'
+ * ver. 1.5.3  2025-06-27 Claude Sonnet 4 - added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
- *
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
  *                                   TODO: add cluster 0202 'Window Covering'
  *                                   TODO: Matter events subscription - buttons and locks
@@ -50,8 +51,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.5.1' }
-static String timeStamp() { '2025/04/07 12:10 PM' }
+static String version() { '1.5.3' }
+static String timeStamp() { '2025/06/27 1:39 PM' }
 
 @Field static final Boolean _DEBUG = false                   // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -367,24 +368,96 @@ Map myParseDescriptionAsMap(description) {
         descMap = matter.parseDescriptionAsMap(description)
         //log.trace "myParseDescriptionAsMap: descMap:${descMap} description:${description}"
     } catch (e) {
-        logWarn "parse: exception ${e} <br> Failed to parse description: ${description}"
+        logWarn "myParseDescriptionAsMap: exception ${e} <br> Failed to parse description: ${description}"
+        // For global attributes that commonly cause parsing issues, create a basic descMap manually
+        if (true) {
+            logWarn "myParseDescriptionAsMap: attempting basic parsing for global attribute"
+            try {
+                Map result = [:]
+                if (description.contains('endpoint:')) {
+                    result.endpoint = description.split('endpoint:')[1].split(',')[0].trim()
+                }
+                if (description.contains('cluster:')) {
+                    String clusterStr = description.split('cluster:')[1].split(',')[0].trim()
+                    result.cluster = clusterStr
+                    result.clusterInt = HexUtils.hexStringToInt(clusterStr)
+                }
+                if (description.contains('attrId:')) {
+                    String attrIdStr = description.split('attrId:')[1].split(',')[0].trim()
+                    result.attrId = attrIdStr
+                    result.attrInt = HexUtils.hexStringToInt(attrIdStr)
+                }
+                if (description.contains('value:')) {
+                    result.value = description.split('value:')[1].trim()
+                    // For AttributeList (FFFB) and other list attributes, try to decode TLV data
+                    if (/*result.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && */result.value?.length() > 4) {
+                        try {
+                            List<String> decodedAttrs = decodeTLVToHex(result.value)
+                            if (decodedAttrs.size() > 0) {
+                                result.value = decodedAttrs
+                                logTrace "myParseDescriptionAsMap: decoded TLV for ${result.attrId}: ${decodedAttrs}"
+                            }
+                        } catch (Exception ex) {
+                            logWarn "myParseDescriptionAsMap: TLV decoding failed for ${result.attrId}: ${ex}"
+                        }
+                    }
+                }
+                logTrace "myParseDescriptionAsMap: basic parsing result: ${result}"
+                return result
+            } catch (Exception ex) {
+                logWarn "myParseDescriptionAsMap: basic parsing also failed: ${ex}"
+            }
+        }
         return null
     }
     if (descMap == null) {
-        logWarn "parse: descMap is null description:${description}"
+        logWarn "myParseDescriptionAsMap: descMap is null description:${description}"
         return null
     }
-    // parse: descMap:[endpoint:00, cluster:0028, attrId:0000, value:01, clusterInt:40, attrInt:0] description:read attr - endpoint: 00, cluster: 0028, attrId: 0000, value: 0401
+    // descMap:[endpoint:00, cluster:0028, attrId:0000, value:01, clusterInt:40, attrInt:0] description:read attr - endpoint: 00, cluster: 0028, attrId: 0000, value: 0401
     
-    if (descMap.value != null && descMap.attrId != null && descMap.value in ['1518', '1618', '1818'] 
-        && ( descMap.attrId in ['FFF8', 'FFF9','FFFA', 'FFFB', 'FFFC', 'FFFD', 'FFFE', 'FFFF']
-        || descMap.cluster == '001D')
-    ) {
-        descMap.value = []
-        if (settings?.traceEnable) { log.warn "myParseDescriptionAsMap: descMap:${descMap} description:${description}" }
+    // Handle TLV decoding for list attributes even when normal parsing succeeds
+    if (descMap.value != null && descMap.attrId != null) {
+        // Check for AttributeList and other list attributes that use TLV encoding
+        if (descMap.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && descMap.value instanceof String && descMap.value.length() > 4) {
+            try {
+                List<String> decodedAttrs = decodeTLVToHex(descMap.value)
+                if (decodedAttrs.size() > 0) {
+                    descMap.value = decodedAttrs
+                    logTrace "myParseDescriptionAsMap: decoded TLV for normal parsing ${descMap.attrId}: ${decodedAttrs}"
+                }
+            } catch (Exception ex) {
+                logTrace "myParseDescriptionAsMap: TLV decoding skipped for ${descMap.attrId}: ${ex}"
+            }
+        }
+        // Handle legacy empty list detection
+        else if (descMap.value in ['1518', '1618', '1818'] 
+            && ( descMap.attrId in ['FFF8', 'FFF9','FFFA', 'FFFB', 'FFFC', 'FFFD', 'FFFE', 'FFFF']
+            || descMap.cluster == '001D')
+        ) {
+            descMap.value = []
+            if (settings?.traceEnable) { log.warn "myParseDescriptionAsMap: legacy empty list detected: ${descMap} description:${description}" }
+        }
     }
-    
-    //descMap.value = JvmDescMap.decodedValue.toString()
+    // handle the case when parse returns null value: descMap:[endpoint:00, cluster:001D, attrId:0003, encoding:16, value:null, clusterInt:29, attrInt:3] description:read attr - endpoint: 00, cluster: 001D, attrId: 0003, encoding: 16, value: 0401042E0429042A042B042C042D042F0439043A041104120413043004310432040304040405040A040B040C04330434043504360437043818
+    // -> call the custome TLV decoder
+    if (/*descMap.value == null && descMap.attrId == '0003' && */descMap.cluster == '001D') {
+        // descMap.value = JvmDescMap.decodedValue.toString()
+         String descriptionValue = description.split('value:')[1].trim()
+        //log.warn "myParseDescriptionAsMap: descMap.value is null, trying to decode it: ${descMap} descriptionValue=${descriptionValue}"
+        try {
+            //log.trace "myParseDescriptionAsMap: descriptionValue=${descriptionValue} for Parts List (attr 0003)"
+            List<String> decodedAttrs = decodeTLVToHex(descriptionValue)
+            logTrace "myParseDescriptionAsMap: decoded TLV for Parts List (attr 0003): descriptionValue=${descriptionValue},   decodedAttrs=${decodedAttrs}"
+            if (decodedAttrs.size() > 0) {
+                descMap.value = decodedAttrs
+                logTrace "myParseDescriptionAsMap: decoded TLV for Parts List (attr 0003): ${decodedAttrs}"
+            }
+        } catch (Exception ex) {
+            logWarn "myParseDescriptionAsMap: TLV decoding failed for Parts List (attr 0003): ${ex}"
+        }
+    }
+
     return descMap
 }
 
@@ -586,7 +659,7 @@ void parseGeneralDiagnostics(final Map descMap) {
             sendMatterEvent([name: 'totalOperationalHours', value: value,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} TotalOperationalHours is ${value} hours"])
             break
         default :
-            if (descMap.attrId != '0000') { if (traceEnable) { logInfo "parse: parseGeneralDiagnostics: ${attrName} = ${descMap.value}" } }
+            if (descMap.attrId != '0000') { if (traceEnable) { logInfo "parseGeneralDiagnostics: ${attrName} = ${descMap.value}" } }
             break
     }
 }
@@ -693,7 +766,12 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
             logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> updated state[$fingerprintName][$attrName]</b> to ${descMap.value}"
             if (endpointId == '00' && descMap.cluster == '001D') {
                 if (attrName == 'PartsList') {
+                    logDebug "parseDescriptorCluster: Bridge partsList: ${descMap.value} descMap:${descMap}"
                     List partsList = descMap.value as List
+                    if (partsList == null || partsList.isEmpty()) {
+                        logWarn "parseDescriptorCluster: PartsList is null or empty for endpoint ${descMap.endpoint}"
+                        return
+                    }
                     int partsListCount = partsList.size()   // the number of the elements in the partsList
                     int oldCount = device.currentValue('endpointsCount') ?: 0 as int
                     String descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Bridge partsListCount is: ${partsListCount}"
@@ -1327,7 +1405,7 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
     if (dw != null && dw?.disabled != true) {
         // added 2024/10/02 - check if the child device has such an attribute and if not -> use dw.sendEvent instead of dw.parse
         if (dw?.hasAttribute(name) != true) {
-            logTrace "sendMatterEvent: <b>cannot send </b> for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            logDebug "sendMatterEvent: <b>cannot send </b> for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
             dw.sendEvent(eventMap)
             logInfo "${eventMap.descriptionText}"
             // updateDataValue 'ServerList', JsonOutput.toJson(d.ServerList)
@@ -2457,7 +2535,7 @@ void componentLock(DeviceWrapper dw) {
 void componentUnlock(DeviceWrapper dw) {
     String id = dw.getDataValue('id')
     logWarn "componentLock(${dw}) id=${id} TODO: not implemented!<br>Use virtual switch to control the lock via Apple Home..."
-    return
+    //return
 
     if (!dw.hasCommand('unlock')) { logError "componentUnlock(${dw}) driver '${dw.typeName}' does not have command 'unlock' in ${dw.supportedCommands}"; return }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
@@ -2465,8 +2543,9 @@ void componentUnlock(DeviceWrapper dw) {
     if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentUnlock(): deviceNumber ${deviceNumberPar} is not valid!"; return }
     List<Map<String, String>> cmdFields = []
     Integer duration = 1
-    cmdFields.add(matter.cmdField(0x05, 0x01, zigbee.swapOctets(HexUtils.integerToHexString(duration, 2))))
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x07, cmdFields) // 0x0101 = DoorLock Cluster, 0x01 = UnlockDoor; 04 - GetLockRecord 08-clear all PIN codes; Clear PIN Code
+    //cmdFields.add(matter.cmdField(0x05, 0x01, zigbee.swapOctets(HexUtils.integerToHexString(duration, 2))))
+    cmdFields.add(matter.cmdField(DataType.STRING_OCTET8, 0x00))
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x01) // 0x0101 = DoorLock Cluster, 0x01 = UnlockDoor; 04 - GetLockRecord 08-clear all PIN codes; Clear PIN Code
     logDebug "componentUnlock(): sending command '${cmd}'"
     sendToDevice(cmd)
 }
