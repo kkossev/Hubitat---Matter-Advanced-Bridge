@@ -36,7 +36,7 @@
  * ver. 1.5.0  2025-04-04 kkossev  - added 'Matter Custom Component Power Energy'
  * ver. 1.5.1  2025-04-07 kkossev  - RMSVoltage and RMSCurrent fix
  * ver. 1.5.2  2025-05-23 kkossev  - added 'Matter Custom Component Signal'
- * ver. 1.5.3  2025-06-27 Claude Sonnet 4 - added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
+ * ver. 1.5.3  2025-06-28 Claude Sonnet 4 - added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -52,7 +52,7 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.5.3' }
-static String timeStamp() { '2025/06/27 1:39 PM' }
+static String timeStamp() { '2025/06/28 10:30 AM' }
 
 @Field static final Boolean _DEBUG = false                   // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'

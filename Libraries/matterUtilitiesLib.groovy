@@ -28,14 +28,14 @@ library(
   * ver. 1.0.0  2024-03-16 kkossev  - first release
   * ver. 1.1.0  2024-07-20 kkossev  - release 1.1.2
   * ver. 1.2.0  2024-10-11 kkossev  - added testParse()
-  * ver. 1.3.0  2025-06-27 Claude Sonnet 4  - added custom decodeTLVToHex() and decodeTLV()
+  * ver. 1.3.0  2025-06-28 Claude Sonnet 4  - added custom decodeTLVToHex() and decodeTLV()
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterUtilitiesLibVersion = '1.3.0'
-@Field static final String matterUtilitiesLibStamp   = '2025/06/27 1:02 PM'
+@Field static final String matterUtilitiesLibStamp   = '2025/06/28 10:30 AM'
 
 metadata {
     // no capabilities
@@ -310,6 +310,12 @@ List<Integer> decodeTLV(String tlvHex) {
         return []
     }
     
+    // Handle simple empty list patterns first
+    if (tlvHex in ['1518', '1618', '1818']) {
+        logTrace "decodeTLV: detected empty container: ${tlvHex}"
+        return []
+    }
+    
     logTrace "decodeTLV: parsing TLV data: ${tlvHex}"
     List<Integer> decodedValues = []
     
@@ -319,131 +325,132 @@ List<Integer> decodeTLV(String tlvHex) {
         int pos = 0
         
         while (pos < bytes.length) {
-            // Try multiple parsing approaches for robustness
-            
             int controlByte = bytes[pos] & 0xFF
-            //logTrace "decodeTLV: processing byte 0x${HexUtils.integerToHexString(controlByte, 1)} at position ${pos}"
+            logTrace "decodeTLV: processing control byte 0x${HexUtils.integerToHexString(controlByte, 1)} at position ${pos}"
             
-            // Check for common end markers first
+            // Check for end of container marker
             if (controlByte == 0x18) {
-                //logTrace "decodeTLV: found end marker 0x18"
+                logTrace "decodeTLV: found end of container marker"
                 break
             }
             
-            // Try parsing as simple attribute ID format first (common in attribute lists)
-            if (controlByte == 0x24) {
-                // This appears to be unsigned 16-bit values in the format we're seeing
-                pos++ // skip control byte
-                if (pos + 1 < bytes.length) {
-                    int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                    decodedValues.add(value)
-                    //logTrace "decodeTLV: decoded as 16-bit attribute: ${value} (0x${HexUtils.integerToHexString(value, 2)})"
-                    pos += 2
+            // Extract TLV element components according to Matter spec
+            int elementType = controlByte & 0x1F  // Bottom 5 bits
+            int tagControl = (controlByte >> 5) & 0x07  // Top 3 bits
+            
+            logTrace "decodeTLV: elementType=0x${HexUtils.integerToHexString(elementType, 1)}, tagControl=${tagControl}"
+            
+            pos++ // advance past control byte
+            
+            // Skip tag field based on tag control (top 3 bits of control byte)
+            int tagBytes = getTagBytes(tagControl)
+            if (tagBytes > 0) {
+                if (pos + tagBytes <= bytes.length) {
+                    logTrace "decodeTLV: skipping ${tagBytes} tag bytes"
+                    pos += tagBytes
                 } else {
-                    logWarn "decodeTLV: insufficient data for 16-bit value"
+                    logWarn "decodeTLV: insufficient data for tag field (need ${tagBytes} bytes)"
                     break
                 }
-            } else if (controlByte == 0x25) {
-                // Another 16-bit format
-                pos++ // skip control byte
-                if (pos + 1 < bytes.length) {
-                    int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                    decodedValues.add(value)
-                    //logTrace "decodeTLV: decoded as 16-bit attribute: ${value} (0x${HexUtils.integerToHexString(value, 2)})"
-                    pos += 2
-                } else {
-                    logWarn "decodeTLV: insufficient data for 16-bit value"
-                    break
-                }
-            } else if (controlByte == 0x04) {
-                // 8-bit unsigned value
-                pos++
-                if (pos < bytes.length) {
-                    int value = bytes[pos] & 0xFF
-                    decodedValues.add(value)
-                    //logTrace "decodeTLV: decoded as 8-bit value: ${value}"
-                    pos++
-                } else {
-                    logWarn "decodeTLV: insufficient data for 8-bit value"
-                    break
-                }
-            } else if (controlByte == 0x05) {
-                // 16-bit unsigned value (little endian)
-                pos++
-                if (pos + 1 < bytes.length) {
-                    int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                    decodedValues.add(value)
-                    //logTrace "decodeTLV: decoded as 16-bit value: ${value}"
-                    pos += 2
-                } else {
-                    logWarn "decodeTLV: insufficient data for 16-bit value"
-                    break
-                }
-            } else {
-                // Extract element type and see if we can handle it
-                int elementType = (controlByte >> 5) & 0x07
-                int tagControl = (controlByte >> 3) & 0x03
-                int lengthControl = controlByte & 0x07
-                
-                //logTrace "decodeTLV: controlByte=0x${HexUtils.integerToHexString(controlByte, 1)}, elementType=${elementType}, tagControl=${tagControl}, lengthControl=${lengthControl}"
-                
-                pos++ // advance past control byte
-                
-                // Skip tag field based on tag control
-                if (tagControl == 1) {
-                    // Context-specific tag (1 byte)
+            }
+            
+            // Handle different element types according to Matter TLV spec
+            switch (elementType) {
+                case 0x00: // Int8
                     if (pos < bytes.length) {
-                        int contextTag = bytes[pos] & 0xFF
-                        //logTrace "decodeTLV: context tag: ${contextTag}"
-                        pos++
-                    } else {
-                        logWarn "decodeTLV: unexpected end reading context tag"
-                        break
-                    }
-                } else if (tagControl == 2) {
-                    // Common profile tag (2 bytes)
-                    if (pos + 1 < bytes.length) {
-                        int tagValue = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                        //logTrace "decodeTLV: common profile tag: ${tagValue}"
-                        pos += 2
-                    } else {
-                        logWarn "decodeTLV: unexpected end reading common profile tag"
-                        break
-                    }
-                } else if (tagControl == 3) {
-                    // Fully qualified tag (6 bytes) 
-                    if (pos + 5 < bytes.length) {
-                        //logTrace "decodeTLV: fully qualified tag (6 bytes)"
-                        pos += 6
-                    } else {
-                        logWarn "decodeTLV: unexpected end reading fully qualified tag"
-                        break
-                    }
-                }
-                
-                // Process value based on element type
-                if (elementType == 0 || elementType == 1) {
-                    // Signed or unsigned integer
-                    int valueLength = getLengthFromControl(lengthControl)
-                    if (valueLength > 0 && pos + valueLength <= bytes.length) {
-                        int value = elementType == 0 ? readSignedInt(bytes, pos, valueLength) : readUnsignedInt(bytes, pos, valueLength)
+                        int value = (bytes[pos] & 0x80) ? (bytes[pos] & 0xFF) - 256 : (bytes[pos] & 0xFF)
                         decodedValues.add(value)
-                        //logTrace "decodeTLV: decoded ${elementType == 0 ? 'signed' : 'unsigned'} int (${valueLength} bytes): ${value}"
-                        pos += valueLength
-                    } else {
-                        //logTrace "decodeTLV: skipping element type ${elementType}, pos=${pos}, remaining=${bytes.length - pos}"
-                        pos++ // skip one byte and continue
+                        logTrace "decodeTLV: decoded int8: ${value}"
+                        pos++
                     }
-                } else {
-                    // Skip other element types for now
-                    //logTrace "decodeTLV: skipping element type ${elementType}"
-                    if (lengthControl <= 3) {
-                        int skipLength = getLengthFromControl(lengthControl)
-                        pos += skipLength
-                    } else {
-                        pos++ // skip one byte
+                    break
+                    
+                case 0x01: // Int16
+                    if (pos + 1 < bytes.length) {
+                        int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
+                        if (value & 0x8000) value -= 65536  // Sign extend
+                        decodedValues.add(value)
+                        logTrace "decodeTLV: decoded int16: ${value}"
+                        pos += 2
                     }
-                }
+                    break
+                    
+                case 0x02: // Int32
+                    if (pos + 3 < bytes.length) {
+                        int value = ((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | 
+                                   ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
+                        decodedValues.add(value)
+                        logTrace "decodeTLV: decoded int32: ${value}"
+                        pos += 4
+                    }
+                    break
+                    
+                case 0x04: // UInt8
+                    if (pos < bytes.length) {
+                        int value = bytes[pos] & 0xFF
+                        decodedValues.add(value)
+                        logTrace "decodeTLV: decoded uint8: ${value}"
+                        pos++
+                    }
+                    break
+                    
+                case 0x05: // UInt16
+                    if (pos + 1 < bytes.length) {
+                        int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
+                        decodedValues.add(value)
+                        logTrace "decodeTLV: decoded uint16: ${value}"
+                        pos += 2
+                    }
+                    break
+                    
+                case 0x06: // UInt32
+                    if (pos + 3 < bytes.length) {
+                        int value = ((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | 
+                                   ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
+                        decodedValues.add(value)
+                        logTrace "decodeTLV: decoded uint32: ${value}"
+                        pos += 4
+                    }
+                    break
+                    
+                case 0x14: // Null
+                    logTrace "decodeTLV: found null element"
+                    break
+                    
+                case 0x15: // Structure
+                    logTrace "decodeTLV: found structure container"
+                    // Recursively decode structure contents
+                    List<Integer> structValues = decodeTLVContainer(bytes, pos)
+                    decodedValues.addAll(structValues)
+                    pos = skipToEndOfContainer(bytes, pos)
+                    break
+                    
+                case 0x16: // Array
+                    logTrace "decodeTLV: found array container"
+                    // Recursively decode array contents
+                    List<Integer> arrayValues = decodeTLVContainer(bytes, pos)
+                    decodedValues.addAll(arrayValues)
+                    pos = skipToEndOfContainer(bytes, pos)
+                    break
+                    
+                case 0x17: // List
+                    logTrace "decodeTLV: found list container"
+                    // Recursively decode list contents
+                    List<Integer> listValues = decodeTLVContainer(bytes, pos)
+                    decodedValues.addAll(listValues)
+                    pos = skipToEndOfContainer(bytes, pos)
+                    break
+                    
+                default:
+                    logTrace "decodeTLV: skipping unsupported element type 0x${HexUtils.integerToHexString(elementType, 1)}"
+                    // Try to skip this element safely
+                    pos = skipUnknownElement(bytes, pos, elementType)
+                    break
+            }
+            
+            // Safety check to prevent infinite loops
+            if (pos >= bytes.length) {
+                break
             }
         }
         
@@ -561,4 +568,132 @@ private int getStringLength(byte[] bytes, int pos, int lengthControl) {
  */
 private int getStringLengthBytes(int lengthControl) {
     return lengthControl == 0 ? 1 : (lengthControl == 1 ? 2 : 0)
+}
+
+/**
+ * Helper method to determine number of tag bytes based on tag control
+ */
+private int getTagBytes(int tagControl) {
+    switch (tagControl) {
+        case 0: return 0  // Anonymous tag
+        case 1: return 1  // Context-specific tag (1 byte)
+        case 2: return 2  // Common profile tag (2 bytes)
+        case 3: return 4  // Common profile tag (4 bytes)
+        case 4: return 2  // Implicit profile tag (2 bytes)
+        case 5: return 4  // Implicit profile tag (4 bytes)
+        case 6: return 6  // Fully qualified tag (6 bytes)
+        case 7: return 8  // Fully qualified tag (8 bytes)
+        default: return 0
+    }
+}
+
+/**
+ * Helper method to decode contents of a TLV container (structure, array, list)
+ */
+private List<Integer> decodeTLVContainer(byte[] bytes, int startPos) {
+    List<Integer> containerValues = []
+    int pos = startPos
+    
+    while (pos < bytes.length) {
+        int controlByte = bytes[pos] & 0xFF
+        
+        // Check for end of container
+        if (controlByte == 0x18) {
+            break
+        }
+        
+        int elementType = controlByte & 0x1F
+        int tagControl = (controlByte >> 5) & 0x07
+        
+        pos++ // skip control byte
+        
+        // Skip tag
+        int tagBytes = getTagBytes(tagControl)
+        pos += tagBytes
+        
+        // Process value
+        switch (elementType) {
+            case 0x04: // UInt8
+                if (pos < bytes.length) {
+                    containerValues.add(bytes[pos] & 0xFF)
+                    pos++
+                }
+                break
+            case 0x05: // UInt16
+                if (pos + 1 < bytes.length) {
+                    int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
+                    containerValues.add(value)
+                    pos += 2
+                }
+                break
+            default:
+                // Skip other types for now
+                pos = skipUnknownElement(bytes, pos, elementType)
+                break
+        }
+    }
+    
+    return containerValues
+}
+
+/**
+ * Helper method to skip to the end of a container
+ */
+private int skipToEndOfContainer(byte[] bytes, int startPos) {
+    int pos = startPos
+    int containerDepth = 1
+    
+    while (pos < bytes.length && containerDepth > 0) {
+        int controlByte = bytes[pos] & 0xFF
+        
+        if (controlByte == 0x18) {
+            // End of container
+            containerDepth--
+            pos++
+        } else {
+            int elementType = controlByte & 0x1F
+            int tagControl = (controlByte >> 5) & 0x07
+            
+            pos++ // skip control byte
+            
+            // Skip tag
+            pos += getTagBytes(tagControl)
+            
+            // Check if this starts a new container
+            if (elementType in [0x15, 0x16, 0x17]) {
+                containerDepth++
+            } else {
+                // Skip value
+                pos = skipUnknownElement(bytes, pos, elementType)
+            }
+        }
+    }
+    
+    return pos
+}
+
+/**
+ * Helper method to skip an unknown element safely
+ */
+private int skipUnknownElement(byte[] bytes, int pos, int elementType) {
+    // Skip based on element type
+    switch (elementType) {
+        case 0x00: return pos + 1  // Int8
+        case 0x01: return pos + 2  // Int16
+        case 0x02: return pos + 4  // Int32
+        case 0x03: return pos + 8  // Int64
+        case 0x04: return pos + 1  // UInt8
+        case 0x05: return pos + 2  // UInt16
+        case 0x06: return pos + 4  // UInt32
+        case 0x07: return pos + 8  // UInt64
+        case 0x08: // Boolean false
+        case 0x09: // Boolean true
+        case 0x14: // Null
+            return pos // No value bytes
+        case 0x0A: return pos + 4  // Float32
+        case 0x0B: return pos + 8  // Float64
+        default:
+            // For unknown types, try to skip safely
+            return Math.min(pos + 1, bytes.length)
+    }
 }
