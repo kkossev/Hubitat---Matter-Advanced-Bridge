@@ -29,14 +29,15 @@ library(
   * ver. 1.0.1  2024-07-31 kkossev  - skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
   * ver. 1.0.2  2024-09-29 kkossev  - HE platform 2.3.9.186 optimizations
   * ver. 1.0.3  2024-09-29 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine(); secured all . operations with ?.
+  * ver. 1.0.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.0.3'
-@Field static final String matterStateMachinesLibStamp   = '2024/11/12 9:32 PM'
+@Field static final String matterStateMachinesLib = '1.0.4'
+@Field static final String matterStateMachinesLibStamp   = '2026/01/06 9:50 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -77,6 +78,7 @@ void readSingeAttrStateMachine(Map data = null) {
 
     Integer st =    state['stateMachines']['readSingeAttrState']
     Integer retry = state['stateMachines']['readSingeAttrRetry']
+    Integer maxRetries = STATE_MACHINE_MAX_RETRIES * getDiscoveryTimeoutScale()
     String fingerprintName = getFingerprintName(data.endpoint)
     String attributeName = getAttributeName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: HexUtils.integerToHexString(data.attribute, 2)])
     logTrace "readSingeAttrStateMachine: st:${st} retry:${retry} data:${data}"
@@ -158,7 +160,7 @@ void readSingeAttrStateMachine(Map data = null) {
             else {
                 logTrace "readSingeAttrStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "readSingeAttrStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     state['stateMachines']['readSingeAttrResult'] = ERROR
                     st = 99
@@ -226,6 +228,7 @@ void disoverGlobalElementsStateMachine(Map data) {
 
     Integer st =    state['stateMachines']['discoverGlobalElementsState']
     Integer retry = state['stateMachines']['discoverGlobalElementsRetry']
+    Integer maxRetries = STATE_MACHINE_MAX_RETRIES * getDiscoveryTimeoutScale()
     //String fingerprintName = getFingerprintName(data.endpoint)
     //String attributeName = getAttributeName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: HexUtils.integerToHexString(data.attribute, 2)])
     if (data.debug) { logDebug "disoverGlobalElementsStateMachine: st:${st} retry:${retry} data:${data}" }
@@ -278,7 +281,7 @@ void disoverGlobalElementsStateMachine(Map data) {
             else {
                 logTrace "disoverGlobalElementsStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "disoverGlobalElementsStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
                 }
@@ -292,7 +295,7 @@ void disoverGlobalElementsStateMachine(Map data) {
             else {
                 logTrace "disoverGlobalElementsStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "disoverGlobalElementsStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
                 }
@@ -410,6 +413,7 @@ void discoverAllStateMachine(Map data = null) {
 
     Integer st =    state['stateMachines']['discoverAllState']
     Integer retry = state['stateMachines']['discoverAllRetry']
+    Integer maxRetries = STATE_MACHINE_MAX_RETRIES * getDiscoveryTimeoutScale()
     Integer stateMachinePeriod = STATE_MACHINE_PERIOD              // can be changed, depending on the expected execution time of the different states
     //String fingerprintName = getFingerprintName(data.endpoint)
     //String attributeName = getAttributeName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: HexUtils.integerToHexString(data.attribute, 2)])
@@ -446,7 +450,7 @@ void discoverAllStateMachine(Map data = null) {
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     state['stateMachines']['errorText'] = 'ERROR during the Matter Bridge and Devices discovery (state BRIDGE_GLOBAL_ELEMENTS_WAIT)'
                     st = DISCOVER_ALL_STATE_ERROR
@@ -468,7 +472,7 @@ void discoverAllStateMachine(Map data = null) {
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     state['stateMachines']['errorText'] = 'state BRIDGE_BASIC_INFO_ATTR_LIST_WAIT timeout !'
                     st = DISCOVER_ALL_STATE_ERROR
@@ -503,7 +507,7 @@ void discoverAllStateMachine(Map data = null) {
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     sendInfoEvent('state BRIDGE_BASIC_INFO_ATTR_VALUES_WAIT timeout !')
                     st = DISCOVER_ALL_STATE_ERROR
@@ -537,7 +541,7 @@ void discoverAllStateMachine(Map data = null) {
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value retry=${retry})!"
                     state['stateMachines']['errorText'] = 'state BRIDGE_GENERAL_DIAGNOSTICS_WAIT timeout !'
                     st = DISCOVER_ALL_STATE_ERROR
@@ -598,7 +602,7 @@ void discoverAllStateMachine(Map data = null) {
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - fingerprint${fingerprintName} timeout waiting for cluster 0x1D reading results !"
                     //st = DISCOVER_ALL_STATE_ERROR
                     // continue with the next device, even if there is an error
@@ -646,7 +650,7 @@ void discoverAllStateMachine(Map data = null) {
             else {
                 logDebug "discoverAllStateMachine: st:${st} - waiting for the attribute value retry=${retry})"
                 retry++
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value retry=${retry})!"
                     //st = DISCOVER_ALL_STATE_ERROR
                     // continue with the next device, even if there is an error
@@ -755,7 +759,7 @@ void discoverAllStateMachine(Map data = null) {
                 logDebug "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
                 stateMachinePeriod = STATE_MACHINE_PERIOD * 2
-                if (retry > STATE_MACHINE_MAX_RETRIES) {
+                if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value retry=${retry})!"
                     // continue with the next device, even if there is an error
                     sendInfoEvent("<b>ERROR discovering bridged device #${partsListIndex} ${fingerprintName} - timeout waiting for cluster ${state.states['cluster']} reading results !</b>")

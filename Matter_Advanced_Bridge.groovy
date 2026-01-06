@@ -37,6 +37,7 @@
  * ver. 1.5.1  2025-04-07 kkossev  - RMSVoltage and RMSCurrent fix
  * ver. 1.5.2  2025-05-23 kkossev  - added 'Matter Custom Component Signal'
  * ver. 1.5.3  2025-06-28 Claude Sonnet 4 - added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
+ * ver. 1.5.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -51,8 +52,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.5.3' }
-static String timeStamp() { '2025/06/28 10:30 AM' }
+static String version() { '1.5.4' }
+static String timeStamp() { '2026/01/06 9:50 PM' }
 
 @Field static final Boolean _DEBUG = false                   // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -139,6 +140,7 @@ metadata {
         if (device && advancedOptions == true) {
             input name: 'healthCheckMethod', type: 'enum', title: '<b>Healthcheck Method</b>', options: HealthcheckMethodOpts.options, defaultValue: HealthcheckMethodOpts.defaultValue, required: true, description: '<i>Method to check device online/offline status.</i>'
             input name: 'healthCheckInterval', type: 'enum', title: '<b>Healthcheck Interval</b>', options: HealthcheckIntervalOpts.options, defaultValue: HealthcheckIntervalOpts.defaultValue, required: true, description: '<i>How often the hub will check the device health.<br>3 consecutive failures will result in status "offline"</i>'
+            input name: 'discoveryTimeoutScale', type: 'enum', title: '<b>Discovery timeout scale</b>', options: ['1':'1x (default)', '2':'2x', '3':'3x (slow/battery bridges)'], defaultValue: '1', required: true, description: '<i>Scales discovery/state-machine retry timeouts and discovery scheduling delays.</i>'
             input name: 'traceEnable', type: 'bool', title: '<b>Enable trace logging</b>', defaultValue: false, description: '<i>Turns on detailed extra trace logging for 30 minutes.</i>'
             input name: 'minimizeStateVariables', type: 'bool', title: '<b>Minimize State Variables</b>', defaultValue: MINIMIZE_STATE_VARIABLES_DEFAULT, description: '<i>Minimize the state variables size.</i>'
         }
@@ -1527,9 +1529,11 @@ void requestMatterClusterAttributesValues(final Map data) {
  */
 void requestAndCollectAttributesValues(Integer endpoint, Integer cluster, Integer time=1, boolean fast=false) {
     state.states['isPing'] = false
-    runIn((time as int) ?: 1,              requestMatterClusterAttributesList,   [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
-    runIn((time as int) + (fast ? 2 : 3),  requestMatterClusterAttributesValues, [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
-    runIn((time as int) + (fast ? 6 : 12), logRequestedClusterAttrResult,        [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
+    final int baseTime = (time as int) ?: 1
+    final int scale = getDiscoveryTimeoutScale()
+    runIn(baseTime, requestMatterClusterAttributesList,   [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
+    runIn(baseTime + ((fast ? 2 : 3) * scale),  requestMatterClusterAttributesValues, [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
+    runIn(baseTime + ((fast ? 6 : 12) * scale), logRequestedClusterAttrResult,        [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
 }
 
 void scheduleRequestAndCollectServerListAttributesList(String endpointPar = '00', Integer time=1, boolean fast=false) {
@@ -3038,6 +3042,7 @@ void initializeVars(boolean fullInit = false) {
     if (fullInit || settings?.logEnable == null) { device.updateSetting('logEnable', DEFAULT_LOG_ENABLE) }
     if (fullInit || settings?.traceEnable == null) { device.updateSetting('traceEnable', false) }
     if (settings?.advancedOptions == null) { device.updateSetting('advancedOptions', [value:false, type:'bool']) }
+    if (settings?.discoveryTimeoutScale == null) { device.updateSetting('discoveryTimeoutScale', [value: '1', type: 'enum']) }
     if (fullInit || settings?.healthCheckMethod == null) { device.updateSetting('healthCheckMethod', [value: HealthcheckMethodOpts.defaultValue.toString(), type: 'enum']) }
     if (fullInit || settings?.healthCheckInterval == null) { device.updateSetting('healthCheckInterval', [value: HealthcheckIntervalOpts.defaultValue.toString(), type: 'enum']) }
     if (settings?.minimizeStateVariables == null) { device.updateSetting('minimizeStateVariables', [value: MINIMIZE_STATE_VARIABLES_DEFAULT, type: 'bool']) }
@@ -3066,6 +3071,13 @@ static Integer safeToInt(val, Integer defaultVal=0) {
 
 static Double safeToDouble(val, Double defaultVal=0.0) {
     return "${val}"?.isDouble() ? "${val}".toDouble() : defaultVal
+}
+
+Integer getDiscoveryTimeoutScale() {
+    Integer scale = safeToInt(settings?.discoveryTimeoutScale, 1)
+    if (scale < 1) { scale = 1 }
+    if (scale > 3) { scale = 3 }
+    return scale
 }
 
 @Field static final int ROLLING_AVERAGE_N = 10

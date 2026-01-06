@@ -7,7 +7,7 @@ library(
     name: 'matterUtilitiesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterUtilitiesLib.groovy',
-    version: '1.3.0',
+    version: '1.3.1',
     documentationLink: ''
 )
 /*
@@ -29,13 +29,14 @@ library(
   * ver. 1.1.0  2024-07-20 kkossev  - release 1.1.2
   * ver. 1.2.0  2024-10-11 kkossev  - added testParse()
   * ver. 1.3.0  2025-06-28 Claude Sonnet 4  - added custom decodeTLVToHex() and decodeTLV()
+  * ver. 1.3.1  2026-01-06 GPT-5.2 - added discoveryTimeoutScale
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterUtilitiesLibVersion = '1.3.0'
-@Field static final String matterUtilitiesLibStamp   = '2025/06/28 10:30 AM'
+@Field static final String matterUtilitiesLibVersion = '1.3.1'
+@Field static final String matterUtilitiesLibStamp   = '2026/01/06 9:50 PM'
 
 metadata {
     // no capabilities
@@ -177,11 +178,11 @@ void collectBasicInfo(Integer endpoint = 0, Integer timePar = 1, boolean fast = 
     requestAndCollectAttributesValues(endpoint, cluster = 0x001D, time, fast)  // Descriptor Cluster - DeviceTypeList, ServerList, ClientList, PartsList
 
     // next - fill in all the ServerList clusters attributes list in the fingerprint
-    time += fast ? SHORT_TIMEOUT : LONG_TIMEOUT
+    time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
     scheduleRequestAndCollectServerListAttributesList(endpoint.toString(), time, fast)
 
     // collect the BasicInformation Cluster attributes
-    time += fast ? SHORT_TIMEOUT : LONG_TIMEOUT
+    time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
     String fingerprintName = getFingerprintName(endpoint)
     if (state[fingerprintName] == null) {
         logWarn "collectBasicInfo(): state.${fingerprintName} is null !"
@@ -195,7 +196,7 @@ void collectBasicInfo(Integer endpoint = 0, Integer timePar = 1, boolean fast = 
         /* groovylint-disable-next-line ConstantIfExpression */
         if ('28' in serverList) {
             requestAndCollectAttributesValues(endpoint, cluster = 0x0028, time, fast) // Basic Information Cluster
-            time += fast ? SHORT_TIMEOUT : LONG_TIMEOUT
+            time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
         }
         else {
             logWarn "collectBasicInfo(): BasicInformationCluster 0x0028 endpoint:${endpoint} is <b>not in the ServerList !</b>"
@@ -204,7 +205,7 @@ void collectBasicInfo(Integer endpoint = 0, Integer timePar = 1, boolean fast = 
     else {
         if ('39' in serverList) {
             requestAndCollectAttributesValues(endpoint, cluster = 0x0039, time, fast) // Bridged Device Basic Information Cluster
-            time += fast ? SHORT_TIMEOUT : LONG_TIMEOUT
+            time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
         }
         else {
             logWarn "collectBasicInfo(): BridgedDeviceBasicInformationCluster 0x0039 endpoint:${endpoint} is <b>not in the ServerList !</b>"
@@ -231,7 +232,7 @@ void requestExtendedInfo(Integer endpoint = 0, Integer timePar = 15, boolean fas
         logDebug "requestExtendedInfo(): endpointInt:${endpoint} (0x${HexUtils.integerToHexString(safeToInt(endpoint), 1)}),  clusterInt:${clusterInt} (0x${cluster}),  time:${time}"
         /* groovylint-disable-next-line ParameterReassignment */
         requestAndCollectAttributesValues(endpoint, clusterInt, time, fast = false)
-        time += fast ? SHORT_TIMEOUT : LONG_TIMEOUT
+        time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
     }
 
     runIn(time, 'delayedInfoEvent', [overwrite: true, data: [info: 'Extended Bridge Discovery finished', descriptionText: '']])
