@@ -37,7 +37,7 @@
  * ver. 1.5.1  2025-04-07 kkossev  - RMSVoltage and RMSCurrent fix
  * ver. 1.5.2  2025-05-23 kkossev  - added 'Matter Custom Component Signal'
  * ver. 1.5.3  2025-06-28 Claude Sonnet 4 - added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
- * ver. 1.5.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
+ * ver. 1.5.4  2026-01-07 GPT-5.2  - added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -53,14 +53,14 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.5.4' }
-static String timeStamp() { '2026/01/06 9:50 PM' }
+static String timeStamp() { '2026/01/07 10:56 PM' }
 
-@Field static final Boolean _DEBUG = false                   // MAKE IT false for PRODUCTION !       
+@Field static final Boolean _DEBUG = true                  // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false       // MAKE IT false for PRODUCTION !
+@Field static final Boolean DEFAULT_LOG_ENABLE = true      // MAKE IT false for PRODUCTION !
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true  // minimize the state variables
 @Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
@@ -185,7 +185,8 @@ metadata {
     0x003B : [parser: 'parseSwitch', attributes: 'SwitchClusterAttributes', events: 'SwitchClusterEvents',       // Switch
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // NumberOfPositions
                                [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // CurrentPosition
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // MultiPressMax
+                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]],  // MultiPressMax
+              eventSubscriptions : [-1]  // -1 means subscribe to ALL events from this cluster
     ],
     
     // Descriptor Cluster
@@ -342,6 +343,10 @@ void parse(final String description) {
     if (!(((descMap.attrId in ['FFF8', 'FFF9', 'FFFA', 'FFFC', 'FFFD', '00FE']) && DO_NOT_TRACE_FFFX) || state['states']['isDiscovery'] == true)) {
         logDebug "parse: descMap:${descMap}  description:${description}"
     }
+    // Additional debug for Matter events (especially Switch/buttons)
+    if (descMap?.evtId != null && descMap?.cluster == '003B' && settings?.logEnable) {
+        logDebug "parse: received Switch EVENT endpoint:${descMap.endpoint} evtId:${descMap.evtId} value:${descMap.value}"
+    }
     parseGlobalElements(descMap)
 //return
     gatherAttributesValuesInfo(descMap)
@@ -363,6 +368,16 @@ void parse(final String description) {
         logWarn "parserFunc: NOT PROCESSED: ${descMap} description:${description}"
     }
 }
+
+// New parse(Map) method to handle events (and attribute reports) when Device Data.newParse	is set to true
+// example : [callbackType:Report, endpointInt:2, clusterInt:59, attrInt:1, data:[1:UINT:0], value:0] 
+// example : [endpoint:01, cluster:003B, evtId:0006, clusterInt:59, evtInt:6, values:[0:[type:04, isContextSpecific:true, value:01], 1:[type:04, isContextSpecific:true, value:01]]]
+
+void parse(Map msg) {
+    logDebug "<b>newParse(Map)</b> received  Map: ${msg}"
+    // TODO ...
+}
+
 
 Map myParseDescriptionAsMap(description) {
     Map descMap
@@ -892,32 +907,15 @@ String getEventName(final String cluster, String evtId) {
 // Method for parsing 003B Switch cluster attributes and events
 void parseSwitch(final Map descMap) {
     if (descMap.cluster != '003B') { logWarn "parseSwitch: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    Map eventMap = [:]
-    String attrName = getAttributeName(descMap)
-    String evtName = getEventName(descMap)                  // switch event - added 2024/10/04
-    String fingerprintName = getFingerprintName(descMap)
-    logDebug "parseSwitch: fingerprintName:${fingerprintName} attrName:${attrName} evtName:${evtName}"
-    if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
-    String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
-    if (descMap.evtId != null) {    // event
-        eventName = evtName[0].toLowerCase() + evtName[1..-1]  // change the event name first letter to lower case
-        eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} EVENT ${eventName} : ${descMap.value}"]
-        if (logEnable) { logDebug "parseSwitch: EVENT ${eventName} : ${descMap.value}" }
-    }
-    else {  // attribute
-        if (attrName in SwitchClusterAttributes.values().toList()) {
-            String valueFormatted = descMap.value
-            eventMap = [name: eventName, value:valueFormatted, descriptionText: "${eventName} : ${valueFormatted}"]
-            if (logEnable) { logInfo "parseSwitch: ${attrName} is ${valueFormatted}" }
-        }
-        else {
-            logWarn "parseSwitch: unsupported: ${attrName} = ${descMap.value}"
-        }
-    }
-    if (eventMap != [:]) {
-        eventMap.type = 'physical'; eventMap.isStateChange = true
-        sendMatterEvent(eventMap, descMap, true) // child events
-    }
+    String attributeName = (descMap.attrId != null) ? getAttributeName(descMap) : null
+    String eventName = (descMap.evtId != null) ? getEventName(descMap) : null
+    logTrace "parseSwitch: <b>UNPROCESSED</b> ${attributeName ?: eventName ?: UNKNOWN} = ${descMap.value}"
+    // send the unprocessed attributes and events to the child driver for further processing
+    sendMatterEvent([
+        name: 'unprocessed',
+        value: JsonOutput.toJson(descMap),
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} ${descMap.attrId ? 'attribute ' + descMap.attrId : 'event ' + descMap.evtId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = false)
 }
 
 // Method for parsing contact sensor
@@ -1362,7 +1360,9 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
     }
     // TODO - use the child device wrapper to check the current value !!!!!!!!!!!!!!!!!!!!!
 
-    if (ignoreDuplicates == true && state.states['isRefresh'] == false) {
+    // IMPORTANT: Never suppress Matter *events* (evtId present) as duplicates.
+    // Button/Switch events often repeat the same payload (e.g. {"position":1}) and still represent a real action.
+    if (ignoreDuplicates == true && state.states['isRefresh'] == false && descMap?.evtId == null) {
         boolean isDuplicate = false
         Object latestEvent = dw?.device?.currentState(name)
         //latestEvent.properties.each { k, v -> logWarn ("$k: $v") }
@@ -1405,17 +1405,22 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
         logTrace "sendMatterEvent: <b>ignoreDuplicates=false</b> or isRefresh=${state.states['isRefresh'] } for event: ${eventMap.descriptionText} (value:${value})"
     }
     if (dw != null && dw?.disabled != true) {
-        // added 2024/10/02 - check if the child device has such an attribute and if not -> use dw.sendEvent instead of dw.parse
-        if (dw?.hasAttribute(name) != true) {
+        // Always route Matter *events* (evtId present) through the child parse() so component drivers can translate them.
+        boolean isMatterEvent = (descMap?.evtId != null)
+        if (isMatterEvent) {
+            logDebug "sendMatterEvent: sending Matter EVENT for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            dw.parse([eventMap])
+        }
+        // For attributes, keep the existing behavior: if child doesn't declare the attribute, send it directly.
+        else if (dw?.hasAttribute(name) != true) {
             logDebug "sendMatterEvent: <b>cannot send </b> for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
             dw.sendEvent(eventMap)
             logInfo "${eventMap.descriptionText}"
-            // updateDataValue 'ServerList', JsonOutput.toJson(d.ServerList)
             // added 2024/10/02 - update the data value in the child device
             dw.updateDataValue(name, value)
         }
         else {
-        // send events to child for parsing. Any filtering of duplicated events will be potentially done in the child device handler.
+            // send events to child for parsing. Any filtering of duplicated events will be potentially done in the child device handler.
             logDebug "sendMatterEvent: sending for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
             dw.parse([eventMap])
         }
@@ -1705,7 +1710,10 @@ void clearStates() {
 void reSubscribe() {
     logDebug "reSubscribe() ...(${location.hub.firmwareVersionString >= '2.3.9.186'})"
     if (location.hub.firmwareVersionString >= '2.3.9.186') {
-        sendToDevice(cleanSubscribeCmd())
+        String cleanCmd = cleanSubscribeCmd()
+        if (cleanCmd != null) {
+            sendToDevice(cleanCmd)
+        }
         sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device reSubscribe command')
         runIn(3, 'clearInfoEvent')
     }
@@ -1822,6 +1830,13 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
             // here we have a list of same cluster, same attribute, different endpoints
             endpointsList.each { endpointList ->
                 Integer endpoint = endpointList[0]
+                // Skip disabled child devices
+                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+                ChildDeviceWrapper childDevice = getChildDevice(dni)
+                if (childDevice?.disabled == true) {
+                    logDebug "getSubscribeOrRefreshCmdList(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
+                    return  // continue to next endpoint
+                }
                 //logDebug "endpoint:${endpoint}, Cluster:${cluster}, Attribute:${attribute}"
                 attributePaths.add(matter.attributePath(endpoint, cluster, attribute))
             }
@@ -1839,38 +1854,88 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
                 cmdsList.add(matter.subscribe(min, max, attributePaths))
             }
         } // for each attribute
+        
+        // Handle event subscriptions for this cluster (if configured)
+        if (action == 'SUBSCRIBE_ALL' && SupportedMatterClusters[cluster]?.eventSubscriptions) {
+            List<Integer> eventIds = SupportedMatterClusters[cluster].eventSubscriptions
+            List<Map<String, String>> eventPaths = []
+            
+            // Get unique endpoints for this cluster from the grouped subscriptions
+            Set<Integer> clusterEndpoints = [] as Set<Integer>
+            value.each { endpointClusterAttr ->
+                clusterEndpoints.add(endpointClusterAttr[0] as Integer)
+            }
+            
+            // Build event paths for each endpoint (skip disabled devices)
+            clusterEndpoints.each { endpoint ->
+                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+                ChildDeviceWrapper childDevice = getChildDevice(dni)
+                if (childDevice?.disabled == true) {
+                    logDebug "getSubscribeOrRefreshCmdList(): skipping disabled device events for endpoint ${endpoint} (${childDevice.displayName})"
+                    return  // continue to next endpoint
+                }
+                
+                eventIds.each { eventId ->
+                    String epHex = HexUtils.integerToHexString(endpoint, 1)
+                    eventPaths.add(matter.eventPath(epHex, cluster, eventId))
+                }
+            }
+            
+            // Add event subscription command if we have any event paths
+            if (!eventPaths.isEmpty()) {
+                String evtSubscribeCmd = matter.subscribe(0, 0xFFFF, eventPaths)
+                cmdsList.add(evtSubscribeCmd)
+                logDebug "getSubscribeOrRefreshCmdList(): added event subscriptions for cluster 0x${HexUtils.integerToHexString(cluster, 2)} endpoints=${clusterEndpoints} eventIds=${eventIds}"
+            }
+        }
+        
         logTrace "attribute:${attribute} cmdsList=${cmdsList}"
         //return cmdsList
     }   // for each cluster
+
     return cmdsList
 }
 
 String subscribeCmd() {
-    List<Map<String, String>> attributePaths = []
-    attributePaths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
-    attributePaths.addAll(state.subscriptions?.collect { sub ->
+    List<Map<String, String>> paths = []
+    paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
+    paths.addAll(state.subscriptions?.collect { sub ->
         matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
     })
-    if (attributePaths.isEmpty()) {
-        logWarn 'subscribeCmd(): attributePaths is empty!'
+    // Note: Event subscriptions are handled by getSubscribeOrRefreshCmdList() through cluster configuration
+    if (paths.isEmpty()) {
+        logWarn 'subscribeCmd(): paths is empty!'
         return null
     }
-    return matter.subscribe(0, 0xFFFF, attributePaths)
+    return matter.subscribe(0, 0xFFFF, paths)
 }
 
 // availabe from HE platform version [2.3.9.186]
 String cleanSubscribeCmd() {
-    List<Map<String, String>> attributePaths = []
-    attributePaths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
-    attributePaths.addAll(state.subscriptions?.collect { sub ->
+    List<Map<String, String>> paths = []
+    paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
+    // Filter out subscriptions for disabled child devices
+    paths.addAll(state.subscriptions?.findAll { sub ->
+        Integer endpoint = sub[0] as Integer
+        String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+        ChildDeviceWrapper childDevice = getChildDevice(dni)
+        if (childDevice?.disabled == true) {
+            logDebug "cleanSubscribeCmd(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
+            return false
+        }
+        return true
+    }?.collect { sub ->
         matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
     })
-    if (attributePaths.isEmpty()) {
-        logWarn 'cleanSubscribeCmd(): attributePaths is empty!'
+    // Note: Event subscriptions are handled by getSubscribeOrRefreshCmdList() through cluster configuration
+    if (paths.isEmpty()) {
+        logWarn 'cleanSubscribeCmd(): paths is empty!'
         return null
     }
-    return matter.cleanSubscribe(0, 0xFFFF, attributePaths)
+    return matter.cleanSubscribe(0, 0xFFFF, paths)
 }
+
+
 
 
 // TODO - check if this is still needed ?
@@ -2147,7 +2212,7 @@ Map mapTuyaCategory(Map d) {
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Switch', product_name: 'Switch' ]
     }
     if ('3B' in d.ServerList) {   // Switch / Button - TODO !
-        return [ namespace: 'kkossev', driver: 'Matter Generic Component Switch', product_name: 'Button' ]
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Button', product_name: 'Button' ]
     }
     if ('2F' in d.ServerList) {   // Power Source
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Battery', product_name: 'Battery' ]
