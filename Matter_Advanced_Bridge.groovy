@@ -36,8 +36,8 @@
  * ver. 1.5.0  2025-04-04 kkossev  - added 'Matter Custom Component Power Energy'
  * ver. 1.5.1  2025-04-07 kkossev  - RMSVoltage and RMSCurrent fix
  * ver. 1.5.2  2025-05-23 kkossev  - added 'Matter Custom Component Signal'
- * ver. 1.5.3  2025-06-28 Claude Sonnet 4 - added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
- * ver. 1.5.4  2026-01-07 GPT-5.2  - added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
+ * ver. 1.5.3  2025-06-28 kkossev + Claude Sonnet 4 : added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
+ * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -53,14 +53,14 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.5.4' }
-static String timeStamp() { '2026/01/08 10:56 PM' }
+static String timeStamp() { '2026/01/08 11:44 PM' }
 
-@Field static final Boolean _DEBUG = true                  // MAKE IT false for PRODUCTION !       
+@Field static final Boolean _DEBUG = false                  // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = true      // MAKE IT false for PRODUCTION !
+@Field static final Boolean DEFAULT_LOG_ENABLE = false      // MAKE IT false for PRODUCTION !
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true  // minimize the state variables
 @Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
@@ -917,9 +917,13 @@ void parseSwitch(final Map descMap) {
         if (lastSubscribe != null) {
             long age = now() - (lastSubscribe as long)
             long uptime = location.hub.uptime ?: 0L
-            long thresholdTime = uptime < 60 ? 30000 : 10000
+            // Use 30s threshold if hub just booted (uptime < 5min) OR subscription is recent (age < 60s)
+            long thresholdTime = (uptime < 300 || age < 60000) ? 30000 : 10000
+            if (settings?.logEnable) {
+                logDebug "parseSwitch: EVENT age=${age}ms uptime=${uptime}s threshold=${thresholdTime}ms"
+            }
             if (age >= 0 && age < thresholdTime) {
-                logDebug "parseSwitch: ignored event (ep=${descMap.endpoint} evt=${descMap.evtId}) ${age}ms after subscribe (hub uptime=${uptime}s)"
+                logDebug "parseSwitch: FILTERED event (ep=${descMap.endpoint} evt=${descMap.evtId}) ${age}ms after subscribe (hub uptime=${uptime}s)"
                 return
             }
         }
