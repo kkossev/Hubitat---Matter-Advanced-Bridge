@@ -910,6 +910,21 @@ String getEventName(final String cluster, String evtId) {
 // Method for parsing 003B Switch cluster attributes and events
 void parseSwitch(final Map descMap) {
     if (descMap.cluster != '003B') { logWarn "parseSwitch: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    
+    // Filter noisy events that arrive shortly after (re)subscription
+    if (descMap.evtId != null) {
+        def lastSubscribe = state.lastTx?.subscribeTime
+        if (lastSubscribe != null) {
+            long age = now() - (lastSubscribe as long)
+            long uptime = location.hub.uptime ?: 0L
+            long thresholdTime = uptime < 60 ? 30000 : 10000
+            if (age >= 0 && age < thresholdTime) {
+                logDebug "parseSwitch: ignored event (ep=${descMap.endpoint} evt=${descMap.evtId}) ${age}ms after subscribe (hub uptime=${uptime}s)"
+                return
+            }
+        }
+    }
+    
     String attributeName = (descMap.attrId != null) ? getAttributeName(descMap) : null
     String eventName = (descMap.evtId != null) ? getEventName(descMap) : null
     logTrace "parseSwitch: <b>UNPROCESSED</b> ${attributeName ?: eventName ?: UNKNOWN} = ${descMap.value}"
@@ -1730,6 +1745,7 @@ void reSubscribe() {
     if (location.hub.firmwareVersionString >= '2.3.9.186') {
         String cleanCmd = cleanSubscribeCmd()
         if (cleanCmd != null) {
+            state.lastTx['subscribeTime'] = now()
             sendToDevice(cleanCmd)
         }
         sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device reSubscribe command')
@@ -1799,6 +1815,7 @@ void sendSubscribeList() {
     if (location.hub.firmwareVersionString >= '2.3.9.186') {
         String cleanCmd = cleanSubscribeCmd()
         if (cleanCmd != null) {
+            state.lastTx['subscribeTime'] = now()
             sendToDevice(cleanCmd)
             logDebug 'sendSubscribeList(): using cleanSubscribe'
         }
@@ -1807,6 +1824,7 @@ void sendSubscribeList() {
         // Fallback to older subscribe method for firmware < 2.3.9.186
         List<String> cmds = getSubscribeOrRefreshCmdList('SUBSCRIBE_ALL')
         if (cmds != null && cmds != []) {
+            state.lastTx['subscribeTime'] = now()
             logTrace "sendSubscribeList(): cmds = ${cmds}"
             sendToDevice(cmds)
         }
