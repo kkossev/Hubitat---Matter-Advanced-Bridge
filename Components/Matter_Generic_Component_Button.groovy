@@ -33,23 +33,6 @@ metadata {
         capability 'HoldableButton'
         capability 'ReleasableButton'
         capability 'DoubleTapableButton'
-
-        // Switch cluster (0x003B) attributes forwarded by parent
-        attribute 'numberOfPositions', 'string'
-        attribute 'currentPosition', 'string'
-        attribute 'multiPressMax', 'string'
-
-        // Switch cluster (0x003B) events forwarded by parent
-        attribute 'initialPress', 'string'
-        attribute 'longPress', 'string'
-        attribute 'shortRelease', 'string'
-        attribute 'longRelease', 'string'
-        attribute 'multiPressOngoing', 'string'
-        attribute 'multiPressComplete', 'string'
-        attribute 'switchLatched', 'string'
-
-        // Unprocessed Matter cluster data from parent
-        attribute 'unprocessed', 'string'
     }
 }
 
@@ -57,7 +40,6 @@ preferences {
     section {
         input name: 'logEnable', type: 'bool', title: 'Enable debug logging', required: false, defaultValue: true
         input name: 'txtEnable', type: 'bool', title: 'Enable descriptionText logging', required: false, defaultValue: true
-        input name: 'forceSingleButton', type: 'bool', title: 'Force single button (numberOfButtons = 1)', required: false, defaultValue: false
     }
 }
 
@@ -71,30 +53,8 @@ void parse(List<Map> description) {
     description.each { d ->
         switch (d.name) {
             case 'unprocessed':
+                // All Switch cluster events and attributes are routed through handleUnprocessed()
                 handleUnprocessed(d)
-                break
-            case 'numberOfPositions':
-                handleNumberOfPositions(d)
-                break
-            case 'currentPosition':
-                handleCurrentPosition(d)
-                break
-
-            case 'initialPress':
-                handleInitialPressEvent(d)
-                break
-            case 'longPress':
-                handleHeldEvent(d)
-                break
-            case 'shortRelease':
-                handleShortReleaseEvent(d)
-                break
-            case 'longRelease':
-                handleLongReleaseEvent(d)
-                break
-
-            case 'multiPressComplete':
-                handleMultiPressComplete(d)
                 break
 
             default:
@@ -187,9 +147,7 @@ private void handleSwitchEvent(Map descMap) {
             break
         case '0005':
         case '5':
-            eventData.name = 'multiPressOngoing'
-            eventData.descriptionText = "${device.displayName} multiPressOngoing"
-            sendEvent(eventData)
+            if (logEnable) { log.debug "${device.displayName} multiPressOngoing event processed" }
             break
         case '0006':
         case '6':
@@ -262,9 +220,8 @@ private void handleSwitchAttribute(Map descMap) {
             break
         case '0002':
         case '2':
-            attrData.name = 'multiPressMax'
-            attrData.descriptionText = "${device.displayName} multiPressMax is ${value}"
-            sendEvent(attrData)
+            device.updateDataValue('multiPressMax', value.toString())
+            if (txtEnable) { log.info "${device.displayName} multiPressMax is ${value}" }
             break
         default:
             if (logEnable) { log.debug "${device.displayName} unhandled Switch attribute ${attrId}" }
@@ -272,40 +229,35 @@ private void handleSwitchAttribute(Map descMap) {
     }
 }
 
-// Record event attribute but do not emit Hubitat capability events here.
+// Process initial press event (does not generate a capability event)
 // For correct semantics:
 // - single click should produce only 'pushed'
 // - long press should produce 'held' then 'released' (no extra 'pushed')
 // We therefore emit 'pushed' based on multiPressComplete pressCount==1.
 private void handleInitialPressEvent(final Map d) {
-    sendEvent(d)
+    if (logEnable) { log.debug "${device.displayName} initialPress event processed" }
 }
 
 private void handleHeldEvent(final Map d) {
-    sendEvent(d)
-
     Map payload = decodePayload(d.value)
     Integer pos = (payload?.position != null) ? safeToInt(payload.position) : null
     Integer buttons = safeToInt(device.currentValue('numberOfButtons'))
     Integer buttonNumber = (pos != null) ? toButtonNumber(pos, buttons) : 1
 
     state.lastHeldButton = buttonNumber
-    state.lastHeldMs = now()
     // Used to suppress multiPressComplete-derived pushed/doubleTapped after a hold.
     state.justHeldUntilMs = now() + 2000L
     sendButtonEvent('held', buttonNumber)
 }
 
 // For Hubitat, a normal 'pushed' action does not have a corresponding 'released'.
-// We still record the event attribute, but do not emit the capability event.
+// Process the event but do not emit the capability event.
 private void handleShortReleaseEvent(final Map d) {
-    sendEvent(d)
+    if (logEnable) { log.debug "${device.displayName} shortRelease event processed" }
 }
 
 // Emit 'released' only after a prior 'held' (longPress) for the same button.
 private void handleLongReleaseEvent(final Map d) {
-    sendEvent(d)
-
     Map payload = decodePayload(d.value)
     Integer pos = (payload?.position != null) ? safeToInt(payload.position) : null
     Integer buttons = safeToInt(device.currentValue('numberOfButtons'))
@@ -318,7 +270,6 @@ private void handleLongReleaseEvent(final Map d) {
     }
 
     state.lastHeldButton = null
-    state.lastHeldMs = null
     state.justHeldUntilMs = now() + 2000L
     sendButtonEvent('released', buttonNumber)
 }
@@ -329,31 +280,20 @@ private void handleNumberOfPositions(final Map d) {
         if (logEnable) { log.debug "${device.displayName} ignored numberOfPositions value '${d.value}'" }
         return
     }
-    sendEvent(d)
-    Integer buttons = (forceSingleButton == true) ? 1 : positions
-    sendEvent(name: 'numberOfButtons', value: buttons, isStateChange: true)
-    if (txtEnable) { log.info "${device.displayName} numberOfButtons is ${buttons}" }
+    // Store the Matter device's total numberOfPositions for reference
+    device.updateDataValue('numberOfPositions', d.value.toString())
+    // Each child device represents a single button position, so numberOfButtons is always 1
+    sendEvent(name: 'numberOfButtons', value: 1, isStateChange: true)
+    if (txtEnable) { log.info "${device.displayName} numberOfButtons is 1 (Matter device has ${positions} positions)" }
 }
 
 private void handleCurrentPosition(final Map d) {
-    String prev = device.currentValue('currentPosition')?.toString()
-    String next = d.value?.toString()
-    if (prev == next) {
-        if (logEnable) { log.debug "${device.displayName} : ignored currentPosition '${next}' (no change)" }
-        return
-    }
-
-    sendEvent(d)
-
-    // Don't generate pushed events from currentPosition if this is a momentary button device
-    // that reports proper Switch events. The currentPosition is just a state flag (0/1).
-    // Rely on multiPressComplete events instead for devices that support them.
-    if (logEnable) { log.debug "${device.displayName} currentPosition changed to ${next} (not generating button event)" }
+    // Process currentPosition for debugging but don't create an attribute
+    // This is useful for troubleshooting but doesn't clutter Current States
+    if (logEnable) { log.debug "${device.displayName} currentPosition changed to ${d.value}" }
 }
 
 private void handleMultiPressComplete(final Map d) {
-    sendEvent(d)
-
     Map payload = decodePayload(d.value)
     Integer pos = (payload?.position != null) ? safeToInt(payload.position) : null
     Integer pressCount = (payload?.pressCount != null) ? safeToInt(payload.pressCount) : null
@@ -386,7 +326,6 @@ private void handleMultiPressComplete(final Map d) {
 }
 
 private Integer toButtonNumber(final Integer pos, final Integer numberOfButtons) {
-    if (forceSingleButton == true) { return 1 }
     if (pos == null) { return 1 }
     if (numberOfButtons == null || numberOfButtons <= 1) { return 1 }
 
@@ -398,14 +337,16 @@ private Integer toButtonNumber(final Integer pos, final Integer numberOfButtons)
     return (pos < 1) ? 1 : pos
 }
 
-private void sendButtonEvent(final String action, final Integer buttonNumber) {
+private void sendButtonEvent(final String action, final Integer buttonNumber, final String eventType = 'physical') {
     if (buttonNumber == null || buttonNumber < 1) {
         if (logEnable) { log.debug "${device.displayName} ignored ${action} event for invalid buttonNumber=${buttonNumber}" }
         return
     }
 
     String desc = "${device.displayName} button ${buttonNumber} was ${action}"
-    sendEvent(name: action, value: buttonNumber, descriptionText: desc, isStateChange: true, type: 'physical')
+    if (eventType == 'digital') { desc += ' [digital]' }
+    else if (eventType == 'physical') { desc += ' [physical]' }
+    sendEvent(name: action, value: buttonNumber, descriptionText: desc, isStateChange: true, type: eventType)
     if (txtEnable) { log.info desc }
 }
 
@@ -486,4 +427,28 @@ private void logsOff() {
 
 void refresh() {
     parent?.componentRefresh(this.device)
+}
+
+// Capability command: PushableButton
+void push(BigDecimal buttonNumber) {
+    Integer btn = buttonNumber?.intValue() ?: 1
+    sendButtonEvent('pushed', btn, 'digital')
+}
+
+// Capability command: HoldableButton
+void hold(BigDecimal buttonNumber) {
+    Integer btn = buttonNumber?.intValue() ?: 1
+    sendButtonEvent('held', btn, 'digital')
+}
+
+// Capability command: ReleasableButton
+void release(BigDecimal buttonNumber) {
+    Integer btn = buttonNumber?.intValue() ?: 1
+    sendButtonEvent('released', btn, 'digital')
+}
+
+// Capability command: DoubleTapableButton
+void doubleTap(BigDecimal buttonNumber) {
+    Integer btn = buttonNumber?.intValue() ?: 1
+    sendButtonEvent('doubleTapped', btn, 'digital')
 }

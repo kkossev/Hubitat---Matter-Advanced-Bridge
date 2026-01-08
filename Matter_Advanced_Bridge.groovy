@@ -53,7 +53,7 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.5.4' }
-static String timeStamp() { '2026/01/07 10:56 PM' }
+static String timeStamp() { '2026/01/08 10:56 PM' }
 
 @Field static final Boolean _DEBUG = true                  // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -75,6 +75,9 @@ static String timeStamp() { '2026/01/07 10:56 PM' }
 @Field static final String  UNKNOWN = 'UNKNOWN'
 @Field static final Integer SHORT_TIMEOUT  = 7
 @Field static final Integer LONG_TIMEOUT   = 15
+
+// Internal events that should be routed through parse() without requiring attribute declaration
+@Field static final List<String> INTERNAL_EVENTS = ['unprocessed']
 
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
@@ -1411,6 +1414,11 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
             logDebug "sendMatterEvent: sending Matter EVENT for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
             dw.parse([eventMap])
         }
+        // Route internal events through parse() without requiring attribute declaration
+        else if (name in INTERNAL_EVENTS) {
+            logDebug "sendMatterEvent: routing internal event '${name}' through child parse(): dw:${dw} dni:${dni}"
+            dw.parse([eventMap])
+        }
         // For attributes, keep the existing behavior: if child doesn't declare the attribute, send it directly.
         else if (dw?.hasAttribute(name) != true) {
             logDebug "sendMatterEvent: <b>cannot send </b> for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
@@ -1698,7 +1706,17 @@ void initialize() {
     state.states['isSubscribe'] = true  // should be set to false in the parse() method
     sendEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} initializeCtr is ${state.stats['initializeCtr']}", type: 'digital'])
     scheduleCommandTimeoutCheck(delay = 55)
-    sendSubscribeList()
+    // Use cleanSubscribe instead of the older subscribe method
+    if (location.hub.firmwareVersionString >= '2.3.9.186') {
+        String cleanCmd = cleanSubscribeCmd()
+        if (cleanCmd != null) {
+            sendToDevice(cleanCmd)
+            sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device subscribe command')
+        }
+    }
+    else {
+        sendSubscribeList()  // fallback for older firmware
+    }
     updated()   // added 02/03/2024
 }
 
@@ -1777,10 +1795,21 @@ String updateStateSubscriptionsList(String addOrRemove, Integer endpoint, Intege
 
 void sendSubscribeList() {
     sendInfoEvent('sendSubscribeList()...Please wait.', 'sent device subscribe command')
-    List<String> cmds = getSubscribeOrRefreshCmdList('SUBSCRIBE_ALL')
-    if (cmds != null && cmds != []) {
-        logTrace "sendSubscribeList(): cmds = ${cmds}"
-        sendToDevice(cmds)
+    // Use cleanSubscribe for better reliability with event subscriptions (buttons, switches)
+    if (location.hub.firmwareVersionString >= '2.3.9.186') {
+        String cleanCmd = cleanSubscribeCmd()
+        if (cleanCmd != null) {
+            sendToDevice(cleanCmd)
+            logDebug 'sendSubscribeList(): using cleanSubscribe'
+        }
+    }
+    else {
+        // Fallback to older subscribe method for firmware < 2.3.9.186
+        List<String> cmds = getSubscribeOrRefreshCmdList('SUBSCRIBE_ALL')
+        if (cmds != null && cmds != []) {
+            logTrace "sendSubscribeList(): cmds = ${cmds}"
+            sendToDevice(cmds)
+        }
     }
 }
 
@@ -1927,7 +1956,30 @@ String cleanSubscribeCmd() {
     }?.collect { sub ->
         matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
     })
-    // Note: Event subscriptions are handled by getSubscribeOrRefreshCmdList() through cluster configuration
+    
+    // Add event subscriptions for clusters that have eventSubscriptions configured
+    LinkedHashMap<Integer, List<List<Integer>>> groupedSubscriptionsByCluster = state.subscriptions?.groupBy { it[1] }
+    groupedSubscriptionsByCluster?.each { Integer cluster, List<List<Integer>> endpointsList ->
+        if (SupportedMatterClusters[cluster]?.eventSubscriptions) {
+            List<Integer> eventIds = SupportedMatterClusters[cluster].eventSubscriptions
+            // Get unique endpoints for this cluster
+            Set<Integer> clusterEndpoints = endpointsList*.get(0) as Set<Integer>
+            // Build event paths for each endpoint (skip disabled devices)
+            clusterEndpoints.each { Integer endpoint ->
+                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+                ChildDeviceWrapper childDevice = getChildDevice(dni)
+                if (childDevice?.disabled == true) {
+                    logDebug "cleanSubscribeCmd(): skipping disabled device events for endpoint ${endpoint} (${childDevice.displayName})"
+                    return  // continue to next endpoint
+                }
+                eventIds.each { Integer eventId ->
+                    String epHex = HexUtils.integerToHexString(endpoint, 1)
+                    paths.add(matter.eventPath(epHex, cluster, eventId))
+                }
+            }
+        }
+    }
+    
     if (paths.isEmpty()) {
         logWarn 'cleanSubscribeCmd(): paths is empty!'
         return null
@@ -2159,10 +2211,10 @@ List<String> commands(List<String> cmds, Integer delay = 300) {
   *  https://developer.tuya.com/en/docs/iot/standarddescription?id=K9i5ql6waswzq
   *  MATTER : https://developer.tuya.com/en/docs/iot-device-dev/Matter_Product_Feature_List?id=Kd2wjfpuhgmrw
   */
-//private static Map mapTuyaCategory(Map d) {
-Map mapTuyaCategory(Map d) {
+//private static Map mapMatterCategory(Map d) {
+Map mapMatterCategory(Map d) {
     // check order is important!
-    logDebug "mapTuyaCategory: ServerList=${d.ServerList} DeviceType=${d.DeviceType}"
+    logDebug "mapMatterCategory: ServerList=${d.ServerList} DeviceType=${d.DeviceType}"
 
     if ('0300' in d.ServerList) {
         if ('0D' in d.DeviceType || '13' in d.DeviceType) {
@@ -2719,8 +2771,8 @@ Map fingerprintToData(String fingerprint) {
         data['ServerList'] = fingerprintMap['ServerList']
         List deviceTypeList = fingerprintMap['DeviceTypeList'] as List ?: []
         data['DeviceType'] = deviceTypeList
-        logWarn "fingerprintToData(): fingerprintMap=${fingerprintMap} data=${data}"
-        Map productName = mapTuyaCategory(data)
+        logDebug "fingerprintToData(): fingerprintMap=${fingerprintMap} data=${data}"
+        Map productName = mapMatterCategory(data)
 
         data['product_name'] = fingerprintMap['ProductName'] ?: productName['product_name']           // Device Name
         //data['name'] = fingerprintMap['Label'] ?: "Device#${data['id']}"          // Device Label
@@ -2765,7 +2817,7 @@ private Integer createChildDevices() {
 
 private boolean createChildDevices(Map d) {
     logDebug "createChildDevices(Map d): d=${d}"
-    Map mapping = mapTuyaCategory(d)
+    Map mapping = mapMatterCategory(d)
     logDebug "createChildDevices(Map d): product_name ${d.product_name} driver ${mapping}"
 
     if (mapping.driver != null) {

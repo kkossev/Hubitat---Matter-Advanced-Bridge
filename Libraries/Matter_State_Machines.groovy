@@ -30,14 +30,15 @@ library(
   * ver. 1.0.2  2024-09-29 kkossev  - HE platform 2.3.9.186 optimizations
   * ver. 1.0.3  2024-09-29 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine(); secured all . operations with ?.
   * ver. 1.0.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
+  * ver. 1.0.5  2026-01-08 GPT-5.2  - skip discovery for disabled child devices to eliminate timeouts
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.0.4'
-@Field static final String matterStateMachinesLibStamp   = '2026/01/06 9:50 PM'
+@Field static final String matterStateMachinesLib = '1.0.5'
+@Field static final String matterStateMachinesLibStamp   = '2026/01/08 12:15 AM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -183,6 +184,18 @@ void readSingeAttrStateMachine(Map data = null) {
         }
         runInMillis(STATE_MACHINE_PERIOD, readSingeAttrStateMachine, [overwrite: true, data: data])
     }
+}
+
+// Helper method to check if child device for this endpoint exists and is disabled
+private boolean isEndpointDisabled(Integer endpoint) {
+    String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+    ChildDeviceWrapper childDevice = getChildDevice(dni)
+    if (childDevice == null) {
+        // Device doesn't exist yet - not disabled, allow discovery
+        return false
+    }
+    // Return true if device exists and is disabled
+    return (childDevice?.disabled == true)
 }
 
 @Field static final Integer STATE_DISCOVER_GLOBAL_ELEMENTS_IDLE                       = 0
@@ -575,6 +588,18 @@ void discoverAllStateMachine(Map data = null) {
             }
             String partEndpoint = state.bridgeDescriptor['PartsList'][partsListIndex]
             Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
+            
+            // Check if this endpoint's child device is disabled - skip if so
+            if (isEndpointDisabled(partEndpointInt)) {
+                String fingerprintName = getFingerprintName(partEndpointInt)
+                logDebug "discoverAllStateMachine: st:${st} - Skipping disabled device ${fingerprintName} at endpoint ${partEndpoint}"
+                sendInfoEvent("Skipped disabled device endpoint ${partEndpoint}")
+                // Skip to next device
+                state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
+                stateMachinePeriod = 100  // Go quickly to next
+                break  // Stay in same state to process next endpoint
+            }
+            
             logDebug "discoverAllStateMachine: st:${st} - partEndpoint = ${partEndpoint} partEndpointInt = ${partEndpointInt}"
             state.states['isInfo'] = true
             state.states['cluster'] = '001D'     // HexUtils.integerToHexString(partEndpointInt, 2)
@@ -681,6 +706,17 @@ void discoverAllStateMachine(Map data = null) {
 
             String partEndpoint = state.bridgeDescriptor['PartsList'][partsListIndex]
             Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
+            
+            // Check if this endpoint's child device is disabled - skip if so
+            if (isEndpointDisabled(partEndpointInt)) {
+                String fingerprintName = getFingerprintName(partEndpointInt)
+                logDebug "discoverAllStateMachine: st:${st} - Skipping disabled device ${fingerprintName} at endpoint ${partEndpoint}"
+                // Skip to next device
+                state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
+                stateMachinePeriod = 100  // Go quickly to next
+                break  // Stay in same state to process next endpoint
+            }
+            
             String fingerprintName = getFingerprintName(partEndpointInt)
             logDebug "discoverAllStateMachine: st:${st} - fingerprint ${fingerprintName} Getting the SupportedClusters for endpoint ${partEndpoint} ...<br><br><br>"
             if (fingerprintName == null || state[fingerprintName] == null || state[fingerprintName]['ServerList'] == null) {
