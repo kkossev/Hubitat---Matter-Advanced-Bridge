@@ -38,6 +38,7 @@
  * ver. 1.5.2  2025-05-23 kkossev  - added 'Matter Custom Component Signal'
  * ver. 1.5.3  2025-06-28 kkossev + Claude Sonnet 4 : added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
+ * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks working!; componentPing command added;
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -52,8 +53,8 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.5.4' }
-static String timeStamp() { '2026/01/08 11:44 PM' }
+static String version() { '1.5.5' }
+static String timeStamp() { '2026/01/10 11:32 AM' }
 
 @Field static final Boolean _DEBUG = false                  // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -227,7 +228,11 @@ metadata {
     ],
     // DoorLock Cluster
     0x0101 : [attributes: 'DoorLockClusterAttributes', commands: 'DoorLockClusterCommands', parser: 'parseDoorLock',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]   // LockState
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // LockState (Mandatory)
+                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // ActuatorEnabled (Mandatory)
+                               [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // DoorState (Optional but recommended if supported)
+                               [0x0025: [min: 0, max: 0xFFFF, delta: 0]]],  // OperatingMode (Mandatory)
+              eventSubscriptions : [-1]  // Subscribe to ALL Door Lock events (DoorLockAlarm, DoorStateChange, LockOperation, LockOperationError, LockUserChange)
     ],
     // WindowCovering
     0x0102 : [attributes: 'WindowCoveringClusterAttributes', commands: 'WindowCoveringClusterCommands', parser: 'parseWindowCovering',
@@ -350,6 +355,10 @@ void parse(final String description) {
     if (descMap?.evtId != null && descMap?.cluster == '003B' && settings?.logEnable) {
         logDebug "parse: received Switch EVENT endpoint:${descMap.endpoint} evtId:${descMap.evtId} value:${descMap.value}"
     }
+    
+    // Check for child devices ping responses before normal parsing
+    checkChildDevicePingResponse(descMap)
+    
     parseGlobalElements(descMap)
 //return
     gatherAttributesValuesInfo(descMap)
@@ -381,6 +390,50 @@ void parse(Map msg) {
     // TODO ...
 }
 
+/**
+ * Check if the current descMap is a response to a pending ping request.
+ * If a match is found, calculate RTT and send event to child device.
+ * @param descMap The parsed description map from Matter event
+ */
+void checkChildDevicePingResponse(final Map descMap) {
+    if (state.pendingPings == null || state.pendingPings.isEmpty()) {
+        return
+    }
+    
+    Integer endpointInt = descMap.endpoint ? HexUtils.hexStringToInt(descMap.endpoint) : null
+    if (endpointInt == null || descMap.cluster == null || descMap.attrId == null) {
+        return
+    }
+    
+    // Find matching ping entry
+    String matchedPingId = null
+    state.pendingPings.each { pingId, pingEntry ->
+        if (pingEntry.deviceNumber == endpointInt && 
+            pingEntry.cluster == descMap.cluster && 
+            pingEntry.attrId == descMap.attrId) {
+            matchedPingId = pingId
+        }
+    }
+    
+    if (matchedPingId != null) {
+        Map pingEntry = state.pendingPings[matchedPingId]
+        Long rttMs = now() - pingEntry.startTime
+        
+        // Send ping response event to child device
+        sendMatterEvent([
+            name: 'rtt',
+            value: rttMs,
+            descriptionText: "Ping response time: ${rttMs}ms",
+            type: 'digital'
+        ], [endpoint: descMap.endpoint], false)
+        
+        logDebug "Ping response from device ${pingEntry.deviceNumber}, RTT: ${rttMs}ms"
+        
+        // Cleanup
+        state.pendingPings.remove(matchedPingId)
+        unschedule('pingTimeout')
+    }
+}
 
 Map myParseDescriptionAsMap(description) {
     Map descMap
@@ -1708,6 +1761,7 @@ void initialize() {
     if (state.states == null) { state.states = [:] }
     if (state.lastTx == null) { state.lastTx = [:] }
     if (state.stats == null)  { state.stats = [:] }
+    if (state.pendingPings == null) { state.pendingPings = [:] }
     state.states['isInfo'] = false
     Integer timeSinceLastSubscribe   = (now() - (state.lastTx['subscribeTime']   ?: 0)) / 1000
     Integer timeSinceLastUnsubscribe = (now() - (state.lastTx['unsubscribeTime'] ?: 0)) / 1000
@@ -2336,7 +2390,60 @@ void componentIdentify(DeviceWrapper dw) {
 // Component command to ping the device
 void componentPing(DeviceWrapper dw) {
     String id = dw.getDataValue('id')
-    logWarn "componentPing(${dw}) id=${id} (TODO: not implemented!)"
+    Integer deviceNumber = HexUtils.hexStringToInt(id)
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) {
+        logWarn "componentPing(${dw}) id=${id} is not valid!"
+        return
+    }
+    
+    // Initialize pending pings state if needed
+    if (state.pendingPings == null) { state.pendingPings = [:] }
+    
+    // Create unique ping ID using device number and timestamp
+    String pingId = "${deviceNumber}-${now()}"
+    
+    // Store ping tracking information
+    state.pendingPings[pingId] = [
+        deviceNumber: deviceNumber,
+        startTime: now(),
+        dni: dw.deviceNetworkId,
+        cluster: '001D',      // Descriptor cluster (universal)
+        attrId: '0000'        // DeviceTypeList attribute
+    ]
+    
+    // Send read request for lightweight Descriptor cluster attribute
+    List<Map<String, String>> attributePaths = []
+    attributePaths.add(matter.attributePath(deviceNumber, 0x001D, 0x0000))
+    sendToDevice(matter.readAttributes(attributePaths))
+    
+    // Schedule timeout cleanup
+    Integer timeoutSeconds = MAX_PING_MILISECONDS / 1000
+    runIn(timeoutSeconds, 'pingTimeout', [data: [pingId: pingId]])
+    
+    logDebug "componentPing(${dw}) id=${id}: ping sent, tracking as ${pingId}"
+}
+
+// Handle ping timeout when device doesn't respond
+void pingTimeout(Map data) {
+    String pingId = data?.pingId
+    if (pingId == null || state.pendingPings == null) { return }
+    
+    if (state.pendingPings.containsKey(pingId)) {
+        Map pingEntry = state.pendingPings[pingId]
+        String endpointHex = HexUtils.integerToHexString(pingEntry.deviceNumber, 1).padLeft(2, '0')
+        
+        // Send ping timeout event to child device
+        sendMatterEvent([
+            name: 'rtt',
+            value: -1,
+            descriptionText: "Ping timeout - no response after ${MAX_PING_MILISECONDS}ms",
+            type: 'digital'
+        ], [endpoint: endpointHex], false)
+        
+        logTrace "Ping timeout for device ${pingEntry.deviceNumber} (${pingEntry.dni})"
+        
+        state.pendingPings.remove(pingId)
+    }
 }
 
 // Component command to turn on device
@@ -2652,24 +2759,15 @@ void componentSetCoolingSetpoint(DeviceWrapper dw, BigDecimal temperature) {
 
 void componentLock(DeviceWrapper dw) {
     String id = dw.getDataValue('id')
-    logWarn "componentLock(${dw}) id=${id} TODO: not implemented!<br>Use virtual switch to control the lock via Apple Home..."
-    //return
-
     if (!dw.hasCommand('lock')) { logError "componentLock(${dw}) driver '${dw.typeName}' does not have command 'lock' in ${dw.supportedCommands}"; return }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logInfo "sending Lock command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
     if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentLock(): deviceNumber ${deviceNumberPar} is not valid!"; return }
 
-    List<Map<String, String>> cmdFields = []
-    //cmdFields.add(matter.cmdField(DataType.STRING_OCTET8, 0x00, ""))
-    cmdFields.add(matter.cmdField(DataType.STRING_OCTET8, 0x00))
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, cmdFields) // 0x0101 = DoorLock Cluster, 0x00 = LockDoor
-    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x00) // 0x0101 = DoorLock Cluster, 0x00 = LockDoor
-
-    /*
-    List<Map<String, String>> attrWriteRequests = [matter.attributeWriteRequest(deviceNumber, 0x0101, 0x0000, DataType.UINT8, '10')]
-    String cmd = matter.writeAttributes(attrWriteRequests)
-    */
+    String deviceHex = HexUtils.integerToHexString(deviceNumber, 1)
+    //String cmd = matter.lock()
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, 2000)
+    //String cmd = 'he invoke 0x01 0x0101 0x0000 0x07D0 {1518}'
 
     logDebug "componentLock(): sending command '${cmd}'"
     sendToDevice(cmd)
@@ -2677,18 +2775,17 @@ void componentLock(DeviceWrapper dw) {
 
 void componentUnlock(DeviceWrapper dw) {
     String id = dw.getDataValue('id')
-    logWarn "componentLock(${dw}) id=${id} TODO: not implemented!<br>Use virtual switch to control the lock via Apple Home..."
-    //return
-
     if (!dw.hasCommand('unlock')) { logError "componentUnlock(${dw}) driver '${dw.typeName}' does not have command 'unlock' in ${dw.supportedCommands}"; return }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logInfo "sending Unlock command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
     if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentUnlock(): deviceNumber ${deviceNumberPar} is not valid!"; return }
-    List<Map<String, String>> cmdFields = []
-    Integer duration = 1
-    //cmdFields.add(matter.cmdField(0x05, 0x01, zigbee.swapOctets(HexUtils.integerToHexString(duration, 2))))
-    cmdFields.add(matter.cmdField(DataType.STRING_OCTET8, 0x00))
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x01) // 0x0101 = DoorLock Cluster, 0x01 = UnlockDoor; 04 - GetLockRecord 08-clear all PIN codes; Clear PIN Code
+
+
+    String deviceHex = HexUtils.integerToHexString(deviceNumber, 1)
+    //String cmd = matter.unlock()
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000)
+    //String cmd = 'he invoke 0x01 0x0101 0x0001 0x07D0 {1518}'
+
     logDebug "componentUnlock(): sending command '${cmd}'"
     sendToDevice(cmd)
 }
