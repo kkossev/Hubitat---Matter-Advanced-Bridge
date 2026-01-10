@@ -38,7 +38,7 @@
  * ver. 1.5.2  2025-05-23 kkossev  - added 'Matter Custom Component Signal'
  * ver. 1.5.3  2025-06-28 kkossev + Claude Sonnet 4 : added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
- * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks working!; componentPing command added;
+ * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -54,7 +54,7 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.5.5' }
-static String timeStamp() { '2026/01/10 11:32 AM' }
+static String timeStamp() { '2026/01/10 11:21 PM' }
 
 @Field static final Boolean _DEBUG = false                  // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -989,7 +989,7 @@ void parseSwitch(final Map descMap) {
     sendMatterEvent([
         name: 'unprocessed',
         value: JsonOutput.toJson(descMap),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} ${descMap.attrId ? 'attribute ' + descMap.attrId : 'event ' + descMap.evtId} <i>(to be re-processed in the child driver!)</i>"
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} ${descMap.attrId ? 'attribute ' + descMap.attrId : 'event ' + descMap.evtId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
 
@@ -1088,7 +1088,7 @@ void parseDoorLock(final Map descMap) { // 0101
         sendMatterEvent([
             name: 'lock',
             value: lockState,
-            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} lock is ${lockState}"
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} is ${lockState}"
         ], descMap)
     } else {
         logTrace "parseDoorLock: <b>UNPROCESSED</b> ${(DoorLockClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
@@ -1096,7 +1096,7 @@ void parseDoorLock(final Map descMap) { // 0101
         sendMatterEvent([
             name: 'unprocessed',
             value: descMap.toString(),
-            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
         ], descMap, ignoreDuplicates = false)
     }
 }
@@ -1108,7 +1108,7 @@ void parseAirQuality(final Map descMap) { // 005B
     sendMatterEvent([
         name: 'unprocessed',
         value: descMap.toString(),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
 
@@ -1119,7 +1119,7 @@ void parseElectricalPowerMeasurement(final Map descMap) { // 0090
     sendMatterEvent([
         name: 'unprocessed',
         value: descMap.toString(),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
 
@@ -1130,7 +1130,7 @@ void parseElectricalEnergyMeasurement(final Map descMap) { // 0091
     sendMatterEvent([
         name: 'unprocessed',
         value: descMap.toString(),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
 
@@ -1145,7 +1145,7 @@ void parseConcentrationMeasurement(final Map descMap) { // 042A
     sendMatterEvent([
         name: 'unprocessed',
         value: descMap.toString(),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>unprocessed</b> cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
 

@@ -1,38 +1,40 @@
 /* groovylint-disable CouldBeSwitchStatement, DuplicateNumberLiteral, MethodCount, MethodParameterTypeRequired, NoDef, StaticMethodsBeforeInstanceMethods, UnnecessaryElseStatement, UnnecessaryGetter, UnnecessarySetter, VariableTypeRequired */
 /*
-  *  ''Matter Generic Component Window Shade' - component driver for Matter Advanced Bridge
-  *
-  *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
-  *  https://community.hubitat.com/t/project-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009
-  *
-  *  Licensed Virtual the Apache License, Version 2.0 (the "License"); you may not use this file except
-  *  in compliance with the License. You may obtain a copy of the License at:
-  *
-  *      http://www.apache.org/licenses/LICENSE-2.0
-  *
-  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
-  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
-  *  for the specific language governing permissions and limitations under the License.
-  *
-  * This library is inspired by @w35l3y work on Tuya device driver (Edge project).
-  * For a big portions of code all credits go to Jonathan Bradshaw.
-  *
-  *
-  * ver. 1.0.0  2024-03-16 kkossev - first release
-  * ver. 1.1.0  2025-01-12 kkossev - (dev.branch) added capabilities 'Switch' and 'SwitchLevel'
-  *
-  *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
+ *  ''Matter Generic Component Window Shade' - component driver for Matter Advanced Bridge
+ *
+ *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
+ *  https://community.hubitat.com/t/project-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009
+ *
+ *  Licensed Virtual the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *  for the specific language governing permissions and limitations under the License.
+ *
+ * This library is inspired by @w35l3y work on Tuya device driver (Edge project).
+ * For a big portions of code all credits go to Jonathan Bradshaw.
+ *
+ *
+ * ver. 1.0.0  2024-03-16 kkossev - first release
+ * ver. 1.1.0  2025-01-12 kkossev - (dev.branch) added capabilities 'Switch' and 'SwitchLevel'
+ * ver. 1.2.0  2025-01-10 kkossev - added ping command and RTT monitoring via matterHealthStatusLib
+ * ver. 1.2.1  2025-01-10 kkossev - bugfix: changed OPEN/CLOSED to Hubitat standard (100/0) for correct Dashboard display; invertPosition preference default to true
+ *
+ *                                   TODO:
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '1.1.0'
-@Field static final String matterComponentWindowShadeStamp   = '2025/01/12 8:39 PM'
+@Field static final String matterComponentWindowShadeVersion = '1.2.1'
+@Field static final String matterComponentWindowShadeStamp   = '2025/01/10 11:07 PM'
 
 @Field static final Boolean _DEBUG = false
 
-@Field static final Integer OPEN   = 0      // this is the standard!  Hubitat is inverted?
-@Field static final Integer CLOSED = 100    // this is the standard!  Hubitat is inverted?
+@Field static final Integer OPEN   = 100    // Hubitat standard: Open = 100%
+@Field static final Integer CLOSED = 0      // Hubitat standard: Closed = 0%
 @Field static final Integer POSITION_DELTA = 5
 @Field static final Integer MAX_TRAVEL_TIME = 15
 @Field static final Boolean SIMULATE_LEVEL = true
@@ -48,9 +50,6 @@ metadata {
         capability 'Battery'
         capability 'Switch'
         capability 'SwitchLevel'        
-        //capability 'Health Check'       // Commands:[ping]
-
-        //attribute 'healthStatus', 'enum', ['unknown', 'offline', 'online']
         attribute 'targetPosition', 'number'            // ZemiSmart M1 is updating this attribute, not the position :(
         attribute 'operationalStatus', 'number'         // 'enum', ['unknown', 'open', 'closed', 'opening', 'closing', 'partially open']
 
@@ -81,16 +80,12 @@ preferences {
         input name: 'maxTravelTime', type: 'number', title: '<b>Maximum travel time</b>', description: '<i>The maximum time to fully open or close (Seconds)</i>', required: false, defaultValue: MAX_TRAVEL_TIME
         input name: 'deltaPosition', type: 'number', title: '<b>Position delta</b>', description: '<i>The maximum error step reaching the target position</i>', required: false, defaultValue: POSITION_DELTA
         input name: 'substituteOpenClose', type: 'bool', title: '<b>Substitute Open/Close w/ setPosition</b>', description: '<i>Non-standard Zemismart motors</i>', required: false, defaultValue: false
-        input name: 'invertPosition', type: 'bool', title: '<b>Reverse Position Reports</b>', description: '<i>Non-standard Zemismart motors</i>', required: false, defaultValue: false
+        input name: 'invertPosition', type: 'bool', title: '<b>Reverse Position Reports</b>', description: '<i>Non-standard Zemismart motors</i>', required: false, defaultValue: true
         input name: 'targetAsCurrentPosition', type: 'bool', title: '<b>Reverse Target and Current Position</b>', description: '<i>Non-standard Zemismart motors</i>', required: false, defaultValue: false
     }
 }
 
 int getDelta() { return settings?.deltaPosition != null ? settings?.deltaPosition as int : POSITION_DELTA }
-//int getFullyOpen()   { return settings?.invertOpenClose ? CLOSED : OPEN }
-//int getFullyClosed() { return settings?.invertOpenClose ? OPEN : CLOSED }
-//int getFullyOpen()   { return settings?.invertPosition ? CLOSED : OPEN }
-//int getFullyClosed() { return settings?.invertPosition ? OPEN : CLOSED }
 int getFullyOpen()   { return  OPEN }
 int getFullyClosed() { return CLOSED }
 boolean isFullyOpen(int position)   { return Math.abs(position - getFullyOpen()) < getDelta() }
@@ -100,7 +95,11 @@ boolean isFullyClosed(int position) { return Math.abs(position - getFullyClosed(
 void parse(List<Map> description) {
     if (logEnable) { log.debug "parse: ${description}" }
     description.each { d ->
-        if (d?.name == 'position') {
+        if (d?.name == 'rtt') {
+            // Delegate to health status library
+            parseRttEvent(d)
+        }
+        else if (d?.name == 'position') {
             processCurrentPositionBridgeEvent(d)
         }
         else if (d?.name == 'targetPosition') {
@@ -237,7 +236,6 @@ void processTargetPosition(final Map d) {
     if (logEnable) { log.debug "${device.displayName} processTargetPosition: ${map.value} (was ${d.value})" }
     if (txtEnable) { log.info "${map.descriptionText}" }
     //
-    //stopOperationTimeoutTimer()
     sendEvent(map)
     if (!map.isRefresh) {
         // skip upddating the windowShade status on targetPosition refresh
@@ -255,7 +253,6 @@ void processOperationalStatusBridgeEvent(Map d) {
 // Called when the device is first created
 void installed() {
     log.info "${device.displayName} driver installed"
-    // added 01/12/2025 - initialize all attributes
     initialize()
 }
 
@@ -330,11 +327,6 @@ void stopPositionChange() {
     parent?.componentStopPositionChange(device)
 }
 
-// Component command to ping the device
-void ping() {
-    parent?.componentPing(device)
-}
-
 // Component command to refresh the device
 void refresh() {
     if (txtEnable) { log.info "${device.displayName} refreshing ..." }
@@ -358,13 +350,6 @@ void updated() {
     if ((state.substituteOpenClose ?: false) != settings?.substituteOpenClose) {
         state.substituteOpenClose = settings?.substituteOpenClose
         if (logEnable) { log.debug "${device.displayName} substituteOpenClose: ${settings?.substituteOpenClose}" }
-        /*
-        String currentOpenClose = device.currentWindowShade
-        String newOpenClose = currentOpenClose == 'open' ? 'closed' : currentOpenClose == 'closed' ? 'open' : currentOpenClose
-        if (currentOpenClose != newOpenClose) {
-            sendEvent([name:'windowShade', value: newOpenClose, type: 'digital', descriptionText: "windowShade state inverted to ${newOpenClose}", isStateChange:true])
-        }
-        */
     }
     else {
         if (logEnable) { log.debug "${device.displayName} invertMotion: no change" }
@@ -406,9 +391,11 @@ private void logsOff() {
     device.updateSetting('logEnable', [value: 'false', type: 'bool'] )
 }
 
+/*
 static Integer safeToInt(val, Integer defaultVal=0) {
     return "${val}"?.isInteger() ? "${val}".toInteger() : defaultVal
 }
+*/
 
 @Field static final String DRIVER = 'Matter Advanced Bridge'
 @Field static final String COMPONENT = 'Matter Generic Component Window Shade'
@@ -452,3 +439,5 @@ void parseTest(description) {
     log.debug map
     parse([map])
 }
+
+#include kkossev.matterHealthStatusLib

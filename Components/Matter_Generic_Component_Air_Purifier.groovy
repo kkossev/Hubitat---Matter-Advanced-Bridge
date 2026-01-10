@@ -1,36 +1,37 @@
 /* groovylint-disable BitwiseOperatorInConditional, CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
-  *  'Matter Generic Component Air Purifier' - component driver for Matter Advanced Bridge
-  *
-  *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
-  *  https://community.hubitat.com/t/project-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009
-  *
-  *  Licensed Virtual the Apache License, Version 2.0 (the "License"); you may not use this file except
-  *  in compliance with the License. You may obtain a copy of the License at:
-  *
-  *      http://www.apache.org/licenses/LICENSE-2.0
-  *
-  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
-  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
-  *  for the specific language governing permissions and limitations under the License.
-  *
-  * For a big portion of this code all credits go to @dandanache for the 'IKEA Starkvind Air Purifier (E2006)' 'https://raw.githubusercontent.com/dan-danache/hubitat/master/ikea-zigbee-drivers/Ikea_E2006.groovy'
-  *
-  * ver. 1.0.0  2024-10-10 kkossev   - first version
-  * 
-  *                                   TODO: add cluster 005B 'AirQuality' endpointId:"0C"
-  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'  endpointId:"0C"
-  *
-  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
-  *                                   TODO: add cluster 0202 'Window Covering' endpointId:"0B"
-  *
+ *  'Matter Generic Component Air Purifier' - component driver for Matter Advanced Bridge
+ *
+ *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
+ *  https://community.hubitat.com/t/project-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009
+ *
+ *  Licensed Virtual the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *  for the specific language governing permissions and limitations under the License.
+ *
+ * For a big portion of this code all credits go to @dandanache for the 'IKEA Starkvind Air Purifier (E2006)' 'https://raw.githubusercontent.com/dan-danache/hubitat/master/ikea-zigbee-drivers/Ikea_E2006.groovy'
+ *
+ * ver. 1.0.0  2024-10-10 kkossev   - first version
+ * ver. 1.1.0  2025-01-10 kkossev   - added ping command and RTT monitoring via matterHealthStatusLib
+ * 
+ *                                   TODO: add cluster 005B 'AirQuality' endpointId:"0C"
+ *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'  endpointId:"0C"
+ *
+ *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
+ *                                   TODO: add cluster 0202 'Window Covering' endpointId:"0B"
+ *
 */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String matterComponentAirPurifierVersion = '1.0.0'
-@Field static final String matterComponentAirPurifierStamp   = '2024/10/10 11:31 PM'
+@Field static final String matterComponentAirPurifierVersion = '1.1.0'
+@Field static final String matterComponentAirPurifierStamp   = '2025/01/10 7:36 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = true
 
@@ -54,7 +55,6 @@ metadata {
         command 'toggle'
         command 'setIndicatorStatus', [[name:'Status*', type:'ENUM', description:'Select LED indicators status on the device', constraints:['on', 'off']]]
         
-        attribute 'unprocessed', 'string'
         // Attributes for devices.Ikea_E2006
         attribute 'airQuality', 'enum', ['good', 'moderate', 'unhealthy for sensitive groups', 'unhealthy', 'hazardous']
         attribute 'filterUsage', 'number'
@@ -62,8 +62,6 @@ metadata {
         attribute 'auto', 'enum', ['on', 'off']
         attribute 'indicatorStatus', 'enum', ['on', 'off']
         
-        // Attributes for capability.HealthCheck
-        attribute 'healthStatus', 'enum', ['offline', 'online', 'unknown']
 
         if (_DEBUG_LOCK) {
             command 'getInfo', [
@@ -139,18 +137,11 @@ void parse(String description) { log.warn 'parse(String description) not impleme
 void parse(List<Map> description) {
     if (logEnable) { log.debug "${description}" }
     description.each { d ->
-        /*
-        if (d.name == 'lock') {
-            if (device.currentValue('lock') != d.value) {
-                if (d.descriptionText && txtEnable) { log.info "${d.descriptionText} (value changed)" }
-                sendEvent(d)
-            }
-            else {
-                if (logEnable) { log.debug "${device.displayName} : ignored lock event '${d.value}' (no change)" }
-            }
+        if (d.name == 'rtt') {
+            // Delegate to health status library
+            parseRttEvent(d)
         }
-        */
-        /*else*/ if (d.name == 'unprocessed') {
+        else if (d.name == 'unprocessed') {
             processUnprocessed(d)
         }
         else {
@@ -163,28 +154,6 @@ void parse(List<Map> description) {
 void identify() {
     if (logEnable) { log.debug "${device.displayName} identifying ..." }
     parent?.componentIdentify(device)
-}
-
-// Component command to lock device
-void lock() {
-    if (settings?.onOffSwitch) {
-        on()
-    }
-    else {
-        if (logEnable) { log.debug "${device.displayName} locking ..." }
-        parent?.componentLock(device)
-    }
-}
-
-// Component command to unlock device
-void unlock() {
-    if (settings?.onOffSwitch) {
-        off()
-    }
-    else {
-        if (logEnable) { log.debug "${device.displayName} unlocking ..." }
-        parent?.componentUnlock(device)
-    }
 }
 
 void on() {
@@ -289,20 +258,9 @@ private List pm25Aqi(Integer pm25) { // See: https://en.wikipedia.org/wiki/Air_q
     return [500, 'hazardous', 'maroon']
 }
 
-// Component command to ping the device
-void ping() {
-    parent?.componentPing(device)
-}
-
 // Called when the device is first created
 void installed() {
     log.info "${device.displayName} driver installed"
-    /*
-    state.warning = 'WARNING! Matter Locks lock and unlock commands are not supported by Hubitat. This driver is a placeholder for future compatibility.'
-    log.warn "${device.displayName} ${state.warning}"
-    state.working = 'What is working: lock status, battery level, refresh, identify'
-    log.info "${device.displayName} ${state.working}"
-    */
 }
 
 // Called when the device is removed
@@ -416,5 +374,7 @@ String fmtHelpInfo(String str) {
 	return "<div style='font-size: 160%; font-style: bold; padding: 2px 0px; text-align: center;'>${prefLink}</div>" +
 		"<div style='text-align: center; position: absolute; top: 46px; right: 60px; padding: 0px;'><ul class='nav'><li>${topLink}</ul></li></div>"
 }
+
+#include kkossev.matterHealthStatusLib
 
 

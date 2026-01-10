@@ -14,15 +14,17 @@
   *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
   *  for the specific language governing permissions and limitations under the License.
   *
-    * ver. 1.0.0  2026-01-07 GPT-5.2  - inital release
+  * ver. 1.0.0  2026-01-07 kkossev + GPT-5.2 : inital release
+  * ver. 1.0.1  2026-01-10 kkossev - adding ping() and RTT
+
   *
 */
 
 import groovy.transform.Field
 import groovy.json.JsonSlurper
 
-@Field static final String matterComponentButtonVersion = '1.0.0'
-@Field static final String matterComponentButtonStamp   = '2026/01/07 10:56 PM'
+@Field static final String matterComponentButtonVersion = '1.0.1'
+@Field static final String matterComponentButtonStamp   = '2026/01/10 6:19 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -52,6 +54,11 @@ void parse(List<Map> description) {
 
     description.each { d ->
         switch (d.name) {
+            case 'rtt':
+                // Delegate to health status library
+                parseRttEvent(d)
+                break
+            
             case 'unprocessed':
                 // All Switch cluster events and attributes are routed through handleUnprocessed()
                 handleUnprocessed(d)
@@ -373,6 +380,8 @@ private Map decodePayload(final Object rawValue) {
     return [:]
 }
 
+// safeToInt: defined in matterHealthStatusLib.groovy
+/*
 private Integer safeToInt(final Object value) {
     if (value == null) { return null }
     if (value instanceof Number) { return (value as Number).intValue() }
@@ -396,11 +405,13 @@ private Integer safeToInt(final Object value) {
 
     return null
 }
-
+*/
+/*
 // Component command to ping the device
 void ping() {
     parent?.componentPing(device)
 }
+*/
 
 // Called when the device is first created
 void installed() {
@@ -452,3 +463,7 @@ void doubleTap(BigDecimal buttonNumber) {
     Integer btn = buttonNumber?.intValue() ?: 1
     sendButtonEvent('doubleTapped', btn, 'digital')
 }
+
+// --------- common matter libraries included below --------
+
+#include kkossev.matterHealthStatusLib

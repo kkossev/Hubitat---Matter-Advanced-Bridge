@@ -1,27 +1,28 @@
 
 /* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
-  *  'Matter Custom Component Power Energy' - component driver for Matter Advanced Bridge
-  *
-  *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
-  *
-  *  Licensed Virtual the Apache License, Version 2.0 (the "License"); you may not use this file except
-  *  in compliance with the License. You may obtain a copy of the License at:
-  *
-  *      http://www.apache.org/licenses/LICENSE-2.0
-  *
-  *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
-  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
-  *  for the specific language governing permissions and limitations under the License.
-  *
-  * ver. 1.0.0  2025-04-06 kkossev  - first release
-  *
+ *  'Matter Custom Component Power Energy' - component driver for Matter Advanced Bridge
+ *
+ *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
+ *
+ *  Licensed Virtual the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *  for the specific language governing permissions and limitations under the License.
+ *
+ * ver. 1.0.0  2025-04-06 kkossev  - first release
+ * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib
+ *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentPowerEnergyVersion = '1.0.0'
-@Field static final String matterComponentPowerEnergyStamp   = '2025/04/06 5:41 PM'
+@Field static final String matterComponentPowerEnergyVersion = '1.1.0'
+@Field static final String matterComponentPowerEnergyStamp   = '2025/01/10 7:36 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Energy.groovy') {
@@ -33,11 +34,9 @@ metadata {
         capability 'CurrentMeter'
         capability 'Refresh'
 
-        attribute 'unprocessed', 'string'
         attribute 'energyExported', 'number'
-
-        //capability 'Health Check'       // Commands:[ping]
-        //attribute 'healthStatus', 'enum', ['unknown', 'offline', 'online']
+        attribute 'frequency', 'number'
+        attribute 'powerFactor', 'number'
     }
 }
 
@@ -64,7 +63,11 @@ void parse(String description) { log.warn 'parse(String description) not impleme
 void parse(List<Map> description) {
     //if (logEnable) { log.debug "${description}" }
     description.each { d ->
-        if (d.name == 'switch') {
+        if (d.name == 'rtt') {
+            // Delegate to health status library
+            parseRttEvent(d)
+        }
+        else if (d.name == 'switch') {
             if (device.currentValue('switch') != d.value) {
                 if (d.descriptionText && txtEnable) { log.info "${d.descriptionText} (value changed)" }
                 sendEvent(d)
@@ -93,11 +96,6 @@ void on() {
 void off() {
     if (logEnable) { log.debug "${device.displayName} turning off ..." }
     parent?.componentOff(device)
-}
-
-// Component command to ping the device
-void ping() {
-    parent?.componentPing(device)
 }
 
 // Called when the device is first created
@@ -211,3 +209,5 @@ void processUnprocessed(Map description) {
             if (logEnable) { log.warn "processUnprocessed: unexpected attrId:${descMap.attrId}" }
     }
 }
+
+#include kkossev.matterHealthStatusLib

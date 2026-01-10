@@ -34,7 +34,7 @@ library(
 import groovy.transform.Field
 
 @Field static final String matterHealthStatusLibVersion = '1.0.0'
-@Field static final String matterHealthStatusLibStamp   = '2025/01/10 12:30 PM'
+@Field static final String matterHealthStatusLibStamp   = '2025/01/10 2:02 PM'
 @Field static final int ROLLING_AVERAGE_N = 10
 
 metadata {
@@ -58,7 +58,7 @@ preferences {
  * Delegates to parent bridge to send Matter read request
  */
 void ping() {
-    logDebug "ping: sending ping request to device..."
+    if (settings?.logEnable) { log.debug "${device.displayName} ping: sending ping request to device..." }
     parent?.componentPing(device)
 }
 
@@ -78,7 +78,7 @@ boolean parseRttEvent(Map d) {
     
     if (rttValue < 0) {
         // Timeout condition
-        logWarn "Ping failed - no response from device"
+        if (settings?.logEnable) { log.warn "${device.displayName} Ping failed - no response from device" }
     } else {
         // Success - update statistics
         if (state.stats == null) { state.stats = [:] }
@@ -96,7 +96,7 @@ boolean parseRttEvent(Map d) {
         
         // Log with statistics
         String descriptionText = "${device.displayName} Round-trip time is ${rttValue} ms (min=${state.stats['pingsMin']} max=${state.stats['pingsMax']} average=${state.stats['pingsAvg']} (HE uptime: ${formatUptime()})"
-        logInfo "${descriptionText}"
+        if (settings?.txtEnable) { log.info "${descriptionText}" }
         
         // Update description text in the event
         d.descriptionText = descriptionText

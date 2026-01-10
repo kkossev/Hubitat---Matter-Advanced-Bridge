@@ -18,7 +18,7 @@
   * ver. 1.1.0  2024-07-20 kkossev - added Battery capability; added Identify command; added warning state and log messages; added handling of unprocessed Door Lock events
   * ver. 1.1.1  2024-07-23 kkossev - added switch capability (for Apple Home integration workaround)
   * ver. 1.1.2  2024-08-12 kkossev - fixed importURL
-  * ver. 1.2.0  2025-01-10 kkossev + Calude Sonnet 4.5 : Matter events handling rework; Door Lock working! :) added ping command and RTT attribute
+  * ver. 1.2.0  2025-01-10 kkossev + Calude Sonnet 4.5 : Matter events handling rework; Door Lock working! :) added ping command and RTT attribute; removed switch capability
   * 
   *                                  TODO: initialize lock with 'unknown' attributes when the device is created
   *                                  TODO: filter duplicated events
@@ -36,7 +36,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 
 @Field static final String matterComponentLockVersion = '1.2.0'
-@Field static final String matterComponentLockStamp   = '2025/01/10 11:30 AM'
+@Field static final String matterComponentLockStamp   = '2025/01/10 11:50 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false
 
@@ -46,7 +46,6 @@ metadata {
         capability 'Actuator'
         capability 'Battery'
         capability 'Lock'       // lock - ENUM ["locked", "unlocked with timeout", "unlocked", "unknown"]
-        capability 'Switch'     // switch - ENUM ["on", "off"]
         capability 'Refresh'
 
         command    'identify'
@@ -89,13 +88,6 @@ preferences {
               title: '<b>Enable descriptionText logging</b>',
               required: false,
               defaultValue: true
-
-        input name: 'onOffSwitch',
-              type: 'bool',
-              title: '<b>Enable switch capability</b>',
-              description: '<i>Enable switch capability for Apple Home integration</i>',
-              required: false,
-              defaultValue: false
     }
 }
 
@@ -108,7 +100,7 @@ void parse(List<Map> description) {
     description.each { d ->
         if (d.name == 'lock') {
             if (device.currentValue('lock') != d.value) {
-                if (d.descriptionText) { logInfo "${d.descriptionText} (value changed)" }
+                if (d.descriptionText) { logInfo "${d.descriptionText}" }
                 sendEvent(d)
             }
             else {
@@ -136,34 +128,14 @@ void identify() {
 
 // Component command to lock device
 void lock() {
-    if (settings?.onOffSwitch) {
-        on()
-    }
-    else {
-        logDebug "locking ..."
-        parent?.componentLock(device)
-    }
+    logDebug "locking ..."
+    parent?.componentLock(device)
 }
 
 // Component command to unlock device
 void unlock() {
-    if (settings?.onOffSwitch) {
-        off()
-    }
-    else {
-        logDebug "unlocking ..."
-        parent?.componentUnlock(device)
-    }
-}
-
-void on() {
-    logDebug "on ..."
-    sendEvent(name: 'switch', value: 'on', type: 'digital')
-}
-
-void off() {
-    logDebug "off ..."
-    sendEvent(name: 'switch', value: 'off', type: 'digital')
+    logDebug "unlocking ..."
+    parent?.componentUnlock(device)
 }
 
 // Called when the device is first created
@@ -344,11 +316,11 @@ void processUnprocessed(Map description) {
             Integer doorStateValue = Integer.parseInt(descMap.value, 16)
             eventValue = DoorLockClusterDoorState[doorStateValue] ?: "Unknown/OutOfSpec"
             if (doorStateValue > 0x05) {
-                logInfo "DoorState: ${eventValue} (raw:0x${descMap.value} - value out of spec 0x00-0x05)"
+                logDebug "DoorState: ${eventValue} (raw:0x${descMap.value} - value out of spec 0x00-0x05)"
             } else {
                 descriptionText = "${device.displayName} DoorState: ${eventValue} (raw:${descMap.value})"
-                sendEvent(name: 'doorState', value: eventValue, descriptionText: descriptionText)
-                logInfo "${descriptionText}"
+                //sendEvent(name: 'doorState', value: eventValue, descriptionText: descriptionText)
+                logDebug "${descriptionText}"
             }
             break
         case '0025' : // OperatingMode
@@ -490,12 +462,12 @@ void processLockOperationEvent(Map description) {
     String operation = DoorLockClusterLockOperationType[lockOpType] ?: "Unknown (${lockOpType})"
     String source = DoorLockClusterOperationSource[opSource] ?: "Unknown (${opSource})"
     
-    String descriptionText = "${device.displayName} ${operation} by ${source}"
+    String descriptionText = "${operation} by ${source}"
     if (userIndex != null) {
         descriptionText += " (User ${userIndex})"
     }
     
-    logInfo "${descriptionText}"
+    logDebug "${descriptionText}"
     sendEvent(name: 'lastLockOperation', value: operation, descriptionText: descriptionText, isStateChange: true)
     sendEvent(name: 'lastOperationSource', value: source, descriptionText: descriptionText, isStateChange: true)
 }
@@ -577,7 +549,6 @@ Map parseEventValues(Map description) {
             if (valueMatch) {
                 String value = valueMatch[0][1]
                 values[index] = [value: value]
-                logDebug "parseEventValues: index ${index} = ${value}"
             }
         }
     } catch (Exception e) {
