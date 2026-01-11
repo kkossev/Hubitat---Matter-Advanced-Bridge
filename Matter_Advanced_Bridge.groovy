@@ -55,16 +55,16 @@
 #include kkossev.matterStateMachinesLib
 
 static String version() { '1.5.6' }
-static String timeStamp() { '2026/01/11 7:05 PM' }
+static String timeStamp() { '2026/01/11 8:49 PM' }
 
-@Field static final Boolean _DEBUG = true                  // MAKE IT false for PRODUCTION !       
+@Field static final Boolean _DEBUG = false                  // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = false      // MAKE IT false for PRODUCTION !
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
-@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true  // minimize the state variables
+@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false  // minimize the state variables
 @Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
 @Field static final Boolean STATE_CACHING = false            // enable/disable state caching
 @Field static final Integer CACHING_TIMER = 60               // state caching time in seconds

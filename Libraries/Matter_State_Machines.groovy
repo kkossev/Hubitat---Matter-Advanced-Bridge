@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '1.0.5',
+    version: '1.0.6',
     documentationLink: ''
 )
 /*
@@ -31,14 +31,15 @@ library(
   * ver. 1.0.3  2024-09-29 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine(); secured all . operations with ?.
   * ver. 1.0.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
   * ver. 1.0.5  2026-01-08 GPT-5.2  - skip discovery for disabled child devices to eliminate timeouts
+  * ver. 1.0.6  2026-01-11 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.0.5'
-@Field static final String matterStateMachinesLibStamp   = '2026/01/08 12:15 AM'
+@Field static final String matterStateMachinesLib = '1.0.6'
+@Field static final String matterStateMachinesLibStamp   = '2026/01/11 8:49 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -274,20 +275,20 @@ void disoverGlobalElementsStateMachine(Map data) {
                 if (state[fingerprintName] != null && state[fingerprintName][stateClusterName] != null) {
                     attributeList = state[fingerprintName][stateClusterName]?.collect { HexUtils.hexStringToInt(it) }
                 } else {
-                    logWarn "disoverGlobalElementsStateMachine: st:${st} - attributeList is null !"
-                    st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
+                    logWarn "disoverGlobalElementsStateMachine: st:${st} - attributeList state data is null, skipping to end"
+                    st = STATE_DISCOVER_GLOBAL_ELEMENTS_END
                     break
                 }
-                if (attributeList == null) {
-                    logWarn "disoverGlobalElementsStateMachine: st:${st} - attributeList is null !"
-                    st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
+                if (attributeList == null || attributeList.isEmpty()) {
+                    logWarn "disoverGlobalElementsStateMachine: st:${st} - attributeList is empty, skipping to end"
+                    st = STATE_DISCOVER_GLOBAL_ELEMENTS_END
                     break
                 }
                 attributeList.each { attrId ->
                     attributePaths?.add(matter.attributePath(data.endpoint, data.cluster, attrId))
                 }
                 state['stateMachines']['Confirmation'] = false
-                state['stateMachines']['toBeConfirmed'] = [data.endpoint, data.cluster, attributeList?.last()]
+                state['stateMachines']['toBeConfirmed'] = [data.endpoint, data.cluster, attributeList.last()]
                 sendToDevice(matter.readAttributes(attributePaths))
                 retry = 0; st = STATE_DISCOVER_GLOBAL_ELEMENTS_GLOBAL_ELEMENTS_WAIT
             }
