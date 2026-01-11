@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '1.0.3',
+    version: '1.0.5',
     documentationLink: ''
 )
 /*

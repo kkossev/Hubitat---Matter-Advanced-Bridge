@@ -16,15 +16,15 @@
   *
   * ver. 1.0.0  2026-01-07 kkossev + GPT-5.2 : inital release
   * ver. 1.0.1  2026-01-10 kkossev - adding ping() and RTT
-
+  * ver. 1.0.2  2026-01-11 kkossev + Claude Sonnet 4.5 - added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
   *
 */
 
 import groovy.transform.Field
 import groovy.json.JsonSlurper
 
-@Field static final String matterComponentButtonVersion = '1.0.1'
-@Field static final String matterComponentButtonStamp   = '2026/01/10 6:19 PM'
+@Field static final String matterComponentButtonVersion = '1.0.2'
+@Field static final String matterComponentButtonStamp   = '2026/01/11 7:58 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -42,6 +42,14 @@ preferences {
     section {
         input name: 'logEnable', type: 'bool', title: 'Enable debug logging', required: false, defaultValue: true
         input name: 'txtEnable', type: 'bool', title: 'Enable descriptionText logging', required: false, defaultValue: true
+        input name: 'generatePushedOn', type: 'enum', title: 'Generate "pushed" event on:', 
+            options: [
+                'multiPressComplete': 'Multi-Press Complete (default - standard Matter behavior)',
+                'shortRelease': 'Short Release (use if button doesn\'t send multi-press events)'
+            ], 
+            required: false, 
+            defaultValue: 'multiPressComplete',
+            description: 'Some buttons (e.g., Hue dimmer switch) only send shortRelease, never multiPressComplete. Choose which event should trigger the "pushed" event.'
     }
 }
 
@@ -261,6 +269,17 @@ private void handleHeldEvent(final Map d) {
 // Process the event but do not emit the capability event.
 private void handleShortReleaseEvent(final Map d) {
     if (logEnable) { log.debug "${device.displayName} shortRelease event processed" }
+    
+    // Check if user configured to generate 'pushed' on shortRelease instead of multiPressComplete
+    if (settings?.generatePushedOn == 'shortRelease') {
+        Map payload = decodePayload(d.value)
+        Integer pos = (payload?.position != null) ? safeToInt(payload.position) : null
+        Integer buttons = safeToInt(device.currentValue('numberOfButtons'))
+        Integer buttonNumber = (pos != null) ? toButtonNumber(pos, buttons) : 1
+        
+        sendButtonEvent('pushed', buttonNumber)
+        if (logEnable) { log.debug "${device.displayName} generated 'pushed' event on shortRelease (user preference)" }
+    }
 }
 
 // Emit 'released' only after a prior 'held' (longPress) for the same button.
@@ -301,6 +320,12 @@ private void handleCurrentPosition(final Map d) {
 }
 
 private void handleMultiPressComplete(final Map d) {
+    // Skip if user configured to generate pushed on shortRelease instead
+    if (settings?.generatePushedOn == 'shortRelease') {
+        if (logEnable) { log.debug "${device.displayName} ignored multiPressComplete (using shortRelease preference)" }
+        return
+    }
+    
     Map payload = decodePayload(d.value)
     Integer pos = (payload?.position != null) ? safeToInt(payload.position) : null
     Integer pressCount = (payload?.pressCount != null) ? safeToInt(payload.pressCount) : null

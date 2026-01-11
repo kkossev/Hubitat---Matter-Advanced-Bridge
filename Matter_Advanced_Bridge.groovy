@@ -39,6 +39,7 @@
  * ver. 1.5.3  2025-06-28 kkossev + Claude Sonnet 4 : added custom decodeTLVToHex() and decodeTLV() as a workaround for the Hubitat bug with TLV decoding
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
+ * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
  * 
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -53,10 +54,10 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.5.5' }
-static String timeStamp() { '2026/01/10 11:21 PM' }
+static String version() { '1.5.6' }
+static String timeStamp() { '2026/01/11 7:05 PM' }
 
-@Field static final Boolean _DEBUG = false                  // MAKE IT false for PRODUCTION !       
+@Field static final Boolean _DEBUG = true                  // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
@@ -441,10 +442,10 @@ Map myParseDescriptionAsMap(description) {
         descMap = matter.parseDescriptionAsMap(description)
         //log.trace "myParseDescriptionAsMap: descMap:${descMap} description:${description}"
     } catch (e) {
-        logWarn "myParseDescriptionAsMap: exception ${e} <br> Failed to parse description: ${description}"
+        logDebug "myParseDescriptionAsMap: platform parser failed with ${e.class.simpleName}, attempting custom fallback parser"
         // For global attributes that commonly cause parsing issues, create a basic descMap manually
         if (true) {
-            logWarn "myParseDescriptionAsMap: attempting basic parsing for global attribute"
+            logTrace "myParseDescriptionAsMap: attempting basic parsing for global attribute"
             try {
                 Map result = [:]
                 if (description.contains('endpoint:')) {
@@ -471,7 +472,8 @@ Map myParseDescriptionAsMap(description) {
                                 logTrace "myParseDescriptionAsMap: decoded TLV for ${result.attrId}: ${decodedAttrs}"
                             }
                         } catch (Exception ex) {
-                            logWarn "myParseDescriptionAsMap: TLV decoding failed for ${result.attrId}: ${ex}"
+                            logWarn "myParseDescriptionAsMap: TLV decoding failed for ${result.attrId}: ${ex} - keeping raw value"
+                            // Keep the raw value rather than crashing
                         }
                     }
                 }
@@ -500,7 +502,7 @@ Map myParseDescriptionAsMap(description) {
                     logTrace "myParseDescriptionAsMap: decoded TLV for normal parsing ${descMap.attrId}: ${decodedAttrs}"
                 }
             } catch (Exception ex) {
-                logTrace "myParseDescriptionAsMap: TLV decoding skipped for ${descMap.attrId}: ${ex}"
+                logTrace "myParseDescriptionAsMap: TLV decoding skipped for ${descMap.attrId}: ${ex} - keeping raw value"
             }
         }
         // Handle legacy empty list detection
@@ -527,7 +529,7 @@ Map myParseDescriptionAsMap(description) {
                 logTrace "myParseDescriptionAsMap: decoded TLV for Parts List (attr 0003): ${decodedAttrs}"
             }
         } catch (Exception ex) {
-            logWarn "myParseDescriptionAsMap: TLV decoding failed for Parts List (attr 0003): ${ex}"
+            logWarn "myParseDescriptionAsMap: TLV decoding failed for Parts List (attr 0003): ${ex} - keeping raw value"
         }
     }
 
@@ -581,6 +583,7 @@ String getStateClusterName(final Map descMap) {
     else {
         clusterMapName = descMap.cluster + '_' + descMap.attrId
     }
+    return clusterMapName
 }
 
 @CompileStatic
@@ -835,6 +838,7 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
 */
     switch (descMap.attrId) {
         case ['0000', '0001', '0002', '0003'] :
+            if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
             state[fingerprintName][attrName] = descMap.value
             logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> updated state[$fingerprintName][$attrName]</b> to ${descMap.value}"
             if (endpointId == '00' && descMap.cluster == '001D') {
@@ -925,7 +929,7 @@ void parseLevelControlCluster(final Map descMap) {
                 if (logEnable) { logInfo "parseLevelControlCluster: ${attrName} = ${descMap.value}" }
             }
             else {
-                logWarn "parseLevelControlCluster: unsupported LevelControl: attribute ${descMap.attrId} ${attrName} = ${descMap.value}"
+                logDebug "parseLevelControlCluster: unsupported LevelControl: attribute ${descMap.attrId} ${attrName} = ${descMap.value}"
             }
             if (eventMap != [:]) {
                 eventMap.type = 'physical'; eventMap.isStateChange = true
@@ -1263,6 +1267,33 @@ void parseColorControl(final Map descMap) { // 0300
             ], descMap, true)
             break
         case ['FFF8', 'FFF9', 'FFFA', 'FFFB', 'FFFC', 'FFFD', '00FE'] :
+            // Check if FFFB (AttributeList) indicates this CT device should be RGBW
+            if (descMap.attrId == 'FFFB' && descMap.value instanceof List) {
+                List colorAttrList = descMap.value
+                boolean hasHue = colorAttrList?.contains('00')
+                boolean hasSaturation = colorAttrList?.contains('01')
+                
+                // If AttributeList has hue + saturation, check if child device needs upgrading
+                if (hasHue && hasSaturation) {
+                    String dni = "${device.id}-${descMap.endpoint}"
+                    def child = getChildDevice(dni)
+                    if (child && child.typeName?.contains('CT') && !child.typeName?.contains('RGBW')) {
+                        String oldName = child.displayName
+                        String oldLabel = child.label
+                        logInfo "parseColorControl: ${oldName} has hue/saturation - upgrading from CT to RGBW driver"
+                        
+                        try {
+                            deleteChildDevice(dni)
+                            def newChild = addChildDevice('hubitat', 'Generic Component RGBW', dni, [name: oldName])
+                            if (oldLabel && oldLabel != oldName) { newChild.label = oldLabel }
+                            newChild.updateDataValue('id', descMap.endpoint)
+                            logInfo "parseColorControl: Successfully upgraded ${oldName} to RGBW driver"
+                        } catch (Exception e) {
+                            logWarn "parseColorControl: Failed to upgrade ${oldName}: ${e.message}"
+                        }
+                    }
+                }
+            }
             //logTrace "parseColorControl: ${getAttributeName(descMap)} = ${descMap.value}"
             break
         default :
@@ -1277,7 +1308,7 @@ void parseColorControl(final Map descMap) { // 0300
                 if (logEnable) { logInfo "parseLevelControlCluster: ${attrName} = ${descMap.value}" }
             }
             else {
-                logWarn "parseLevelControlCluster: unsupported LevelControl: ${attrName} = ${descMap.value}"
+                logDebug "parseLevelControlCluster: unsupported LevelControl: ${attrName} = ${descMap.value}"
             }
             if (eventMap != [:]) {
                 eventMap.type = 'physical'; eventMap.isStateChange = true
@@ -1493,7 +1524,7 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
         }
         // For attributes, keep the existing behavior: if child doesn't declare the attribute, send it directly.
         else if (dw?.hasAttribute(name) != true) {
-            logDebug "sendMatterEvent: <b>cannot send </b> for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            logDebug "sendMatterEvent: sending directly (attribute '${name}' not declared in child driver): dw:${dw} dni:${dni} value:${value}"
             dw.sendEvent(eventMap)
             logInfo "${eventMap.descriptionText}"
             // added 2024/10/02 - update the data value in the child device
@@ -1639,6 +1670,8 @@ void requestAndCollectServerListAttributesList(Map data)
     serverList.each { cluster ->
         Integer clusterInt = HexUtils.hexStringToInt(cluster)
         //logTrace "requestAndCollectServerListAttributesList(): endpointInt:${endpoint} (0x${HexUtils.integerToHexString(safeToInt(endpoint), 1)}),  clusterInt:${clusterInt} (0x${cluster})"
+        
+        // Read AttributeList (existing)
         readAttribute(endpoint, clusterInt, 0xFFFB)
     }
 }
@@ -1981,8 +2014,7 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
                 }
                 
                 eventIds.each { eventId ->
-                    String epHex = HexUtils.integerToHexString(endpoint, 1)
-                    eventPaths.add(matter.eventPath(epHex, cluster, eventId))
+                    eventPaths.add(matter.eventPath(endpoint, cluster, eventId))
                 }
             }
             
@@ -2049,8 +2081,7 @@ String cleanSubscribeCmd() {
                     return  // continue to next endpoint
                 }
                 eventIds.each { Integer eventId ->
-                    String epHex = HexUtils.integerToHexString(endpoint, 1)
-                    paths.add(matter.eventPath(epHex, cluster, eventId))
+                    paths.add(matter.eventPath(endpoint, cluster, eventId))
                 }
             }
         }
@@ -2293,7 +2324,10 @@ Map mapMatterCategory(Map d) {
     logDebug "mapMatterCategory: ServerList=${d.ServerList} DeviceType=${d.DeviceType}"
 
     if ('0300' in d.ServerList) {
-        if ('0D' in d.DeviceType || '13' in d.DeviceType) {
+        // Check for Extended Color Light (0x010D or decimal 13/0x0D) or Color Temperature Light (0x010C)
+        boolean isExtendedColor = ('0D' in d.DeviceType) || ('13' in d.DeviceType) || 
+                                   (d.DeviceType?.any { it.toString().toUpperCase() in ['10D', '010D'] })
+        if (isExtendedColor) {
             return [ driver: 'Generic Component RGBW', product_name: 'RGB Extended Color Light' ]
         }
         else {
@@ -2888,9 +2922,25 @@ Map fingerprintToData(String fingerprint) {
         data['name'] = getDeviceDisplayName(data['id'])
         data['fingerprintName'] = fingerprint
         data['ServerList'] = fingerprintMap['ServerList']
-        List deviceTypeList = fingerprintMap['DeviceTypeList'] as List ?: []
-        data['DeviceType'] = deviceTypeList
-        logDebug "fingerprintToData(): fingerprintMap=${fingerprintMap} data=${data}"
+        // Extract device type IDs from DeviceTypeList
+        // DeviceTypeList is an array of structures, each containing revision + deviceType
+        // We need to extract just the device type IDs (typically every other value after removing markers)
+        List deviceTypeIds = []
+        def rawDeviceTypeList = fingerprintMap['DeviceTypeList']
+        if (rawDeviceTypeList instanceof List) {
+            // Filter out container end markers (0x18) and extract device type values
+            List<String> filtered = rawDeviceTypeList.findAll { it != '18' }
+            // Device types are typically the higher-byte values in the structure
+            filtered.each { String val ->
+                Integer intVal = HexUtils.hexStringToInt(val)
+                // Device type IDs are typically > 255 (0x0100+)
+                if (intVal >= 0x0D || (intVal > 0 && intVal < 0x20)) {
+                    deviceTypeIds.add(val)
+                }
+            }
+        }
+        data['DeviceType'] = deviceTypeIds
+        logDebug "fingerprintToData(): rawDeviceTypeList=${rawDeviceTypeList} extracted deviceTypeIds=${deviceTypeIds} fingerprintMap=${fingerprintMap} data=${data}"
         Map productName = mapMatterCategory(data)
 
         data['product_name'] = fingerprintMap['ProductName'] ?: productName['product_name']           // Device Name

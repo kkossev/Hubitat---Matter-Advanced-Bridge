@@ -4,7 +4,7 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1372
+      "version": 1389
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
@@ -16,13 +16,13 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterLib.groovy",
       "id": 145,
       "codeType": "library",
-      "version": 59
+      "version": 62
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/Matter_State_Machines.groovy",
       "id": 146,
       "codeType": "library",
-      "version": 189
+      "version": 194
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Battery.groovy",
@@ -82,7 +82,7 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Button.groovy",
       "codeType": "driver",
       "id": 4764,
-      "version": 22
+      "version": 26
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterHealthStatusLib.groovy",

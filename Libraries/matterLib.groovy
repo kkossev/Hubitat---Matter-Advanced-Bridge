@@ -7,7 +7,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
-    version: '1.4.0',
+    version: '1.4.1',
     documentationLink: ''
 )
 /*
@@ -29,15 +29,16 @@ library(
   * ver. 1.2.0  2024-10-02 kkossev  - ThermostatClusterAttributes
   * ver. 1.2.1  2024-10-04 kkossev  - SwitchClusterAttributes; getEventsMapByClusterId()
   * ver. 1.3.0  2024-10-11 kkossev  - added 0x005B  : 'AirQuality'
-  * ver. 1.4.0  2025-04-02 kkossev  - (dev. branch) adding 0x0091 : 'Electrical Energy Measuremen'; adding 0x0090 : 'Electrical Power Measurement'
+  * ver. 1.4.0  2025-04-02 kkossev  - added 0x0091 : 'Electrical Energy Measuremen'; adding 0x0090 : 'Electrical Power Measurement'
+  * ver. 1.4.1  2026-04-02 kkossev  - edded tagsList
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.3.0'
-@Field static final String matterLibStamp   = '2024/10/11 10:49 PM'
+@Field static final String matterLibVersion = '1.4.1'
+@Field static final String matterLibStamp   = '2026/04/02 4:04 PM'
 
 // no metadata section for matterLib
 
@@ -218,7 +219,8 @@ Map getEventsMapByClusterId(String cluster) {
     0x0000  : 'DeviceTypeList',
     0x0001  : 'ServerList',
     0x0002  : 'ClientList',
-    0x0003  : 'PartsList'
+    0x0003  : 'PartsList',
+    0x0004  : 'TagList'        // Semantic tags for endpoint identification
 ]
 
 // 9.6. Binding Cluster 0x001E
