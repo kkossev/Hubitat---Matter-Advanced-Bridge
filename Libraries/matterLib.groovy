@@ -30,7 +30,7 @@ library(
   * ver. 1.2.1  2024-10-04 kkossev  - SwitchClusterAttributes; getEventsMapByClusterId()
   * ver. 1.3.0  2024-10-11 kkossev  - added 0x005B  : 'AirQuality'
   * ver. 1.4.0  2025-04-02 kkossev  - added 0x0091 : 'Electrical Energy Measuremen'; adding 0x0090 : 'Electrical Power Measurement'
-  * ver. 1.4.1  2026-04-02 kkossev  - edded tagsList
+  * ver. 1.4.1  2026-01-15 kkossev  - added tagsList, added more attributes to BridgedDeviceBasicClusterAttributes
   *
 */
 
@@ -38,7 +38,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterLibVersion = '1.4.1'
-@Field static final String matterLibStamp   = '2026/04/02 4:04 PM'
+@Field static final String matterLibStamp   = '2026/01/15 3:50 PM'
 
 // no metadata section for matterLib
 
@@ -257,8 +257,11 @@ Map getEventsMapByClusterId(String cluster) {
     0x000F  : 'SerialNumber',
     0x0010  : 'LocalConfigDisabled',
     0x0011  : 'Reachable',
-    0x0012  : 'UniquieID',
-    0x0013  : 'CapabilityMinima'
+    0x0012  : 'UniqueID',
+    0x0013  : 'CapabilityMinima',
+    0x0014  : 'ProductAppearance',
+    0x0015  : 'SpecificationVersion',
+    0x0016  : 'MaxPathsPerInvoke'
 ]
 
 // 11.19.6.5. OTA Software Update Provider Cluster 0x0029
@@ -399,7 +402,10 @@ Map getEventsMapByClusterId(String cluster) {
     0x0010  : 'LocalConfigDisabled',
     0x0011  : 'Reachable',
     0x0012  : 'UniqueID',
-    0x0013  : 'CapabilityMinima'
+    0x0013  : 'CapabilityMinima',
+    0x0014  : 'ProductAppearance',
+    0x0015  : 'SpecificationVersion',
+    0x0016  : 'MaxPathsPerInvoke'
 ]
 
 // 11.18.4. Administrator Commissioning Cluster 0x003C

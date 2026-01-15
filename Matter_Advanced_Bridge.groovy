@@ -40,12 +40,14 @@
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
+ * ver. 1.6.0  2026-01-15 kkossev + Claude Sonnet 4.5 : (dev. branch) A major refactoring of the Door Lock driver;
  * 
+ *                                   TODO: add ping as a first step in the state machines before reading attributes
+ *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
+ *                                   TODO: distinguish between MATTER_BRIDGE deviceType and other MATTER_* deviceTypes
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
  *                                   TODO: add cluster 0202 'Window Covering'
- *                                   TODO: Matter events subscription - buttons and locks
- *                                   TODO: bugfix: Curtain driver exception @UncleAlias #4
  *
  */
 
@@ -54,15 +56,15 @@
 #include kkossev.matterUtilitiesLib
 #include kkossev.matterStateMachinesLib
 
-static String version() { '1.5.6' }
-static String timeStamp() { '2026/01/11 8:49 PM' }
+static String version() { '1.6.0' }
+static String timeStamp() { '2026/01/15 12:55 PM' }
 
-@Field static final Boolean _DEBUG = false                  // MAKE IT false for PRODUCTION !       
+@Field static final Boolean _DEBUG = true                    // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false      // MAKE IT false for PRODUCTION !
+@Field static final Boolean DEFAULT_LOG_ENABLE = true      // MAKE IT false for PRODUCTION !
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false  // minimize the state variables
 @Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
@@ -660,6 +662,12 @@ void parseGlobalElements(final Map descMap) {
             state[fingerprintName][attributeName] = descMap.value
             logTrace "parseGlobalElements: cluster: <b>${getClusterName(descMap.cluster)}</b> (0x${descMap.cluster}) attr: <b>${attributeName}</b> (0x${descMap.attrId})  value:${descMap.value} <b>-> ${action}</b> [$fingerprintName][$attributeName]"
             //logTrace "parseGlobalElements: state[${fingerprintName}][${attributeName}] = ${state[fingerprintName][attributeName]}"
+            
+            // Update child device fingerprint data with cluster-specific data
+            updateChildFingerprintData(fingerprintName, attributeName, descMap.value)
+            
+            // Mark attribute as received for state machine wait logic
+            markClusterDataReceived(descMap.endpoint, descMap.cluster, descMap.attrId)
             break
         default :
             break   // not a global element
@@ -783,7 +791,7 @@ void parsePowerSource(final Map descMap) {
     if (eventMap != [:]) {
         eventMap.type = 'physical'
         eventMap.isStateChange = true
-        sendMatterEvent(eventMap, descMap, true) // bridge events
+        sendMatterEvent(eventMap, descMap, ignoreDuplicates = true) // bridge events
     }
 }
 
@@ -812,9 +820,13 @@ void parseBridgedDeviceBasic(final Map descMap) {       // 0x0039 BridgedDeviceB
     String fingerprintName = getFingerprintName(descMap)
     if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
     String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
-    if (attrName in ['VendorName', 'ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable']) {
+    if (attrName in ['VendorName', 'ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable', 'ProductLabel']) {
         if (descMap.value != null && descMap.value != '') {
             state[fingerprintName][attrName] = descMap.value
+            
+            // Note: These values are stored in state[fingerprintName] and don't need to be duplicated in device data
+            // Child drivers can access them via parent methods if needed
+            
             eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  ${eventName} is: ${descMap.value}"]
             if (logEnable) { logInfo "parseBridgedDeviceBasic: ${attrName} = ${descMap.value}" }
         }
@@ -852,7 +864,7 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
                     int partsListCount = partsList.size()   // the number of the elements in the partsList
                     int oldCount = device.currentValue('endpointsCount') ?: 0 as int
                     String descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Bridge partsListCount is: ${partsListCount}"
-                    sendMatterEvent([name: 'endpointsCount', value: partsListCount, descriptionText: descriptionText], descMap)
+                    sendMatterEvent([name: 'endpointsCount', value: partsListCount, descriptionText: descriptionText], descMap, true) // bridge event - sent only when endpointsCount changes: changed 01/14/2026
                     if (partsListCount != oldCount) {
                         logWarn "THE NUMBER OF THE BRIDGED DEVICES CHANGED FROM ${oldCount} TO ${partsListCount} !!!"
                     }
@@ -1104,6 +1116,7 @@ void parseDoorLock(final Map descMap) { // 0101
         ], descMap, ignoreDuplicates = false)
     }
 }
+
 
 void parseAirQuality(final Map descMap) { // 005B
     if (descMap.cluster != '005B') { logWarn "parseAirQuality: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
@@ -1470,7 +1483,8 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
     // Button/Switch events often repeat the same payload (e.g. {"position":1}) and still represent a real action.
     if (ignoreDuplicates == true && state.states['isRefresh'] == false && descMap?.evtId == null) {
         boolean isDuplicate = false
-        Object latestEvent = dw?.device?.currentState(name)
+        // Check child device currentState if available, otherwise check parent device for bridge events
+        Object latestEvent = dw?.device?.currentState(name) ?: device.currentState(name)
         //latestEvent.properties.each { k, v -> logWarn ("$k: $v") }
         try {
             if (latestEvent != null) {
@@ -1494,7 +1508,7 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
                 }
             }
             else {
-                logTrace "sendMatterEvent: latestEvent is null"
+                logTrace "sendMatterEvent: latestEvent is null (attribute not found in child or parent device)"
             }
         } catch (Exception e) {
             logWarn "sendMatterEvent: error checking for duplicates: ${e}"
@@ -2310,6 +2324,26 @@ List<String> commands(List<String> cmds, Integer delay = 300) {
     return delayBetween(cmds.collect { it }, delay)
 }
 
+// Component logging - allows child devices to log to parent with device context
+void componentLog(DeviceWrapper dw, String level, String message) {
+    String deviceInfo = "${dw.displayName} (#${dw.getDataValue('id')})"
+    switch (level) {
+        case 'info':
+            logInfo "${deviceInfo}: ${message}"
+            break
+        case 'warn':
+            logWarn "${deviceInfo}: ${message}"
+            break
+        case 'error':
+            logError "${deviceInfo}: ${message}"
+            break
+        case 'debug':
+        default:
+            logDebug "${deviceInfo}: ${message}"
+            break
+    }
+}
+
 /* ============================= Child Devices code ================================== */
 /* code segments 'borrowed' from Jonathan's 'Tuya IoT Platform (Cloud)' driver importUrl: 'https://raw.githubusercontent.com/bradsjm/hubitat-drivers/main/Tuya/TuyaOpenCloudAPI.groovy' */
 
@@ -2791,59 +2825,13 @@ void componentSetCoolingSetpoint(DeviceWrapper dw, BigDecimal temperature) {
     return
 }
 
-void componentLock(DeviceWrapper dw) {
-    String id = dw.getDataValue('id')
-    if (!dw.hasCommand('lock')) { logError "componentLock(${dw}) driver '${dw.typeName}' does not have command 'lock' in ${dw.supportedCommands}"; return }
-    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
-    logInfo "sending Lock command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentLock(): deviceNumber ${deviceNumberPar} is not valid!"; return }
+/*
+ * NOTE: Lock commands have been moved to the child driver (Matter_Generic_Component_Door_Lock)
+ * The child driver now builds Matter commands directly and calls parent.sendToDevice()
+ * This keeps all lock-specific logic in the lock driver component.
+ */
 
-    String deviceHex = HexUtils.integerToHexString(deviceNumber, 1)
-    //String cmd = matter.lock()
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, 2000)
-    //String cmd = 'he invoke 0x01 0x0101 0x0000 0x07D0 {1518}'
-
-    logDebug "componentLock(): sending command '${cmd}'"
-    sendToDevice(cmd)
-}
-
-void componentUnlock(DeviceWrapper dw) {
-    String id = dw.getDataValue('id')
-    if (!dw.hasCommand('unlock')) { logError "componentUnlock(${dw}) driver '${dw.typeName}' does not have command 'unlock' in ${dw.supportedCommands}"; return }
-    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
-    logInfo "sending Unlock command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentUnlock(): deviceNumber ${deviceNumberPar} is not valid!"; return }
-
-
-    String deviceHex = HexUtils.integerToHexString(deviceNumber, 1)
-    //String cmd = matter.unlock()
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000)
-    //String cmd = 'he invoke 0x01 0x0101 0x0001 0x07D0 {1518}'
-
-    logDebug "componentUnlock(): sending command '${cmd}'"
-    sendToDevice(cmd)
-}
-
-void componentDeleteCode(DeviceWrapper dw, BigDecimal codePosition) {
-    String id = dw.getDataValue('id')
-    logWarn "componentDeleteCode(${dw}) id=${id} (TODO: not implemented!)"
-}
-
-void componentGetCodes(DeviceWrapper dw) {
-    String id = dw.getDataValue('id')
-    logWarn "componentGetCodes(${dw}) id=${id} (TODO: not implemented!)"
-}
-
-void componentSetCode(DeviceWrapper dw, BigDecimal codePosition, String code, String name = null) {
-    String id = dw.getDataValue('id')
-    logWarn "componentSetCode(${dw}) id=${id} (TODO: not implemented!)"
-}
-
-void componentSetCodeLength(DeviceWrapper dw, BigDecimal codeLength) {
-    String id = dw.getDataValue('id')
-    logWarn "componentSetCodeLength(${dw}) id=${id} (TODO: not implemented!)"
-}
-
+ 
 void initializeThermostat(DeviceWrapper dw) {
     logWarn "initializeThermostat(${dw}) is not implemented!"
     def supportedThermostatModes = []
@@ -3057,7 +3045,7 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
         updateDataValue 'id', d.id
         updateDataValue 'fingerprintName', d.fingerprintName
         updateDataValue 'product_name', d.product_name
-        updateDataValue 'ServerList', JsonOutput.toJson(d.ServerList)
+        // ServerList is now stored in fingerprintData, not as separate device data
         // TODO !!1
 
         /*
@@ -3071,6 +3059,139 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
     }
 
     return dw
+}
+
+/**
+ * Copy entire fingerprint data from parent state to child device data
+ * This preserves critical configuration even after state.fingerprint* is minimized
+ * @param fingerprintName The fingerprint key (e.g., 'fingerprint08')
+ * @param dni The child device network ID
+ */
+void copyEntireFingerprintToChild(String fingerprintName, String dni) {
+    ChildDeviceWrapper childDevice = getChildDevice(dni)
+    if (childDevice == null) {
+        logWarn "copyEntireFingerprintToChild: child device ${dni} not found"
+        return
+    }
+    
+    Map fingerprint = state[fingerprintName]
+    if (fingerprint == null || fingerprint.isEmpty()) {
+        logWarn "copyEntireFingerprintToChild: fingerprint ${fingerprintName} is null or empty"
+        return
+    }
+    
+    try {
+        // Store complete fingerprint as JSON string in child device data
+        String fingerprintJson = JsonOutput.toJson(fingerprint)
+        childDevice.updateDataValue('fingerprintData', fingerprintJson)
+        
+        logDebug "copyEntireFingerprintToChild: copied ${fingerprintJson.length()} bytes of fingerprint data to ${childDevice.displayName}"
+        logTrace "copyEntireFingerprintToChild: fingerprint keys = ${fingerprint.keySet()}"
+    } catch (Exception e) {
+        logWarn "copyEntireFingerprintToChild: failed to copy fingerprint ${fingerprintName} to ${dni}: ${e.message}"
+    }
+}
+
+/**
+ * Update child device fingerprint data with newly discovered cluster attributes
+ * Called when cluster-specific data (like AttributeLists) is received
+ * @param fingerprintName The fingerprint key (e.g., 'fingerprint08')
+ * @param attributeName The cluster-specific key (e.g., '0101_FFFB')
+ * @param value The value to update
+ */
+void updateChildFingerprintData(String fingerprintName, String attributeName, Object value) {
+    // Get the endpoint from fingerprintName (e.g., 'fingerprint08' -> '08')
+    String endpointHex = fingerprintName.replaceFirst('fingerprint', '')
+    String dni = "${device.id}-${endpointHex.toUpperCase()}"
+    
+    ChildDeviceWrapper childDevice = getChildDevice(dni)
+    if (childDevice == null) {
+        // Child device doesn't exist or not created yet
+        return
+    }
+    
+    try {
+        // Get existing fingerprint data
+        String fingerprintJson = childDevice.getDataValue('fingerprintData')
+        Map fingerprint
+        
+        if (fingerprintJson) {
+            fingerprint = new groovy.json.JsonSlurper().parseText(fingerprintJson)
+        } else {
+            fingerprint = [:]
+        }
+        
+        // Update with new cluster-specific data
+        fingerprint[attributeName] = value
+        
+        // Save back to child device
+        String updatedJson = JsonOutput.toJson(fingerprint)
+        childDevice.updateDataValue('fingerprintData', updatedJson)
+        
+        logTrace "updateChildFingerprintData: updated ${childDevice.displayName} ${attributeName} = ${value}"
+    } catch (Exception e) {
+        logDebug "updateChildFingerprintData: failed to update ${dni} ${attributeName}: ${e.message}"
+    }
+}
+
+/**
+ * Mark a cluster attribute as received for the discovery state machine wait logic
+ * @param endpoint Endpoint hex string (e.g., "01")
+ * @param cluster Cluster hex string (e.g., "0101")
+ * @param attrId Attribute ID hex string (e.g., "FFFB")
+ */
+void markClusterDataReceived(String endpoint, String cluster, String attrId) {
+    // Only process global cluster attributes we're tracking
+    if (!(attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFC'])) {
+        return
+    }
+    
+    Map<String, Boolean> expected = state['stateMachines']?.clusterDataExpected
+    if (expected == null || expected.isEmpty()) {
+        // Not in cluster data wait state
+        return
+    }
+    
+    // Normalize to uppercase
+    String endpointHex = endpoint?.toUpperCase()?.padLeft(2, '0')
+    String clusterHex = cluster?.toUpperCase()?.padLeft(4, '0')
+    String attrHex = attrId?.toUpperCase()
+    
+    String key = "${endpointHex}_${clusterHex}_${attrHex}"
+    
+    if (expected.containsKey(key)) {
+        expected[key] = true
+        state['stateMachines']['clusterDataExpected'] = expected
+        
+        Integer receivedCount = expected.values().count { it == true }
+        Integer totalCount = expected.size()
+        logDebug "markClusterDataReceived: ${key} received (${receivedCount}/${totalCount})"
+    }
+}
+
+/**
+ * Update a specific data value in a child device
+ * @param fingerprintName The fingerprint key (e.g., 'fingerprint01')
+ * @param dataName The data value name (e.g., 'ProductName', 'VendorName')
+ * @param value The value to set
+ */
+void updateChildDeviceDataValue(String fingerprintName, String dataName, Object value) {
+    // Get the endpoint from fingerprintName (e.g., 'fingerprint08' -> '08')
+    String endpointHex = fingerprintName.replaceFirst('fingerprint', '')
+    String dni = "${device.id}-${endpointHex.toUpperCase()}"
+    
+    ChildDeviceWrapper childDevice = getChildDevice(dni)
+    if (childDevice == null) {
+        // Child device doesn't exist yet
+        return
+    }
+    
+    try {
+        childDevice.updateDataValue(dataName, value?.toString())
+        logDebug "updateChildDeviceDataValue: updated ${childDevice.displayName} ${dataName} = ${value}"
+    } catch (Exception e) {
+        logDebug "updateChildDeviceDataValue: failed to update ${dni} ${dataName}: ${e.message}"
+    }
 }
 
 /* ================================================================================================================================================================================ */

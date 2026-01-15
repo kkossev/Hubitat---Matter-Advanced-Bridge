@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '1.0.6',
+    version: '1.1.0',
     documentationLink: ''
 )
 /*
@@ -31,15 +31,15 @@ library(
   * ver. 1.0.3  2024-09-29 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine(); secured all . operations with ?.
   * ver. 1.0.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
   * ver. 1.0.5  2026-01-08 GPT-5.2  - skip discovery for disabled child devices to eliminate timeouts
-  * ver. 1.0.6  2026-01-11 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine
+  * ver. 1.1.0  2026-01-15 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.0.6'
-@Field static final String matterStateMachinesLibStamp   = '2026/01/11 8:49 PM'
+@Field static final String matterStateMachinesLib = '1.1.0'
+@Field static final String matterStateMachinesLibStamp   = '2026/01/15 2:15 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -376,6 +376,8 @@ void disoverGlobalElementsStateMachine(Map data) {
 @Field static final Integer DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_START                 = 25
 @Field static final Integer DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE           = 26
 @Field static final Integer DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_WAIT                  = 27
+@Field static final Integer DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN             = 28
+@Field static final Integer DISCOVER_ALL_STATE_CLUSTER_DATA_WAIT                        = 29
 @Field static final Integer DISCOVER_ALL_STATE_SUBSCRIBE_KNOWN_CLUSTERS                 = 30
 
 @Field static final Integer DISCOVER_ALL_STATE_DESCIPTOR_CLUSTER                        = 70
@@ -761,17 +763,39 @@ void discoverAllStateMachine(Map data = null) {
                     // fingerPrintToData: deviceData:[id:08, fingerprintName:fingerprint08, product_name:Humidity Sensor, name:Device#08, ServerList:[1D, 03, 0405]]
                     sendInfoEvent("Created child device ${deviceData?.name} (${deviceData?.product_name})")
                 }
-                // 02/12/2024 - read the 0xFFFB attributes for ALL clusters in the matchedClustersList
+                // Read cluster-specific global attributes for all matched clusters
                 List<Map<String, String>> attributePaths = []
+                Map<String, Boolean> expectedAttributes = [:]  // Track what we're waiting for
+                
                 matchedClustersList?.each { cluster ->
-                    attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFB))
-                    attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFC))  // added 02/19/2024 - read the FeatureMap also !
+                    String clusterHex = HexUtils.integerToHexString(cluster, 2).toUpperCase()
+                    String endpointHex = HexUtils.integerToHexString(partEndpointInt, 1).padLeft(2, '0').toUpperCase()
+                    
+                    // Add attribute read requests
+                    attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFB))    // AttributeList
+                    attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFF8))    // GeneratedCommandList
+                    attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFF9))    // AcceptedCommandList
+                    attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFC))    // FeatureMap
+                    
+                    // Track expected responses
+                    expectedAttributes["${endpointHex}_${clusterHex}_FFFB"] = false
+                    expectedAttributes["${endpointHex}_${clusterHex}_FFF8"] = false
+                    expectedAttributes["${endpointHex}_${clusterHex}_FFF9"] = false
+                    expectedAttributes["${endpointHex}_${clusterHex}_FFFC"] = false
                 }
+                
                 sendToDevice(matter.readAttributes(attributePaths))
-                // TODO - check if the confirmation is received !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
-                stateMachinePeriod = STATE_MACHINE_PERIOD * 2   // double the period for the next state
-                st = DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE
+                
+                // Store expected attributes and endpoint for wait state
+                state['stateMachines']['clusterDataExpected'] = expectedAttributes
+                state['stateMachines']['clusterDataEndpoint'] = partEndpoint
+                state['stateMachines']['clusterDataRetry'] = 0
+                
+                logDebug "discoverAllStateMachine: st:${st} - waiting for ${expectedAttributes.size()} cluster attributes from endpoint ${partEndpoint}"
+                
+                // Move to wait state instead of immediately copying
+                stateMachinePeriod = STATE_MACHINE_PERIOD
+                st = DISCOVER_ALL_STATE_CLUSTER_DATA_WAIT
             // 02/12/2024 - go next device !
             }
             else {
@@ -779,6 +803,84 @@ void discoverAllStateMachine(Map data = null) {
                 state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
                 st = DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE
             }
+            break
+
+        case DISCOVER_ALL_STATE_CLUSTER_DATA_WAIT:
+            Map<String, Boolean> expectedAttributes = state['stateMachines']['clusterDataExpected'] ?: [:]
+            
+            if (expectedAttributes.isEmpty()) {
+                // No attributes to wait for, proceed immediately
+                logDebug "discoverAllStateMachine: st:${st} - no cluster data expected, proceeding"
+                st = DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN
+                break
+            }
+            
+            // Check if all expected attributes have been received
+            Boolean allReceived = expectedAttributes.values().every { it == true }
+            Integer receivedCount = expectedAttributes.values().count { it == true }
+            Integer totalCount = expectedAttributes.size()
+            
+            if (allReceived) {
+                logDebug "discoverAllStateMachine: st:${st} - all ${totalCount} cluster attributes received!"
+                
+                // Clear tracking data
+                state['stateMachines']['clusterDataExpected'] = null
+                state['stateMachines']['clusterDataEndpoint'] = null
+                
+                // Move to next device index now (was done prematurely before)
+                Integer partsListIndex = state['stateMachines']['discoverAllPartsListIndex'] ?: 0
+                state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
+                
+                // Proceed to copy complete fingerprint
+                retry = 0
+                stateMachinePeriod = 100  // Quick transition
+                st = DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN
+            }
+            else {
+                // Still waiting for some attributes
+                logTrace "discoverAllStateMachine: st:${st} - waiting for cluster data (${receivedCount}/${totalCount} received, retry=${retry})"
+                
+                retry++
+                stateMachinePeriod = STATE_MACHINE_PERIOD
+                
+                if (retry > maxRetries) {
+                    // Timeout - proceed anyway with incomplete data
+                    List<String> missing = expectedAttributes.findAll { k, v -> v == false }.collect { it.key }
+                    logWarn "discoverAllStateMachine: st:${st} - timeout waiting for cluster data! Missing: ${missing}"
+                    
+                    // Clear tracking data
+                    state['stateMachines']['clusterDataExpected'] = null
+                    state['stateMachines']['clusterDataEndpoint'] = null
+                    
+                    // Move to next device index
+                    Integer partsListIndex = state['stateMachines']['discoverAllPartsListIndex'] ?: 0
+                    state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
+                    
+                    // Proceed to copy (incomplete) fingerprint
+                    retry = 0
+                    st = DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN
+                }
+            }
+            break
+
+        case DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN :
+            Integer partsListIndex = state['stateMachines']['discoverAllPartsListIndex'] ?: 0
+            if (partsListIndex > 0) {
+                String partEndpoint = state.bridgeDescriptor['PartsList'][partsListIndex - 1]
+                Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
+                String fingerprintName = getFingerprintName(partEndpointInt)
+                String dni = "${device.id}-${partEndpoint.toUpperCase()}"
+                
+                logDebug "discoverAllStateMachine: st:${st} - copying COMPLETE fingerprint ${fingerprintName} to child device ${dni}"
+                copyEntireFingerprintToChild(fingerprintName, dni)
+                
+                // Log what was copied for verification
+                Map fp = state[fingerprintName]
+                List<String> clusterKeys = fp?.keySet()?.findAll { it.contains('_') }?.toList()
+                logInfo "Copied complete fingerprint to ${fingerprintName}: ${clusterKeys?.size() ?: 0} cluster attributes"
+            }
+            stateMachinePeriod = 100  // Go quickly to next device
+            st = DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE
             break
 
         case DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_WAIT :

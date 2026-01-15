@@ -7,7 +7,7 @@ library(
     name: 'matterUtilitiesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterUtilitiesLib.groovy',
-    version: '1.3.1',
+    version: '1.3.2',
     documentationLink: ''
 )
 /*
@@ -30,13 +30,14 @@ library(
   * ver. 1.2.0  2024-10-11 kkossev  - added testParse()
   * ver. 1.3.0  2025-06-28 Claude Sonnet 4  - added custom decodeTLVToHex() and decodeTLV()
   * ver. 1.3.1  2026-01-06 GPT-5.2 - added discoveryTimeoutScale
+  * ver. 1.3.2  2026-01-15 (dev. branch)
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterUtilitiesLibVersion = '1.3.1'
-@Field static final String matterUtilitiesLibStamp   = '2026/01/06 9:50 PM'
+@Field static final String matterUtilitiesLibVersion = '1.3.2'
+@Field static final String matterUtilitiesLibStamp   = '2026/01/15 10:12 PM'
 
 metadata {
     // no capabilities
@@ -83,7 +84,7 @@ void readAttributeSafe(List<String> parameters /*String endpointPar, String clus
     readSingeAttrStateMachine([action: START, endpoint: endpointInt, cluster: clusterInt, attribute: attrInt])
 }
 
-void readAttribute(List<String> parameters /*String endpointPar, String clusterPar, String attrIdPar*/) {
+void readAttribute(List<String> parameters) {
     if (parameters == null || parameters.size() != 3) {
         logInfo 'usage: readAttribute endpoint cluster attribute'
         return
