@@ -40,7 +40,7 @@
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
- * ver. 1.6.0  2026-01-15 kkossev + Claude Sonnet 4.5 : (dev. branch) A major refactoring of the Door Lock driver;
+ * ver. 1.6.0  2026-01-16 kkossev + Claude Sonnet 4.5 + GPT-5.2 : (dev. branch) A major refactoring of the Door Lock driver; optimized subsciption management;
  * 
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
@@ -51,20 +51,15 @@
  *
  */
 
-/* groovylint-disable-next-line NglParseError */
-#include kkossev.matterLib
-#include kkossev.matterUtilitiesLib
-#include kkossev.matterStateMachinesLib
-
 static String version() { '1.6.0' }
-static String timeStamp() { '2026/01/15 12:55 PM' }
+static String timeStamp() { '2026/01/16 6:46 PM' }
 
-@Field static final Boolean _DEBUG = true                    // MAKE IT false for PRODUCTION !       
+@Field static final Boolean _DEBUG = false                    // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = true      // MAKE IT false for PRODUCTION !
+@Field static final Boolean DEFAULT_LOG_ENABLE = false      // MAKE IT false for PRODUCTION !
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false  // minimize the state variables
 @Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
@@ -98,7 +93,7 @@ metadata {
     definition(name: DRIVER_NAME, namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: IMPORT_URL, singleThreaded: true ) {
         capability 'Actuator'
         capability 'Sensor'
-        capability 'Initialize'
+        // capability 'Initialize' // commented out to avoid automatic initialize() call on driver update and hub reboot, resulting in subscribing to all Matter attributes and events again!
         capability 'Refresh'
         capability 'Health Check'
 
@@ -196,7 +191,7 @@ metadata {
               eventSubscriptions : [-1]  // -1 means subscribe to ALL events from this cluster
     ],
     
-    // Descriptor Cluster
+    // Descriptor Cluster - subscribing to it seems to create a lot of issues!! :( 
     /*
     0x001D : [attributes: 'DescriptorClusterAttributes', parser: 'parseDescriptorCluster',      // decimal(29) manually subscribe to the Bridge device ep=0 0x001D 0x0003
               subscriptions : [[0x0003: [min: 0, max: 0xFFFF, delta: 0]]]   // PartsList
@@ -1826,16 +1821,11 @@ void initialize() {
     state.states['isSubscribe'] = true  // should be set to false in the parse() method
     sendEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} initializeCtr is ${state.stats['initializeCtr']}", type: 'digital'])
     scheduleCommandTimeoutCheck(delay = 55)
-    // Use cleanSubscribe instead of the older subscribe method
-    if (location.hub.firmwareVersionString >= '2.3.9.186') {
-        String cleanCmd = cleanSubscribeCmd()
-        if (cleanCmd != null) {
-            sendToDevice(cleanCmd)
-            sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device subscribe command')
-        }
-    }
-    else {
-        sendSubscribeList()  // fallback for older firmware
+    // Starting from MAB version 1.6.0 we support only cleanSubscribe command. Hubitat platform versions older than '2.3.9.186' are not supported!
+    String cleanCmd = cleanSubscribeCmd()
+    if (cleanCmd != null) {
+        sendToDevice(cleanCmd)
+        sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device subscribe command')
     }
     updated()   // added 02/03/2024
 }
@@ -1989,7 +1979,6 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
                     logDebug "getSubscribeOrRefreshCmdList(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
                     return  // continue to next endpoint
                 }
-                //logDebug "endpoint:${endpoint}, Cluster:${cluster}, Attribute:${attribute}"
                 attributePaths.add(matter.attributePath(endpoint, cluster, attribute))
             }
             logTrace "attribute: ${attribute} attributePaths:${attributePaths} supportedSubscriptions[attribute]:${supportedSubscriptions[attribute]}"
@@ -2040,7 +2029,7 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
             }
         }
         
-        logTrace "attribute:${attribute} cmdsList=${cmdsList}"
+        //logTrace "attribute:${attribute} cmdsList=${cmdsList}"
         //return cmdsList
     }   // for each cluster
 
@@ -2048,6 +2037,9 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
 }
 
 String subscribeCmd() {
+    log.warn 'subscribeCmd() is deprecated. Use cleanSubscribeCmd() instead.'
+    return null
+    /*
     List<Map<String, String>> paths = []
     paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
     paths.addAll(state.subscriptions?.collect { sub ->
@@ -2059,12 +2051,13 @@ String subscribeCmd() {
         return null
     }
     return matter.subscribe(0, 0xFFFF, paths)
+    */
 }
 
 // availabe from HE platform version [2.3.9.186]
 String cleanSubscribeCmd() {
     List<Map<String, String>> paths = []
-    paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
+    //paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
     // Filter out subscriptions for disabled child devices
     paths.addAll(state.subscriptions?.findAll { sub ->
         Integer endpoint = sub[0] as Integer
@@ -2105,9 +2098,69 @@ String cleanSubscribeCmd() {
         logWarn 'cleanSubscribeCmd(): paths is empty!'
         return null
     }
-    return matter.cleanSubscribe(0, 0xFFFF, paths)
+    logDebug "paths for cleanSubscribe: ${paths}"
+    List<Map<String, String>> minimizedPaths = []
+    minimizedPaths = minimizeByWildcard(paths)
+    logDebug "minimizedPaths for cleanSubscribe: ${minimizedPaths}"
+    return matter.cleanSubscribe(0, 0xFFFF, minimizedPaths)
 }
 
+List<Map<String, Object>> minimizeByWildcard(List<Map<String, Object>> paths) {
+    if (!paths) return []
+
+    // Group by "cluster + attr" or "cluster + evt"
+    Map<String, List<Map>> groups = [:].withDefault { [] }
+
+    paths.each { p ->
+        if (p.attr != null) {
+            String key = "A:${p.cluster}:${p.attr}"
+            groups[key] << p
+        }
+        else if (p.evt != null) {
+            String key = "E:${p.cluster}:${p.evt}"
+            groups[key] << p
+        }
+        else {
+            // keep anything unknown as-is
+            String key = "X:${p.cluster}:${p.ep}"
+            groups[key] << p
+        }
+    }
+
+    List<Map<String, Object>> result = []
+
+    groups.each { key, items ->
+        Map first = items[0]
+        Integer clusterInt = (first.cluster instanceof Number) ? (first.cluster as Integer)
+                          : Integer.decode(first.cluster.toString())
+
+        // ---- SPECIAL CASE: Descriptor cluster (0x001D)
+        // Do NOT wildcard; keep only one subscription (prefer endpoint 0x00 if present)
+        if (clusterInt == 0x001D) {
+            Map preferred = items.find { it.ep == "0x00" || it.ep == 0 || it.ep == "0" } ?: items[0]
+            result << preferred
+            return
+        }
+
+        // Default behavior
+        if (items.size() > 1) {
+            // collapse to wildcard endpoint
+            Map collapsed = [
+                ep     : -1,
+                cluster: first.cluster
+            ]
+            if (first.attr != null) collapsed.attr = first.attr
+            if (first.evt  != null) collapsed.evt  = first.evt
+            result << collapsed
+        }
+        else {
+            // keep original single entry
+            result << items[0]
+        }
+    }
+
+    return result
+}
 
 
 
@@ -2137,13 +2190,13 @@ void fingerprintsToSubscriptionsList() {
     logDebug 'fingerprintsToSubscriptionsList:'
     sendInfoEvent('Subscribing for known clusters and attributes reporting ...')
     state.subscriptions = []
-    // subscribe to the Descriptor cluster PartsList attribute
-    updateStateSubscriptionsList('add', 0, 0x001D, 0x0003)
+    // do NOT subscribe to the Descriptor cluster PartsList attribute - creates problems !!!!!!!!!!!!
+    //updateStateSubscriptionsList('add', 0, 0x001D, 0x0003)
 
     // For each fingerprint in the state, check if the fingerprint has entries in the SupportedMatterClusters list. Then, add these entries to the state.subscriptions map
     Integer deviceCount = 0
     //Map stateCopy = state.clone()
-    Map stateCopy = state
+    //Map stateCopy = state
     state.each { fingerprintName, fingerprintMap ->
         if (fingerprintName.startsWith('fingerprint')) {
             boolean knownClusterFound = false
@@ -2203,26 +2256,6 @@ void setSwitch(String commandPar, String deviceNumberPar/*, extraPar = null*/) {
         logWarn "setSwitch(): deviceNumber ${deviceNumberPar} is not valid!"
         return
     }
-    /*
-    String fingerprintName = getFingerprintName(deviceNumber)
-    if (fingerprintName == null || state[fingerprintName] == null) {
-        logWarn "setSwitch(): fingerprintName '${fingerprintName}' is not valid! (${getDeviceDisplayName(deviceNumber)})"
-        return
-    }
-    String cluster = '0006'
-    // list key is 0006_FFFB=[00, FFF8, FFF9, FFFB, FFFD, FFFC]
-    String stateClusterName = getStateClusterName([cluster: cluster, attrId: 'FFFB'])
-    List<String> onOffClusterAttributesList = state[fingerprintName][stateClusterName] as List
-    if (onOffClusterAttributesList == null) {
-        logWarn "setSwitch(): OnOff capability is not present for ${getDeviceDisplayName(deviceNumber)} !"
-        return
-    }
-    // check if '00' is in the onOffClusterAttributesList
-    if (!onOffClusterAttributesList.contains('00')) {
-        logWarn "setSwitch(): OnOff capability is not present for ${getDeviceDisplayName(deviceNumber)} !"
-        return
-    }
-    */ // commented out 2024-02-26
 
     // find the command in the OnOffClusterCommands map
     Integer onOffcmd = OnOffClusterCommands.find { k, v -> v == command }?.key
@@ -3165,7 +3198,7 @@ void markClusterDataReceived(String endpoint, String cluster, String attrId) {
         
         Integer receivedCount = expected.values().count { it == true }
         Integer totalCount = expected.size()
-        logDebug "markClusterDataReceived: ${key} received (${receivedCount}/${totalCount})"
+        //logDebug "markClusterDataReceived: ${key} received (${receivedCount}/${totalCount})"
     }
 }
 
@@ -3540,39 +3573,12 @@ void updateStateStats(Map descMap) {
 /* groovylint-disable-next-line UnusedMethodParameter */
 void test(par) {
     log.warn "test(${par})"
-    /*
-    List<String> list = []
-    s = getSubscribeOrRefreshCmdList('SUBSCRIBE_ALL')
-    log.warn "getSubscribeOrRefreshCmdList=${s}"
-    */
-    //fingerprintsToSubscriptionsList()
-   // def  cmd = matter.getMatterEndpoints()
-   
-   // log.trace "cmd=${cmd}"  
-
-/*
-    List<Map<String, String>> attributePaths = []
-    attributePaths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
-    attributePaths.addAll(state.subscriptions?.collect { sub ->
-        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
-    })
-    if (attributePaths.isEmpty()) {
-        logWarn 'subscribeCmd(): attributePaths is empty!'
-        return null
-    }
-    def xx = matter.cleanSubscribe(0, 0xFFFF, attributePaths)
-*/
-    def xx = location.hub.firmwareVersionString
-    /*
-    sendToDevice(xx)
-    log.trace "xx=${xx}"
-    log.trace "${location.hub.firmwareVersionString >= '2.3.9.186'}"
-    */
-    /*
-      ChildDeviceWrapper dw = getDw(descMap)
-      dw.sendEvent(name: 'test', value: 'thermostat', descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostat is active")
-
-    */
-
-    //fingerprintsToSubscriptionsList()
 }
+
+
+// -------- libraries here --------
+/* groovylint-disable-next-line NglParseError */
+
+#include kkossev.matterLib
+#include kkossev.matterUtilitiesLib
+#include kkossev.matterStateMachinesLib
