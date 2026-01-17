@@ -40,7 +40,7 @@
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
- * ver. 1.6.0  2026-01-16 kkossev + Claude Sonnet 4.5 + GPT-5.2 : (dev. branch) A major refactoring of the Door Lock driver; optimized subsciption management;
+ * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : (dev. branch) A major refactoring of the Door Lock driver; optimized subsciption management;
  * 
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
@@ -52,7 +52,7 @@
  */
 
 static String version() { '1.6.0' }
-static String timeStamp() { '2026/01/16 6:46 PM' }
+static String timeStamp() { '2026/01/17 9:15 AM' }
 
 @Field static final Boolean _DEBUG = false                    // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -2112,6 +2112,14 @@ List<Map<String, Object>> minimizeByWildcard(List<Map<String, Object>> paths) {
     Map<String, List<Map>> groups = [:].withDefault { [] }
 
     paths.each { p ->
+        // Filter out Descriptor cluster (0x001D) paths
+        Integer clusterInt = (p.cluster instanceof Number) ? (p.cluster as Integer)
+                          : Integer.decode(p.cluster.toString())
+        if (clusterInt == 0x001D || clusterInt == 29) {
+            logTrace "minimizeByWildcard: filtering out Descriptor cluster path: ${p}"
+            return // skip this path
+        }
+        
         if (p.attr != null) {
             String key = "A:${p.cluster}:${p.attr}"
             groups[key] << p
@@ -2130,21 +2138,10 @@ List<Map<String, Object>> minimizeByWildcard(List<Map<String, Object>> paths) {
     List<Map<String, Object>> result = []
 
     groups.each { key, items ->
-        Map first = items[0]
-        Integer clusterInt = (first.cluster instanceof Number) ? (first.cluster as Integer)
-                          : Integer.decode(first.cluster.toString())
-
-        // ---- SPECIAL CASE: Descriptor cluster (0x001D)
-        // Do NOT wildcard; keep only one subscription (prefer endpoint 0x00 if present)
-        if (clusterInt == 0x001D) {
-            Map preferred = items.find { it.ep == "0x00" || it.ep == 0 || it.ep == "0" } ?: items[0]
-            result << preferred
-            return
-        }
-
         // Default behavior
         if (items.size() > 1) {
             // collapse to wildcard endpoint
+            Map first = items[0]
             Map collapsed = [
                 ep     : -1,
                 cluster: first.cluster
@@ -2547,50 +2544,118 @@ void pingTimeout(Map data) {
     }
 }
 
+/**
+ * Get ServerList for a child device from fingerprintData
+ * @param dw Child device wrapper
+ * @return List of cluster hex strings (normalized to 4 characters), or empty list if not found
+ */
+private List<String> getDeviceServerList(DeviceWrapper dw) {
+    // Try child's fingerprintData first
+    String fingerprintJson = dw.getDataValue('fingerprintData')
+    if (fingerprintJson) {
+        try {
+            Map fingerprint = new groovy.json.JsonSlurper().parseText(fingerprintJson)
+            List<String> serverList = fingerprint?.ServerList
+            if (serverList != null && !serverList.isEmpty()) {
+                // Normalize cluster IDs to 4-character hex strings (e.g., "06" -> "0006")
+                return serverList.collect { it.toString().toUpperCase().padLeft(4, '0') }
+            }
+        } catch (Exception e) {
+            logDebug "getDeviceServerList: failed to parse fingerprintData for ${dw.displayName}: ${e.message}"
+        }
+    }
+    
+    // Fallback: try parent's state fingerprint data
+    String dni = dw.deviceNetworkId
+    String endpoint = dni?.split('-')?.last()
+    if (endpoint) {
+        String fingerprintName = getFingerprintName([endpoint: endpoint])
+        if (state[fingerprintName]) {
+            Map parentFingerprint = state[fingerprintName]
+            List<String> serverList = parentFingerprint?.ServerList
+            if (serverList != null && !serverList.isEmpty()) {
+                logDebug "getDeviceServerList: using parent state fingerprint ${fingerprintName} for ${dw.displayName}"
+                // Normalize cluster IDs to 4-character hex strings (e.g., "06" -> "0006")
+                return serverList.collect { it.toString().toUpperCase().padLeft(4, '0') }
+            }
+        }
+    }
+    
+    logDebug "getDeviceServerList: ServerList not found for ${dw.displayName}, will attempt command anyway"
+    return []
+}
+
 // Component command to turn on device
 void componentOn(DeviceWrapper dw) {
-    if (!dw.hasCommand('on')) { logError "componentOn(${dw}) driver '${dw.typeName}' does not have command 'on' in ${dw.supportedCommands}"; return }
-    String serverListString = dw.getDataValue('ServerList')
-    if (serverListString == null) {
-         logWarn "componentOn(${dw}) 'ServerList' is null!"
-         // return
+    if (!dw.hasCommand('on')) { 
+        logError "componentOn(${dw}) driver '${dw.typeName}' does not have command 'on' in ${dw.supportedCommands}"
+        return
     }
-    List<String> serverList = serverListString?.replaceAll("[\\[\\]\"]", "").split(",").collect { it.trim() }
+    
+    // Extract endpoint from device network ID (format: "parentId-endpoint")
+    String dni = dw.deviceNetworkId
+    String endpoint = dni?.split('-')?.last()
+    if (endpoint == null) {
+        logError "componentOn(${dw}) cannot extract endpoint from DNI: ${dni}"
+        return
+    }
+    
+    List<String> serverList = getDeviceServerList(dw)
+    String deviceId = '0x' + endpoint
+    
     if ('0006' in serverList) {
-        logDebug "componentOn(${dw}) 'ServerList' contains '0006'! Turning on"
-        setSwitch('On', '0x' + dw.getDataValue('id'))
+        logDebug "componentOn(${dw}) ServerList contains OnOff cluster (0006) - turning on"
+        setSwitch('On', deviceId)
     }
     else if ('0201' in serverList) {
-        logDebug "thermostat on() command -> replaced with heat() !"
+        logDebug "componentOn(${dw}) ServerList contains Thermostat cluster (0201) - calling heat()"
         componentSetThermostatMode(dw, 'heat')
     }
     else {
-        logWarn "componentOn(${dw}) 'ServerList' ${serverList} does not contain '0006' or '0201'!"
-        logDebug 'sending the on() command anyway...'
-        setSwitch('On', '0x' + dw.getDataValue('id'))
+        // ServerList is empty/missing OR doesn't contain known clusters
+        if (serverList.isEmpty()) {
+            logDebug "componentOn(${dw}) ServerList unavailable - attempting On command anyway"
+        } else {
+            logDebug "componentOn(${dw}) ServerList ${serverList} does not contain OnOff (0006) or Thermostat (0201) - attempting On command anyway"
+        }
+        setSwitch('On', deviceId)
     }
 }
 
 // Component command to turn off device
 void componentOff(DeviceWrapper dw) {
-    String serverListString = dw.getDataValue('ServerList')
-    if (serverListString == null) {
-         logWarn "componentOff(${dw}) 'ServerList' is null!"
-         // return
+    if (!dw.hasCommand('off')) { 
+        logError "componentOff(${dw}) driver '${dw.typeName}' does not have command 'off' in ${dw.supportedCommands}"
+        return
     }
-    List<String> serverList = serverListString?.replaceAll("[\\[\\]\"]", "").split(",").collect { it.trim() }
+    
+    // Extract endpoint from device network ID (format: "parentId-endpoint")
+    String dni = dw.deviceNetworkId
+    String endpoint = dni?.split('-')?.last()
+    if (endpoint == null) {
+        logError "componentOff(${dw}) cannot extract endpoint from DNI: ${dni}"
+        return
+    }
+    
+    List<String> serverList = getDeviceServerList(dw)
+    String deviceId = '0x' + endpoint
+    
     if ('0006' in serverList) {
-        logDebug "componentOn(${dw}) 'ServerList' contains '0006'! Turning on"
-        setSwitch('Off', '0x' + dw.getDataValue('id'))
+        logDebug "componentOff(${dw}) ServerList contains OnOff cluster (0006) - turning off"
+        setSwitch('Off', deviceId)
     }
     else if ('0201' in serverList) {
-        logDebug "thermostat off() command!"
+        logDebug "componentOff(${dw}) ServerList contains Thermostat cluster (0201) - calling off()"
         componentSetThermostatMode(dw, 'off')
     }
     else {
-        logWarn "componentOn(${dw}) 'ServerList' ${serverList} does not contain '0006' or '0201'!"
-        logDebug 'sending the off() command anyway...'
-        setSwitch('Off', '0x' + dw.getDataValue('id'))
+        // ServerList is empty/missing OR doesn't contain known clusters
+        if (serverList.isEmpty()) {
+            logDebug "componentOff(${dw}) ServerList unavailable - attempting Off command anyway"
+        } else {
+            logDebug "componentOff(${dw}) ServerList ${serverList} does not contain OnOff (0006) or Thermostat (0201) - attempting Off command anyway"
+        }
+        setSwitch('Off', deviceId)
     }
 }
 
