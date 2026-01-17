@@ -31,7 +31,7 @@ library(
   * ver. 1.0.3  2024-09-29 kkossev  - bugfix: nullpointer exception in discoverAllStateMachine(); secured all . operations with ?.
   * ver. 1.0.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
   * ver. 1.0.5  2026-01-08 GPT-5.2  - skip discovery for disabled child devices to eliminate timeouts
-  * ver. 1.1.0  2026-01-15 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine
+  * ver. 1.1.0  2026-01-17 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine; added finalizeDeviceType() call
   *
 */
 
@@ -39,7 +39,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterStateMachinesLib = '1.1.0'
-@Field static final String matterStateMachinesLibStamp   = '2026/01/15 2:15 PM'
+@Field static final String matterStateMachinesLibStamp   = '2026/01/17 10:06 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -50,7 +50,7 @@ import groovy.transform.Field
 @Field static final String  ERROR   = 'ERROR'
 
 @Field static final Integer STATE_MACHINE_PERIOD = 330      // milliseconds
-@Field static final Integer STATE_MACHINE_MAX_RETRIES = 35
+@Field static final Integer STATE_MACHINE_MAX_RETRIES = 50
 
 void initializeStateMachineVars() {
     if (state['states'] == null) { state['states'] = [:] }
@@ -453,7 +453,7 @@ void discoverAllStateMachine(Map data = null) {
             st = DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS
         // continue with the next state
         case DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS :
-            sendInfoEvent('Discovering the Bridge...')
+            sendInfoEvent('Discovering the Matter Device...')
             disoverGlobalElementsStateMachine([action: START, endpoint: 0, cluster: 0x001D, debug: false])
             stateMachinePeriod = STATE_MACHINE_PERIOD * 2
             retry = 0; st = DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS_WAIT
@@ -648,7 +648,7 @@ void discoverAllStateMachine(Map data = null) {
             Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
             String fingerprintName = getFingerprintName(partEndpointInt)
             logDebug "discoverAllStateMachine: st:${st} - Getting the BridgedDeviceBasicInformationCluster attributes for endpoint ${partEndpoint} ...<br><br><br>"
-            if (state[fingerprintName]['ServerList']?.contains('39')) {
+            if (state[fingerprintName]['ServerList']?.contains('0039')) {
                 state.states['isInfo'] = true
                 state.states['cluster'] = '0039'     // HexUtils.integerToHexString(partEndpointInt, 2)
                 state.tmp = null
@@ -658,7 +658,7 @@ void discoverAllStateMachine(Map data = null) {
                 retry = 0; st = DISCOVER_ALL_STATE_GET_BRIDGED_DEVICE_BASIC_INFO_WAIT_STATE
             }
             else {
-                logDebug "discoverAllStateMachine: st:${st} - fingerprint ${fingerprintName} BridgedDeviceBasicInformationCluster '39' is not in the ServerList ! (this is not obligatory)"
+                logDebug "discoverAllStateMachine: st:${st} - fingerprint ${fingerprintName} BridgedDeviceBasicInformationCluster '0039' is not in the ServerList ! (this is not obligatory)"
                 state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
                 st = DISCOVER_ALL_STATE_GET_PARTS_LIST_NEXT_DEVICE_STATE
             // check the next bridged device ...
@@ -692,6 +692,8 @@ void discoverAllStateMachine(Map data = null) {
         // ------------------------------- preparing for subscription to the known clusters atteributes -> filling in state[fingerprintName]['Subscribe']  -------------------------------
         case DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_START :
             sendInfoEvent('(A2) Bridged Devices discovery completed')
+            // All endpoint fingerprints now populated - determine device type
+            finalizeDeviceType()
             sendInfoEvent('(A3) Starting capabilities discovery')
             // next step is for each child device -  check the ServerList for useful clusters ..
             state['stateMachines']['discoverAllPartsListIndex'] = 0
@@ -869,7 +871,9 @@ void discoverAllStateMachine(Map data = null) {
                 String partEndpoint = state.bridgeDescriptor['PartsList'][partsListIndex - 1]
                 Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
                 String fingerprintName = getFingerprintName(partEndpointInt)
-                String dni = "${device.id}-${partEndpoint.toUpperCase()}"
+                // Normalize endpoint to 2 characters for DNI (e.g., "0001" -> "01")
+                String normalizedEndpoint = HexUtils.integerToHexString(partEndpointInt, 1).toUpperCase()
+                String dni = "${device.id}-${normalizedEndpoint}"
                 
                 logDebug "discoverAllStateMachine: st:${st} - copying COMPLETE fingerprint ${fingerprintName} to child device ${dni}"
                 copyEntireFingerprintToChild(fingerprintName, dni)

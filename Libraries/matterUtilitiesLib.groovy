@@ -30,14 +30,14 @@ library(
   * ver. 1.2.0  2024-10-11 kkossev  - added testParse()
   * ver. 1.3.0  2025-06-28 Claude Sonnet 4  - added custom decodeTLVToHex() and decodeTLV()
   * ver. 1.3.1  2026-01-06 GPT-5.2 - added discoveryTimeoutScale
-  * ver. 1.3.2  2026-01-15 (dev. branch)
+  * ver. 1.3.2  2026-01-15 GPT-5.2 - Minimal fix: make decodeTLVContainer() handle nested containers
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterUtilitiesLibVersion = '1.3.2'
-@Field static final String matterUtilitiesLibStamp   = '2026/01/15 10:12 PM'
+@Field static final String matterUtilitiesLibStamp   = '2026/01/17 1:30 PM'
 
 metadata {
     // no capabilities
@@ -195,7 +195,7 @@ void collectBasicInfo(Integer endpoint = 0, Integer timePar = 1, boolean fast = 
 
     if (endpoint == 0) {
         /* groovylint-disable-next-line ConstantIfExpression */
-        if ('28' in serverList) {
+        if ('0028' in serverList) {
             requestAndCollectAttributesValues(endpoint, cluster = 0x0028, time, fast) // Basic Information Cluster
             time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
         }
@@ -204,7 +204,7 @@ void collectBasicInfo(Integer endpoint = 0, Integer timePar = 1, boolean fast = 
         }
     }
     else {
-        if ('39' in serverList) {
+        if ('0039' in serverList) {
             requestAndCollectAttributesValues(endpoint, cluster = 0x0039, time, fast) // Bridged Device Basic Information Cluster
             time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
         }
@@ -307,163 +307,54 @@ void testMatter(String parameters) {
  * @return List of decoded values
  */
 List<Integer> decodeTLV(String tlvHex) {
-    if (!tlvHex) {
-        logWarn "decodeTLV: empty or null input"
-        return []
-    }
-    
-    // Handle simple empty list patterns first
-    if (tlvHex in ['1518', '1618', '1818']) {
-        logTrace "decodeTLV: detected empty container: ${tlvHex}"
-        return []
-    }
-    
-    logTrace "decodeTLV: parsing TLV data: ${tlvHex}"
-    List<Integer> decodedValues = []
-    
+    if (!tlvHex) return []
+    if (tlvHex in ['1518','1618','1818']) return []
+
     try {
-        // Convert hex string to bytes
         byte[] bytes = HexUtils.hexStringToByteArray(tlvHex)
+        List<Integer> values = []
         int pos = 0
-        
+
         while (pos < bytes.length) {
             int controlByte = bytes[pos] & 0xFF
-            logTrace "decodeTLV: processing control byte 0x${HexUtils.integerToHexString(controlByte, 1)} at position ${pos}"
-            
-            // Check for end of container marker
-            if (controlByte == 0x18) {
-                logTrace "decodeTLV: found end of container marker"
-                break
+            if (controlByte == 0x18) { // end-of-container at top-level, just consume it
+                pos++
+                continue
             }
-            
-            // Extract TLV element components according to Matter spec
-            int elementType = controlByte & 0x1F  // Bottom 5 bits
-            int tagControl = (controlByte >> 5) & 0x07  // Top 3 bits
-            
-            logTrace "decodeTLV: elementType=0x${HexUtils.integerToHexString(elementType, 1)}, tagControl=${tagControl}"
-            
-            pos++ // advance past control byte
-            
-            // Skip tag field based on tag control (top 3 bits of control byte)
-            int tagBytes = getTagBytes(tagControl)
-            if (tagBytes > 0) {
-                if (pos + tagBytes <= bytes.length) {
-                    logTrace "decodeTLV: skipping ${tagBytes} tag bytes"
-                    pos += tagBytes
-                } else {
-                    logWarn "decodeTLV: insufficient data for tag field (need ${tagBytes} bytes)"
-                    break
+
+            int elementType = controlByte & 0x1F
+            int tagControl  = (controlByte >> 5) & 0x07
+            pos++
+
+            pos += getTagBytes(tagControl)
+            if (pos >= bytes.length) break
+
+            if (elementType in [0x15, 0x16, 0x17]) {
+                values.addAll(decodeTLVContainer(bytes, pos))
+                pos = skipToEndOfContainer(bytes, pos)
+            }
+            else {
+                // primitive element at top-level: reuse your container parser by “peeking”:
+                // simplest: handle the same primitive types here
+                switch (elementType) {
+                    case 0x04: if (pos < bytes.length) { values.add(bytes[pos] & 0xFF); pos += 1 } ; break
+                    case 0x05: if (pos + 1 < bytes.length) { values.add(((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)); pos += 2 } ; break
+                    case 0x06: if (pos + 3 < bytes.length) { values.add(((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)); pos += 4 } ; break
+                    case 0x08: values.add(0); break
+                    case 0x09: values.add(1); break
+                    case 0x14: /* null/undefined - skip */ break
+                    default: pos = skipUnknownElement(bytes, pos, elementType); break
                 }
             }
-            
-            // Handle different element types according to Matter TLV spec
-            switch (elementType) {
-                case 0x00: // Int8
-                    if (pos < bytes.length) {
-                        int value = (bytes[pos] & 0x80) ? (bytes[pos] & 0xFF) - 256 : (bytes[pos] & 0xFF)
-                        decodedValues.add(value)
-                        logTrace "decodeTLV: decoded int8: ${value}"
-                        pos++
-                    }
-                    break
-                    
-                case 0x01: // Int16
-                    if (pos + 1 < bytes.length) {
-                        int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                        if (value & 0x8000) value -= 65536  // Sign extend
-                        decodedValues.add(value)
-                        logTrace "decodeTLV: decoded int16: ${value}"
-                        pos += 2
-                    }
-                    break
-                    
-                case 0x02: // Int32
-                    if (pos + 3 < bytes.length) {
-                        int value = ((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | 
-                                   ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                        decodedValues.add(value)
-                        logTrace "decodeTLV: decoded int32: ${value}"
-                        pos += 4
-                    }
-                    break
-                    
-                case 0x04: // UInt8
-                    if (pos < bytes.length) {
-                        int value = bytes[pos] & 0xFF
-                        decodedValues.add(value)
-                        logTrace "decodeTLV: decoded uint8: ${value}"
-                        pos++
-                    }
-                    break
-                    
-                case 0x05: // UInt16
-                    if (pos + 1 < bytes.length) {
-                        int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                        decodedValues.add(value)
-                        logTrace "decodeTLV: decoded uint16: ${value}"
-                        pos += 2
-                    }
-                    break
-                    
-                case 0x06: // UInt32
-                    if (pos + 3 < bytes.length) {
-                        int value = ((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | 
-                                   ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                        decodedValues.add(value)
-                        logTrace "decodeTLV: decoded uint32: ${value}"
-                        pos += 4
-                    }
-                    break
-                    
-                case 0x14: // Null
-                    logTrace "decodeTLV: found null element"
-                    break
-                    
-                case 0x15: // Structure
-                    logTrace "decodeTLV: found structure container"
-                    // Recursively decode structure contents
-                    List<Integer> structValues = decodeTLVContainer(bytes, pos)
-                    decodedValues.addAll(structValues)
-                    pos = skipToEndOfContainer(bytes, pos)
-                    break
-                    
-                case 0x16: // Array
-                    logTrace "decodeTLV: found array container"
-                    // Recursively decode array contents
-                    List<Integer> arrayValues = decodeTLVContainer(bytes, pos)
-                    decodedValues.addAll(arrayValues)
-                    pos = skipToEndOfContainer(bytes, pos)
-                    break
-                    
-                case 0x17: // List
-                    logTrace "decodeTLV: found list container"
-                    // Recursively decode list contents
-                    List<Integer> listValues = decodeTLVContainer(bytes, pos)
-                    decodedValues.addAll(listValues)
-                    pos = skipToEndOfContainer(bytes, pos)
-                    break
-                    
-                default:
-                    logTrace "decodeTLV: skipping unsupported element type 0x${HexUtils.integerToHexString(elementType, 1)}"
-                    // Try to skip this element safely
-                    pos = skipUnknownElement(bytes, pos, elementType)
-                    break
-            }
-            
-            // Safety check to prevent infinite loops
-            if (pos >= bytes.length) {
-                break
-            }
         }
-        
-        logTrace "decodeTLV: successfully decoded ${decodedValues.size()} values: ${decodedValues}"
-        return decodedValues
-        
+        return values
     } catch (Exception e) {
         logWarn "decodeTLV: error decoding TLV data '${tlvHex}': ${e}"
         return []
     }
 }
+
+
 
 /**
  * Decodes TLV data and converts to hex strings (commonly used for attribute IDs)
@@ -472,7 +363,7 @@ List<Integer> decodeTLV(String tlvHex) {
  */
 List<String> decodeTLVToHex(String tlvHex) {
     List<Integer> values = decodeTLV(tlvHex)
-    return values.collect { HexUtils.integerToHexString(it, it > 255 ? 2 : 1).toUpperCase() }
+    return values.collect { HexUtils.integerToHexString(it, 2).toUpperCase() }
 }
 
 void testDecodeTLV(List<String> parameters) {
@@ -593,50 +484,93 @@ private int getTagBytes(int tagControl) {
  * Helper method to decode contents of a TLV container (structure, array, list)
  */
 private List<Integer> decodeTLVContainer(byte[] bytes, int startPos) {
-    List<Integer> containerValues = []
+    List<Integer> values = []
     int pos = startPos
-    
+
     while (pos < bytes.length) {
         int controlByte = bytes[pos] & 0xFF
-        
-        // Check for end of container
+
+        // end of current container
         if (controlByte == 0x18) {
             break
         }
-        
+
         int elementType = controlByte & 0x1F
-        int tagControl = (controlByte >> 5) & 0x07
-        
-        pos++ // skip control byte
-        
-        // Skip tag
+        int tagControl  = (controlByte >> 5) & 0x07
+
+        pos++ // move past control byte
+
+        // skip tag field
         int tagBytes = getTagBytes(tagControl)
+        if (pos + tagBytes > bytes.length) break
         pos += tagBytes
-        
-        // Process value
+
         switch (elementType) {
             case 0x04: // UInt8
                 if (pos < bytes.length) {
-                    containerValues.add(bytes[pos] & 0xFF)
-                    pos++
+                    values.add(bytes[pos] & 0xFF)
+                    pos += 1
                 }
                 break
+
             case 0x05: // UInt16
                 if (pos + 1 < bytes.length) {
-                    int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                    containerValues.add(value)
+                    int v = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
+                    values.add(v)
                     pos += 2
                 }
                 break
+
+            case 0x06: // UInt32
+                if (pos + 3 < bytes.length) {
+                    int v = ((bytes[pos+3] & 0xFF) << 24) |
+                            ((bytes[pos+2] & 0xFF) << 16) |
+                            ((bytes[pos+1] & 0xFF) << 8)  |
+                            (bytes[pos] & 0xFF)
+                    values.add(v)
+                    pos += 4
+                }
+                break
+
+            case 0x15: // Structure (container)
+            case 0x16: // Array (container)
+            case 0x17: // List (container)
+                // decode nested contents
+                values.addAll(decodeTLVContainer(bytes, pos))
+                // skip over nested container to its matching end marker
+                pos = skipToEndOfContainer(bytes, pos)
+                break
+
+            case 0x08: // Boolean false
+                values.add(0)
+                break
+            case 0x09: // Boolean true
+                values.add(1)
+                break
+
+            case 0x14: // Null
+                // no value bytes
+                            break
+            case 0x0C: // UTF8 string  (VERIFY elementType for your payloads)
+            case 0x10: // Byte string  (VERIFY elementType for your payloads)
+                // NOTE: Matter TLV string length handling is not the same as tagControl.
+                // We'll do a conservative skip: treat next byte as length (1-byte length), then skip.
+                if (pos < bytes.length) {
+                    int len = bytes[pos] & 0xFF
+                    pos += 1 + len
+                }
+                break
+
             default:
-                // Skip other types for now
+                // skip unknown primitive types
                 pos = skipUnknownElement(bytes, pos, elementType)
                 break
         }
     }
-    
-    return containerValues
+
+    return values
 }
+
 
 /**
  * Helper method to skip to the end of a container

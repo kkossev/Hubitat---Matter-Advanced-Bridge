@@ -41,12 +41,16 @@
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
  * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : (dev. branch) A major refactoring of the Door Lock driver; optimized subsciption management;
- *                                  water leak sensors automatic detection workaround
+ *                                  water leak sensors (deviceType 0x0043) automatic detection
  * 
- *                                   TODO: 
+ *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00)
+ *                                   TODO: TADO Matter Thermostat - JSON supportedModes are missing ! 
+ *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
+MATTER_DEVICE
+ *                                   TODO: decode [0015] SpecificationVersion = 0x01030000 (16973824)  [000B] ManufacturingDate = 0x20250604 (539297284) [0009] SoftwareVersion = 0x01000009 (16777225)
+ *                                   TODO: decode [0013] CapabilityMinima = 1524000324010318 [0012] UniqueID = 4A6A0276A1834629
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
- *                                   TODO: distinguish between MATTER_BRIDGE deviceType and other MATTER_* deviceTypes
  *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
  *                                   TODO: add cluster 0202 'Window Covering'
@@ -54,7 +58,7 @@
  */
 
 static String version() { '1.6.0' }
-static String timeStamp() { '2026/01/17 12:53 PM' }
+static String timeStamp() { '2026/01/17 11:37 PM' }
 
 @Field static final Boolean _DEBUG = false                    // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -294,7 +298,7 @@ metadata {
     0x0033 : 'parseGeneralDiagnostics',
     0x0039 : 'parseBridgedDeviceBasic',
     0x003B : 'parseSwitch',
-    0x0045 : 'parseContactSensor',
+    0x0045 : 'parseBooleanState',
     0x005B : 'parseAirQuality',
     0x0090 : 'parseElectricalPowerMeasurement',
     0x0091 : 'parseElectricalEnergyMeasurement',
@@ -563,7 +567,7 @@ void checkStateMachineConfirmation(final Map descMap) {
     }
     // toBeConfirmedList first element is endpoint, second is clusterInt, third is attrInt
     if (HexUtils.hexStringToInt(descMap.endpoint) == toBeConfirmedList[0] && descMap.clusterInt == toBeConfirmedList[1] && descMap.attrInt == toBeConfirmedList[2]) {
-        logDebug "checkStateMachineConfirmation: endpoint:${descMap.endpoint} cluster:${descMap.cluster} attrId:${descMap.attrId} - <b>CONFIRMED!</b>"
+        logDebug "checkStateMachineConfirmation: endpoint:${descMap.endpoint} cluster:${descMap.cluster} attrId:${descMap.attrId} - CONFIRMED!"
         state['stateMachines']['Confirmation'] = true
     }
 }
@@ -689,15 +693,32 @@ void gatherAttributesValuesInfo(final Map descMap) {
                     logDebug "gatherAttributesValuesInfo: tmpStr:${tmpStr} is already in the state.tmp"
                     return
                 }
+                // Normalize DeviceTypeList for display (show device types only, no revision numbers)
+                def displayValue = descMap.value
+                String deviceTypeNamesStr = ''
+                if (descMap.cluster == '001D' && attrName == 'DeviceTypeList' && descMap.value instanceof List) {
+                    List rawList = descMap.value as List
+                    displayValue = (0..<rawList.size()).findAll { (it % 2) == 0 }.collect { rawList[it] }
+                    // Add human-readable device type names
+                    Map typeNames = deviceTypeNames(displayValue)
+                    if (typeNames.names) {
+                        String namesStr = typeNames.names.collect { "'${it}'" }.join(', ')
+                        if (typeNames.names.size() > 1 && typeNames.best) {
+                            deviceTypeNamesStr = "  (${namesStr}, best = '${typeNames.best}')"
+                        } else {
+                            deviceTypeNamesStr = "  (${namesStr})"
+                        }
+                    }
+                }
                 try {
-                    tempIntValue = HexUtils.hexStringToInt(descMap.value)
+                    tempIntValue = HexUtils.hexStringToInt(displayValue)
                     if (tempIntValue >= 10) {
-                        tmpStr += ' = 0x' + descMap.value + ' (' + tempIntValue + ')'
+                        tmpStr += ' = 0x' + displayValue + ' (' + tempIntValue + ')'
                     } else {
-                        tmpStr += ' = ' + descMap.value
+                        tmpStr += ' = ' + displayValue
                     }
                 } catch (e) {
-                    tmpStr += ' = ' + descMap.value
+                    tmpStr += ' = ' + displayValue + deviceTypeNamesStr
                 }
                 state.tmp = (state.tmp ?: '') + "${tmpStr} " + '<br>'
             }
@@ -848,8 +869,16 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
     switch (descMap.attrId) {
         case ['0000', '0001', '0002', '0003'] :
             if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
-            state[fingerprintName][attrName] = descMap.value
-            logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> updated state[$fingerprintName][$attrName]</b> to ${descMap.value}"
+            // Normalize DeviceTypeList at storage time - extract only device types (even-indexed elements)
+            if (attrName == 'DeviceTypeList' && descMap.value instanceof List) {
+                List rawList = descMap.value as List
+                List deviceTypesOnly = (0..<rawList.size()).findAll { (it % 2) == 0 }.collect { rawList[it] }
+                state[fingerprintName][attrName] = deviceTypesOnly
+                logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> normalized and stored</b> ${deviceTypesOnly} (from raw ${rawList})"
+            } else {
+                state[fingerprintName][attrName] = descMap.value
+                logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> updated state[$fingerprintName][$attrName]</b> to ${descMap.value}"
+            }
             if (endpointId == '00' && descMap.cluster == '001D') {
                 if (attrName == 'PartsList') {
                     logDebug "parseDescriptorCluster: Bridge partsList: ${descMap.value} descMap:${descMap}"
@@ -1007,27 +1036,19 @@ void parseSwitch(final Map descMap) {
 }
 
 // Method for parsing Boolean State Cluster 0x0045  (Contact Sensor and Water Sensor)
-void parseContactSensor(final Map descMap) {
-    if (descMap.cluster != '0045') { logWarn "parseContactSensor: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+void parseBooleanState(final Map descMap) {
+    if (descMap.cluster != '0045') { logWarn "parseBooleanState: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     
     if (descMap.attrId == '0000') { // StateValue attribute
         String boolValue = descMap.value == '01' ? 'closed' : 'open'
         String waterValue = descMap.value == '01' ? 'wet' : 'dry'
         
-        // Determine attribute name based on child device driver type
-        String dni = "${device.id}-${descMap.endpoint}"
-        def childDevice = getChildDevice(dni)
+        // Determine sensor type from DeviceTypeList in fingerprint
+        String fingerprintName = getFingerprintName(descMap)
+        List<String> deviceTypes = state[fingerprintName]?.DeviceTypeList ?: []
         
-        // Check if it's a water sensor by driver type or supported attributes
-        boolean isWaterSensor = false
-        if (childDevice) {
-            String driverName = childDevice.typeName ?: ''
-            if (driverName.toLowerCase().contains('water')) {
-                isWaterSensor = true
-            } else if (childDevice.hasAttribute('water')) {
-                isWaterSensor = true
-            }
-        }
+        // Check if it's a water leak sensor (0x0043) vs contact sensor (0x0015)
+        boolean isWaterSensor = deviceTypes.any { it.toUpperCase() in ['43', '0043'] }
         
         if (isWaterSensor) {
             sendMatterEvent([
@@ -1043,7 +1064,7 @@ void parseContactSensor(final Map descMap) {
             ], descMap, true)
         }
     } else {
-        logTrace "parseContactSensor: ${(BooleanStateClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+        logTrace "parseBooleanState: ${(BooleanStateClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
     }
 }
 
@@ -2406,6 +2427,19 @@ void componentLog(DeviceWrapper dw, String level, String message) {
 /* code segments 'borrowed' from Jonathan's 'Tuya IoT Platform (Cloud)' driver importUrl: 'https://raw.githubusercontent.com/bradsjm/hubitat-drivers/main/Tuya/TuyaOpenCloudAPI.groovy' */
 
 /**
+ * Helper function to extract device types from DeviceTypeList
+ * DeviceTypeList format: [deviceType, revision, deviceType, revision, ...]
+ * This function returns only the device types (even-indexed elements)
+ */
+ /*
+ TOBEDEL !!!!!!!!!!!!!!!!
+List<String> deviceTypesOnly(List<String> dtList) {
+    if (!(dtList instanceof List)) return []
+    return (0..<dtList.size()).findAll { (it % 2) == 0 }.collect { dtList[it] }
+}
+*/
+
+/**
   *  Tuya Standard Instruction Set Category Mapping to Hubitat Drivers
   *  https://developer.tuya.com/en/docs/iot/standarddescription?id=K9i5ql6waswzq
   *  MATTER : https://developer.tuya.com/en/docs/iot-device-dev/Matter_Product_Feature_List?id=Kd2wjfpuhgmrw
@@ -2414,11 +2448,13 @@ void componentLog(DeviceWrapper dw, String level, String message) {
 Map mapMatterCategory(Map d) {
     // check order is important!
     logDebug "mapMatterCategory: ServerList=${d.ServerList} DeviceType=${d.DeviceType}"
+    
+    // DeviceType is already normalized (device types only, no revision numbers)
+    List<String> deviceTypes = d.DeviceType ?: []
 
     if ('0300' in d.ServerList) {
         // Check for Extended Color Light (0x010D or decimal 13/0x0D) or Color Temperature Light (0x010C)
-        boolean isExtendedColor = ('0D' in d.DeviceType) || ('13' in d.DeviceType) || 
-                                   (d.DeviceType?.any { it.toString().toUpperCase() in ['10D', '010D'] })
+        boolean isExtendedColor = deviceTypes.any { it.toUpperCase() in ['0D', '13', '10D', '010D'] }
         if (isExtendedColor) {
             return [ driver: 'Generic Component RGBW', product_name: 'RGB Extended Color Light' ]
         }
@@ -2426,29 +2462,23 @@ Map mapMatterCategory(Map d) {
             return [ driver: 'Generic Component CT', product_name: 'Color Temperature Light' ]
         }
     }
-    if ('08' in d.ServerList) {   // Dimmer
+    if ('0008' in d.ServerList) {   // Dimmer
         return [ driver: 'Generic Component Dimmer', product_name: 'Dimmer/Bulb' ]
     }
-    if ('45' in d.ServerList) {   //  Boolean State (Contact Sensor or Water Leak Sensor)
-        // Check DeviceType first (most reliable)
-        if ('43' in d.DeviceType || '0043' in d.DeviceType) {   // 0x0043 = Water Leak Detector
+    if ('0045' in d.ServerList) {   //  Boolean State (Contact Sensor or Water Leak Sensor)
+        // Use DeviceTypeList to determine sensor type
+        if (deviceTypes.any { it.toUpperCase() in ['43', '0043'] }) {   // 0x0043 = Water Leak Detector
             return [ driver: 'Generic Component Water Sensor', product_name: 'Water Leak Sensor' ]
         }
-        if ('15' in d.DeviceType || '0015' in d.DeviceType) {   // 0x0015 = Contact Sensor
+        if (deviceTypes.any { it.toUpperCase() in ['15', '0015'] }) {   // 0x0015 = Contact Sensor
             return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
         }
         
-        // Fallback: Check name/label if DeviceType is ambiguous
-        String n = (d.discoveredName ?: d.ProductName ?: d.ProductLabel ?: d.NodeLabel ?: '').toLowerCase()
-        logDebug "mapMatterCategory: Boolean State discoveredName='${d.discoveredName}' ProductName='${d.ProductName}' n='${n}'"
-        if (n.contains('water') || n.contains('leak')) {
-            return [ driver: 'Generic Component Water Sensor', product_name: 'Water Leak Sensor' ]
-        }
-        
-        // Default to Contact Sensor if we can't determine
+        // Default to Contact Sensor if DeviceType is not specified
+        logWarn "mapMatterCategory: Boolean State cluster 0x0045 found but DeviceType is ambiguous: ${deviceTypes} - defaulting to Contact Sensor"
         return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
     }
-    if ('5B' in d.ServerList) {   // Air Quality Sensor
+    if ('005B' in d.ServerList) {   // Air Quality Sensor
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Quality Sensor' ]
     }
     if ('0101' in d.ServerList) {   // Door Lock (since version 1.1.0)
@@ -2475,16 +2505,16 @@ Map mapMatterCategory(Map d) {
     if ('042A' in d.ServerList) {   // Concentration Measurement Sensor
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Quality Sensor' ]
     }
-    if ('90' in d.ServerList) {   // Electrical Power Measurement Cluster
+    if ('0090' in d.ServerList) {   // Electrical Power Measurement Cluster
         return [ namespace: 'kkossev', driver: 'Matter Custom Component Power Energy', product_name: 'Power Measurement' ]
     }
-    if ('06' in d.ServerList) {   // OnOff
+    if ('0006' in d.ServerList) {   // OnOff
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Switch', product_name: 'Switch' ]
     }
-    if ('3B' in d.ServerList) {   // Switch / Button - TODO !
+    if ('003B' in d.ServerList) {   // Switch / Button - TODO !
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Button', product_name: 'Button' ]
     }
-    if ('2F' in d.ServerList) {   // Power Source
+    if ('002F' in d.ServerList) {   // Power Source
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Battery', product_name: 'Battery' ]
     }
 
@@ -3056,24 +3086,7 @@ Map fingerprintToData(String fingerprint) {
         data['VendorName'] = fingerprintMap['VendorName']
         data['ProductLabel'] = fingerprintMap['ProductLabel']
         data['NodeLabel'] = fingerprintMap['NodeLabel']
-        // Extract device type IDs from DeviceTypeList
-        // DeviceTypeList is an array of structures, each containing revision + deviceType
-        // We need to extract just the device type IDs (typically every other value after removing markers)
-        List deviceTypeIds = []
-        def rawDeviceTypeList = fingerprintMap['DeviceTypeList']
-        if (rawDeviceTypeList instanceof List) {
-            // Filter out container end markers (0x18) and extract device type values
-            List<String> filtered = rawDeviceTypeList.findAll { it != '18' }
-            // Device types are typically the higher-byte values in the structure
-            filtered.each { String val ->
-                Integer intVal = HexUtils.hexStringToInt(val)
-                // Device type IDs are typically > 255 (0x0100+)
-                if (intVal >= 0x0D || (intVal > 0 && intVal < 0x20)) {
-                    deviceTypeIds.add(val)
-                }
-            }
-        }
-        data['DeviceType'] = deviceTypeIds
+        data['DeviceType'] = fingerprintMap['DeviceTypeList'] ?: []
         
         // Fallback: If ProductName, ProductLabel, and NodeLabel are all empty/null, use bridge's ProductName
         if (!data['ProductName'] && !data['ProductLabel'] && !data['NodeLabel']) {
@@ -3126,7 +3139,7 @@ private boolean createChildDevices(Map d) {
     logDebug "createChildDevices(Map d): product_name ${d.product_name} driver ${mapping}"
 
     if (mapping.driver != null) {
-        logDebug "createChildDevices(Map d): mapping.driver is ${mapping.driver}, <b>device.id is ${device.id}</b> "
+        logDebug "createChildDevices(Map d): mapping.driver is ${mapping.driver}, device.id is ${device.id}"
         logDebug "createChildDevices(Map d): createChildDevice '${device.id}-${d.id}' ${mapping} ${d}   "
         createChildDevice("${device.id}-${d.id}", mapping, d)
     } else {
@@ -3579,8 +3592,9 @@ void initializeVars(boolean fullInit = false) {
         state.comment = 'Experimental Matter Bridge Driver'
         logInfo 'all states and scheduled jobs cleared!'
         state.driverVersion = driverVersionAndTimeStamp()
-        logInfo "DEVICE_TYPE = ${DEVICE_TYPE}"
-        state.deviceType = DEVICE_TYPE
+        // TEMP until we discover: unknown
+        state.deviceType = 'UNKNOWN'
+        logInfo "DEVICE_TYPE (initial) = ${state.deviceType}"
         sendInfoEvent('Initialized (fullInit = true)', 'full initialization - loaded all defaults!')
         sendEvent([ name: 'endpointsCount', value: 0, type: 'digital'])
         sendEvent([ name: 'deviceCount', value: 0, type: 'digital'])
@@ -3687,7 +3701,146 @@ void updateStateStats(Map descMap) {
 
 /* groovylint-disable-next-line UnusedMethodParameter */
 void test(par) {
-    log.warn "test(${par})"
+    par = "16152400432401011818"
+    def x = decodeTLVToHex(par)
+    log.warn "decodeTLVToHex(${par} -> ${x})"
+}
+
+// - to be moved to matterLib.groovy when tested ! - 
+
+@Field static final Map<Integer, String> MATTER_DEVICE_TYPE_NAMES = [
+    // Common “node / utility” types (you already see these on EP0 a lot)
+    0x0016: 'Root Node',
+    0x0011: 'Power Source',
+    0x0012: 'OTA Requestor',
+    0x000E: 'Aggregator',
+    0x0013: 'Bridged Node',
+
+    // Sensors / actuators you referenced in your logs & driver mapping
+    0x0043: 'Water Leak Detector',
+    0x0015: 'Contact Sensor',
+    0x0107: 'Occupancy Sensor',
+    0x0301: 'Thermostat',
+
+    // Lights (you already use these)
+    0x010C: 'Color Temperature Light',
+    0x010D: 'Extended Color Light',
+
+    // On/Off / plug-ish
+    0x010A: 'On/Off Plug-in Unit',
+
+    // “Generic Switch” often used for button/switch endpoints in practice
+    0x000F: 'Generic Switch'
+]
+
+// Normalizes a single element like "0016", "0x0016", "16" to int 0x0016
+private Integer normalizeDeviceTypeId(Object raw) {
+    if (raw == null) return null
+    String s = raw.toString().trim()
+    if (s.startsWith('0x') || s.startsWith('0X')) s = s.substring(2)
+    if (s == '') return null
+    // If user passed decimal, this will throw; assume hex by default (your data is hex)
+    try {
+        return Integer.parseInt(s, 16)
+    } catch (Exception ignored) {
+        try { return Integer.parseInt(raw.toString().trim(), 10) } catch (Exception ignored2) { return null }
+    }
+}
+
+/**
+ * Converts normalized DeviceTypeList (type IDs only) to human readable names.
+ * Returns both a list and a compact summary string.
+ */
+Map deviceTypeNames(List deviceTypeList) {
+    List<String> names = []
+    List<String> unknown = []
+
+    (deviceTypeList ?: []).each { dt ->
+        Integer id = normalizeDeviceTypeId(dt)
+        if (id == null) return
+        String name = MATTER_DEVICE_TYPE_NAMES[id]
+        if (name != null) {
+            names << name
+        } else {
+            unknown << String.format('0x%04X', id)
+        }
+    }
+
+    // Optional: a “best label” heuristic for logging
+    // Prefer application types over utility types if present
+    List<String> utility = ['Root Node','Power Source','OTA Requestor','Bridged Node']
+    String best =
+        (names.find { !(it in utility) } ?:  // first non-utility
+         (names.contains('Aggregator') ? 'Aggregator' :
+          (names[0] ?: 'Unknown')))
+
+    String summary = names.join(', ')
+    if (unknown) summary = summary ? "${summary}, Unknown(${unknown.join(', ')})" : "Unknown(${unknown.join(', ')})"
+
+    return [best: best, names: names, unknown: unknown, summary: summary]
+}
+
+private boolean isAggregatorDevice(Map bd) {
+    if (!bd) return false
+
+    List<String> dt = (bd.DeviceTypeList ?: [])*.toUpperCase()
+    List<String> parts = (bd.PartsList ?: [])*.toUpperCase()
+    List<String> server = (bd.ServerList ?: [])*.toUpperCase()
+
+    boolean hasAggregatorType = dt.contains('000E') || dt.contains('0E')
+    boolean hasParts = parts && parts.size() > 0
+
+    // Strong signal: Aggregator type + parts
+    if (hasAggregatorType && hasParts) return true
+
+    // Fallback: parts exist and descriptor/basic patterns typical for bridges
+    // Many bridges expose Bridged Device Basic Information (0x0039) on child endpoints.
+    // If endpoint0 already claims 0x0039, that's suspicious (some do), but still:
+    boolean hasBridgedBasicSomewhere = false
+    parts?.each { epHex ->
+        String fp = getFingerprintName(HexUtils.hexStringToInt(epHex))
+        List<String> sl = (state[fp]?.ServerList ?: [])*.toUpperCase()
+        if (sl.contains('0039')) hasBridgedBasicSomewhere = true
+    }
+    logDebug "isAggregatorDevice(): hasAggregatorType=${hasAggregatorType} hasParts=${hasParts} hasBridgedBasicSomewhere=${hasBridgedBasicSomewhere}"
+    return hasParts && hasBridgedBasicSomewhere
+}
+
+/*
+private boolean isMatterBridgeFromBridgeDescriptor() {
+    Map bd = state.bridgeDescriptor ?: [:]
+    List<String> dt    = (bd.DeviceTypeList ?: [])*.toUpperCase()
+    List<String> parts = (bd.PartsList ?: [])*.toUpperCase()
+
+    boolean hasAggregatorType = dt.contains('000E')   // Aggregator
+    boolean hasParts          = parts && parts.size() > 0
+
+    // Bridge/Aggregator => must have Aggregator type AND expose parts
+    logDebug "isMatterBridgeFromBridgeDescriptor(): hasAggregatorType=${hasAggregatorType} hasParts=${hasParts}"
+    return hasAggregatorType && hasParts
+}
+*/
+
+private boolean isMatterBridgeByAnyEndpoint() {
+    // scan all fingerprints (endpoint descriptor snapshots)
+    List<Map> fps = state.findAll { k, v -> (k as String).startsWith('fingerprint') && (v instanceof Map) }
+                         .collect { it.value as Map }
+
+    for (Map fp : fps) {
+        List<String> dt    = ((fp.DeviceTypeList ?: []) as List)*.toString()*.toUpperCase()
+        List<String> parts = ((fp.PartsList ?: []) as List)*.toString()*.toUpperCase()
+
+        if (dt.contains('000E') && parts && parts.size() > 0) {
+            return true
+        }
+    }
+    return false
+}
+
+private void finalizeDeviceType() {
+    boolean isBridge = isMatterBridgeByAnyEndpoint()
+    state.deviceType = isBridge ? 'MATTER_BRIDGE' : 'MATTER_DEVICE'
+    logInfo "DEVICE_TYPE (detected) = ${state.deviceType}"
 }
 
 
