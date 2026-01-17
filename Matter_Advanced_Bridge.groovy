@@ -41,7 +41,9 @@
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
  * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : (dev. branch) A major refactoring of the Door Lock driver; optimized subsciption management;
+ *                                  water leak sensors automatic detection workaround
  * 
+ *                                   TODO: 
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
  *                                   TODO: distinguish between MATTER_BRIDGE deviceType and other MATTER_* deviceTypes
@@ -52,7 +54,7 @@
  */
 
 static String version() { '1.6.0' }
-static String timeStamp() { '2026/01/17 9:15 AM' }
+static String timeStamp() { '2026/01/17 12:53 PM' }
 
 @Field static final Boolean _DEBUG = false                    // MAKE IT false for PRODUCTION !       
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -861,7 +863,7 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
                     String descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Bridge partsListCount is: ${partsListCount}"
                     sendMatterEvent([name: 'endpointsCount', value: partsListCount, descriptionText: descriptionText], descMap, true) // bridge event - sent only when endpointsCount changes: changed 01/14/2026
                     if (partsListCount != oldCount) {
-                        logWarn "THE NUMBER OF THE BRIDGED DEVICES CHANGED FROM ${oldCount} TO ${partsListCount} !!!"
+                        logInfo "THE NUMBER OF THE BRIDGED DEVICES CHANGED FROM ${oldCount} TO ${partsListCount} !!!"
                     }
                 }
             }
@@ -1004,16 +1006,42 @@ void parseSwitch(final Map descMap) {
     ], descMap, ignoreDuplicates = false)
 }
 
-// Method for parsing contact sensor
+// Method for parsing Boolean State Cluster 0x0045  (Contact Sensor and Water Sensor)
 void parseContactSensor(final Map descMap) {
     if (descMap.cluster != '0045') { logWarn "parseContactSensor: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    String contactAttr = descMap.value == '01' ? 'closed' : 'open'
-    if (descMap.attrId == '0000') { // Contact
-        sendMatterEvent([
-            name: 'contact',
-            value: contactAttr,
-            descriptionText: "${getDeviceDisplayName(descMap.endpoint)} contact is ${contactAttr} (raw:${descMap.value})"
-        ], descMap, true)
+    
+    if (descMap.attrId == '0000') { // StateValue attribute
+        String boolValue = descMap.value == '01' ? 'closed' : 'open'
+        String waterValue = descMap.value == '01' ? 'wet' : 'dry'
+        
+        // Determine attribute name based on child device driver type
+        String dni = "${device.id}-${descMap.endpoint}"
+        def childDevice = getChildDevice(dni)
+        
+        // Check if it's a water sensor by driver type or supported attributes
+        boolean isWaterSensor = false
+        if (childDevice) {
+            String driverName = childDevice.typeName ?: ''
+            if (driverName.toLowerCase().contains('water')) {
+                isWaterSensor = true
+            } else if (childDevice.hasAttribute('water')) {
+                isWaterSensor = true
+            }
+        }
+        
+        if (isWaterSensor) {
+            sendMatterEvent([
+                name: 'water',
+                value: waterValue,
+                descriptionText: "${getDeviceDisplayName(descMap.endpoint)} water is ${waterValue} (raw:${descMap.value})"
+            ], descMap, true)
+        } else {
+            sendMatterEvent([
+                name: 'contact',
+                value: boolValue,
+                descriptionText: "${getDeviceDisplayName(descMap.endpoint)} contact is ${boolValue} (raw:${descMap.value})"
+            ], descMap, true)
+        }
     } else {
         logTrace "parseContactSensor: ${(BooleanStateClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
     }
@@ -2401,7 +2429,23 @@ Map mapMatterCategory(Map d) {
     if ('08' in d.ServerList) {   // Dimmer
         return [ driver: 'Generic Component Dimmer', product_name: 'Dimmer/Bulb' ]
     }
-    if ('45' in d.ServerList) {   // Contact Sensor
+    if ('45' in d.ServerList) {   //  Boolean State (Contact Sensor or Water Leak Sensor)
+        // Check DeviceType first (most reliable)
+        if ('43' in d.DeviceType || '0043' in d.DeviceType) {   // 0x0043 = Water Leak Detector
+            return [ driver: 'Generic Component Water Sensor', product_name: 'Water Leak Sensor' ]
+        }
+        if ('15' in d.DeviceType || '0015' in d.DeviceType) {   // 0x0015 = Contact Sensor
+            return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
+        }
+        
+        // Fallback: Check name/label if DeviceType is ambiguous
+        String n = (d.discoveredName ?: d.ProductName ?: d.ProductLabel ?: d.NodeLabel ?: '').toLowerCase()
+        logDebug "mapMatterCategory: Boolean State discoveredName='${d.discoveredName}' ProductName='${d.ProductName}' n='${n}'"
+        if (n.contains('water') || n.contains('leak')) {
+            return [ driver: 'Generic Component Water Sensor', product_name: 'Water Leak Sensor' ]
+        }
+        
+        // Default to Contact Sensor if we can't determine
         return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
     }
     if ('5B' in d.ServerList) {   // Air Quality Sensor
@@ -3008,6 +3052,10 @@ Map fingerprintToData(String fingerprint) {
         data['name'] = getDeviceDisplayName(data['id'])
         data['fingerprintName'] = fingerprint
         data['ServerList'] = fingerprintMap['ServerList']
+        data['ProductName'] = fingerprintMap['ProductName']
+        data['VendorName'] = fingerprintMap['VendorName']
+        data['ProductLabel'] = fingerprintMap['ProductLabel']
+        data['NodeLabel'] = fingerprintMap['NodeLabel']
         // Extract device type IDs from DeviceTypeList
         // DeviceTypeList is an array of structures, each containing revision + deviceType
         // We need to extract just the device type IDs (typically every other value after removing markers)
@@ -3026,19 +3074,21 @@ Map fingerprintToData(String fingerprint) {
             }
         }
         data['DeviceType'] = deviceTypeIds
+        
+        // Fallback: If ProductName, ProductLabel, and NodeLabel are all empty/null, use bridge's ProductName
+        if (!data['ProductName'] && !data['ProductLabel'] && !data['NodeLabel']) {
+            String bridgeProductName = state.bridgeDescriptor?.ProductName ?: state.ProductName
+            if (bridgeProductName) {
+                logDebug "fingerprintToData(): using bridge ProductName '${bridgeProductName}' for endpoint ${data['id']}"
+                data['ProductName'] = bridgeProductName
+            }
+        }
+        
         logDebug "fingerprintToData(): rawDeviceTypeList=${rawDeviceTypeList} extracted deviceTypeIds=${deviceTypeIds} fingerprintMap=${fingerprintMap} data=${data}"
+
         Map productName = mapMatterCategory(data)
 
         data['product_name'] = fingerprintMap['ProductName'] ?: productName['product_name']           // Device Name
-        //data['name'] = fingerprintMap['Label'] ?: "Device#${data['id']}"          // Device Label
-
-        // TODO !!
-        //data['local_key'] = fingerprintMap['local_key']
-        //data['product_id'] = fingerprintMap['product_id']
-        //data['category'] = fingerprintMap['category']
-        //data['functions'] = fingerprintMap['functions']
-        //data['statusSet'] = fingerprintMap['statusSet']
-        //data['online'] = fingerprintMap['online']
     }
     return data
  }
