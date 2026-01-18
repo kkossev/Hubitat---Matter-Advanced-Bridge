@@ -40,10 +40,11 @@
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
- * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : (dev. branch) A major refactoring of the Door Lock driver; optimized subsciption management;
+ * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : A major refactoring of the Door Lock driver; optimized subsciption management;
  *                                  water leak sensors (deviceType 0x0043) automatic detection
+ * ver. 1.6.1  2026-01-18 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); adding ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement
  * 
- *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00)
+ *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: TADO Matter Thermostat - JSON supportedModes are missing ! 
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
 MATTER_DEVICE
@@ -51,24 +52,25 @@ MATTER_DEVICE
  *                                   TODO: decode [0013] CapabilityMinima = 1524000324010318 [0012] UniqueID = 4A6A0276A1834629
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
- *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'
+ *                                   DONE: add cluster 040D 'CarbonDioxideConcentrationMeasurement' (v1.4.0)
+ *                                   DONE: add cluster 042A 'PM2.5ConcentrationMeasurement' (v1.4.0)
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
  *                                   TODO: add cluster 0202 'Window Covering'
  *
  */
 
-static String version() { '1.6.0' }
-static String timeStamp() { '2026/01/18 10:10 AM' }
+static String version() { '1.6.1' }
+static String timeStamp() { '2026/01/18 6:00 PM' }
 
-@Field static final Boolean _DEBUG = false                    // make it FALSE for production!
+@Field static final Boolean _DEBUG = true                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false      // make it FALSE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = true      // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
-@Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
+//@Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
 @Field static final Boolean STATE_CACHING = false            // enable/disable state caching
 @Field static final Integer CACHING_TIMER = 60               // state caching time in seconds
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
@@ -283,6 +285,10 @@ metadata {
     0x0406 : [attributes: 'OccupancySensingClusterAttributes', parser: 'parseOccupancySensing',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
+    // CarbonDioxideConcentrationMeasurement Cluster
+    0x040D : [attributes: 'ConcentrationMeasurementClustersAttributes', parser: 'parseCarbonDioxideConcentrationMeasurement',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+    ],
     // PM25ConcentrationMeasurement Cluster
     0x042A : [attributes: 'ConcentrationMeasurementClustersAttributes', parser: 'parseConcentrationMeasurement',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
@@ -310,6 +316,7 @@ metadata {
     0x0402 : 'parseTemperatureMeasurement',
     0x0405 : 'parseHumidityMeasurement',
     0x0406 : 'parseOccupancySensing',
+    0x040D : 'parseCarbonDioxideConcentrationMeasurement',
     0x042A : 'parseConcentrationMeasurement'
 ]
 
@@ -1170,7 +1177,7 @@ void parseAirQuality(final Map descMap) { // 005B
         name: 'unprocessed',
         value: descMap.toString(),
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
-    ], descMap, ignoreDuplicates = false)
+    ], descMap, ignoreDuplicates = true)
 }
 
 void parseElectricalPowerMeasurement(final Map descMap) { // 0090
@@ -1207,7 +1214,18 @@ void parseConcentrationMeasurement(final Map descMap) { // 042A
         name: 'unprocessed',
         value: descMap.toString(),
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
-    ], descMap, ignoreDuplicates = false)
+    ], descMap, ignoreDuplicates = true)
+}
+
+void parseCarbonDioxideConcentrationMeasurement(final Map descMap) { // 040D
+    if (descMap.cluster != '040D') { logWarn "parseCarbonDioxideConcentrationMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    logTrace "parseCarbonDioxideConcentrationMeasurement: <b>UNPROCESSED</b> ${(ConcentrationMeasurementClustersAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    // send the unprocessed attributes to the child driver for further processing
+    sendMatterEvent([
+        name: 'unprocessed',
+        value: descMap.toString(),
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = true)
 }
 
 
@@ -1859,7 +1877,7 @@ void initialize() {
     logDebug "'isSubscribe'= ${state.states['isSubscribe']} timeSinceLastSubscribe= ${timeSinceLastSubscribe} 'isUnsubscribe' = ${state.states['isUnsubscribe']} timeSinceLastUnsubscribe= ${timeSinceLastUnsubscribe}"
 
     state.stats['initializeCtr'] = (state.stats['initializeCtr'] ?: 0) + 1
-    if (state.deviceType == null || state.deviceType != DEVICE_TYPE) {
+    if (state.deviceType == null || state.deviceType == '') {
         log.warn 'initialize(fullInit = true))...'
         initializeVars(fullInit = true)
         sendInfoEvent('initialize()...', 'full initialization - all settings are reset to default')

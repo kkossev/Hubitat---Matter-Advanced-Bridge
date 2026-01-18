@@ -18,10 +18,8 @@
  *
  * ver. 1.0.0  2024-10-10 kkossev   - first version
  * ver. 1.1.0  2025-01-10 kkossev   - added ping command and RTT monitoring via matterHealthStatusLib
+ * ver. 1.2.0  2025-01-18 kkossev   - added ALPSTUGA Air Quality Monitor support
  * 
- *                                   TODO: add cluster 005B 'AirQuality' endpointId:"0C"
- *                                   TODO: add cluster 042A 'PM2.5ConcentrationMeasurement'  endpointId:"0C"
- *
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
  *                                   TODO: add cluster 0202 'Window Covering' endpointId:"0B"
  *
@@ -29,9 +27,10 @@
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import hubitat.helper.HexUtils
 
-@Field static final String matterComponentAirPurifierVersion = '1.1.0'
-@Field static final String matterComponentAirPurifierStamp   = '2025/01/10 7:36 PM'
+@Field static final String matterComponentAirPurifierVersion = '1.2.0'
+@Field static final String matterComponentAirPurifierStamp   = '2026/01/18 9:13 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = true
 
@@ -47,9 +46,12 @@ metadata {
         capability 'Switch'
         capability 'HealthCheck'
         capability 'PowerSource'
+        capability 'TemperatureMeasurement'
+        capability 'RelativeHumidityMeasurement'
+        capability 'CarbonDioxideMeasurement'
 
         command    'identify'
-        command    'refreshAll'
+        command    'getInfo'
         // Commands for devices.Ikea_E2006
         command 'setSpeed', [[name:'Fan speed*', type:'ENUM', description:'Select the desired fan speed', constraints:SUPPORTED_FAN_SPEEDS]]
         command 'toggle'
@@ -63,8 +65,8 @@ metadata {
         attribute 'indicatorStatus', 'enum', ['on', 'off']
         
 
-        if (_DEBUG_LOCK) {
-            command 'getInfo', [
+        if (_DEBUG_AIR_PURIFIER) {
+            command 'getBridgeInfo', [
                     [name:'infoType', type: 'ENUM', description: 'Bridge Info Type', constraints: ['Basic', 'Extended']],   // if the parameter name is 'type' - shows a drop-down list of the available drivers!
                     [name:'endpoint', type: 'STRING', description: 'Endpoint', constraints: ['STRING']]
             ]
@@ -100,6 +102,20 @@ preferences {
                 '10': 'Very Low - report changes of +/- 10μg/m3'
             ],
             defaultValue: '03',
+            required: true
+        )
+        input(
+            name: 'co2ReportDelta', type: 'enum',
+            title: 'CO₂ report frequency',
+            description: '<small>Adjust how often the device sends its CO₂ sensor data.</small>',
+            options: [
+                '05': 'Very High - report changes of +/- 5 ppm',
+                '10': 'High - report changes of +/- 10 ppm',
+                '25': 'Medium - report changes of +/- 25 ppm',
+                '50': 'Low - report changes of +/- 50 ppm',
+                '100': 'Very Low - report changes of +/- 100 ppm'
+            ],
+            defaultValue: '10',
             required: true
         )
         input(
@@ -158,16 +174,12 @@ void identify() {
 
 void on() {
     if (logEnable) { log.debug "${device.displayName} turning on ..." }
-    sendEvent(name: 'switch', value: 'on', type: 'digital')
-    //parent?.componentOn(device)   // n/a
+    parent?.componentOn(device)
 }
 
 void off() {
     if (logEnable) { log.debug "${device.displayName} turning off ..." }
-    sendEvent(name: 'switch', value: 'off', type: 'digital')
-    sendEvent(name:'auto', value:'disabled', descriptionText:'Auto mode is disabled', type:'digital')
-    sendEvent(name:'speed', value:'off', descriptionText:'Fan speed is off', type:'digital')
-    //parent?.componentOff(device)  // n/a
+    parent?.componentOff(device)
 }
 
 void toggle() {
@@ -284,6 +296,22 @@ private void logsOff() {
     device.updateSetting('logEnable', [value: 'false', type: 'bool'] )
 }
 
+void logInfo(msg)  { if (settings.txtEnable)   { log.info  "${device.displayName} " + msg } }
+void logDebug(msg) { if (settings.logEnable)   { log.debug "${device.displayName} " + msg } }
+void logTrace(msg) { if (settings.logEnable)   { log.trace "${device.displayName} " + msg } }
+void logWarn(msg)  { if (settings.logEnable)   { log.warn  "${device.displayName} " + msg } }
+
+/**
+ * Decode IEEE754 single-precision float from hex string
+ * @param hexValue Hex string (e.g., "40A00000")
+ * @return Rounded integer value
+ */
+Integer decodeIeee754Float(String hexValue) {
+    Integer bits = Integer.parseUnsignedInt(hexValue, 16)
+    Float floatValue = Float.intBitsToFloat(bits)
+    return Math.round(floatValue)
+}
+
 void refresh() {
     parent?.componentRefresh(this.device)
 }
@@ -298,54 +326,485 @@ String getState(String stateName) {
     return state[stateName]
 }
 
-void getInfo(String infoType, String endpoint) {
-    parent?.componentGetInfo(device, infoType, endpoint)
+// ============ Helper Methods for Fingerprint Data ============
+
+/**
+ * Get parsed fingerprint data from device
+ * @return Map containing fingerprint data or null if not available
+ */
+Map getFingerprintData() {
+    String fingerprintJson = device.getDataValue('fingerprintData')
+    if (!fingerprintJson) {
+        logDebug "getFingerprintData: fingerprintData not found in device data"
+        return null
+    }
+    
+    try {
+        return new groovy.json.JsonSlurper().parseText(fingerprintJson)
+    } catch (Exception e) {
+        logWarn "getFingerprintData: failed to parse fingerprintData: ${e.message}"
+        return null
+    }
+}
+
+/**
+ * Get ServerList from fingerprint data
+ * @return List of cluster IDs as hex strings (e.g., ["0006", "005B", "0402", "0405", "040D", "042A"])
+ */
+List<String> getServerList() {
+    Map fingerprint = getFingerprintData()
+    if (fingerprint == null) {
+        logDebug "getServerList: fingerprint data not available"
+        return []
+    }
+    
+    return fingerprint['ServerList'] ?: []
+}
+
+/**
+ * Check if a specific cluster is supported by this device
+ * @param clusterHex Cluster ID as hex string (e.g., "005B" for Air Quality)
+ * @return true if cluster is in ServerList
+ */
+boolean isClusterSupported(String clusterHex) {
+    List<String> serverList = getServerList()
+    return serverList.contains(clusterHex?.toUpperCase())
+}
+
+// Custom parsing for description strings with array values
+// NOTE: This workaround may not be needed once complex structure parsing is fixed generally
+Map patchParseDescriptionMap(String inputString) {
+    Map<String, Object> resultMap = [:]
+    
+    // Remove outer brackets only
+    String cleaned = inputString.replaceAll('^\\[', '').replaceAll('\\]$', '')
+    
+    // Split by ", " but preserve array values
+    List<String> parts = []
+    int bracketDepth = 0
+    StringBuilder current = new StringBuilder()
+    
+    for (int i = 0; i < cleaned.length(); i++) {
+        char c = cleaned.charAt(i)
+        if (c == '[') {
+            bracketDepth++
+            current.append(c)
+        } else if (c == ']') {
+            bracketDepth--
+            current.append(c)
+        } else if (c == ',' && bracketDepth == 0 && i + 1 < cleaned.length() && cleaned.charAt(i + 1) == ' ') {
+            parts.add(current.toString())
+            current = new StringBuilder()
+            i++ // skip the space after comma
+        } else {
+            current.append(c)
+        }
+    }
+    if (current.length() > 0) {
+        parts.add(current.toString())
+    }
+    
+    // Now parse each key:value pair
+    parts.each { pair ->
+        String[] kvParts = pair.split(':', 2)
+        if (kvParts.size() == 2) {
+            String key = kvParts[0].trim()
+            String value = kvParts[1].trim()
+            // Check if value is an array
+            if (value.startsWith('[') && value.endsWith(']')) {
+                // Parse array value
+                String arrayContent = value.substring(1, value.length() - 1)
+                resultMap[key] = arrayContent.split(',\\s*').collect { it.trim() }
+            } else {
+                resultMap[key] = value
+            }
+        }
+    }
+    
+    return resultMap
 }
 
 void processUnprocessed(Map description) {
-    if (logEnable) { log.debug "${device.displayName} processing unprocessed: ${description}" }
+    logDebug "processing unprocessed: ${description}"
 
     String inputString = description.value
-    //if (logEnable) { log.debug "${device.displayName} inputString: ${inputString}" }
-    inputString = inputString.replaceAll('\\[', '').replaceAll('\\]', '')
-    String[] keyValuePairs = inputString.split(', ')
-    Map<String, String> resultMap = [:]
-    keyValuePairs.each { pair ->
-        String[] parts = pair.split(':')
-        resultMap[parts[0].trim()] = parts[1].trim()
-    }
-    Map descMap = resultMap
-    if (logEnable) { log.debug "${device.displayName} descMap: ${descMap}" }
-    //
-    //if (descMap.cluster != '0101') { logWarn "processUnprocessed: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    logTrace "inputString: ${inputString}"
+    
+    // Parse the input string to handle array values like value:[00, FFF8, FFF9]
+    Map descMap = patchParseDescriptionMap(inputString)
+    logDebug "descMap: ${descMap}"
+    
     String eventValue = descMap.value
     String descriptionText = "${device.displayName} ${descMap.cluster}:${descMap.attrId} value:${eventValue}"
+    
+    // Check if this is info mode for detailed logging
+    boolean isInfoMode = state.states?.isInfo == true
+    String prefix = isInfoMode ? "[${descMap.cluster}_${descMap.attrId}] " : ""
+    
     switch (descMap.cluster + '_' + descMap.attrId) {
         case '005B_0000': // attribute 'airQuality', 'enum', ['good', 'moderate', 'unhealthy for sensitive groups', 'unhealthy', 'hazardous']
             eventValue= AirQualityEnum[Integer.parseInt(descMap.value, 16)]
+            // Check if value changed from last report
+            String lastAirQuality = state.lastAirQuality
+            if (lastAirQuality == eventValue) {
+                if (logEnable) { log.debug "${device.displayName} AirQuality unchanged: ${eventValue} - event suppressed" }
+                return
+            }
+            state.lastAirQuality = eventValue
             descriptionText = "${device.displayName} AirQuality: ${eventValue} (raw:${descMap.value})"
             sendEvent(name: 'airQuality', value: eventValue, descriptionText: descriptionText)
             if (txtEnable) { log.info "${descriptionText}" }
             break
         case '042A_0000': // attribute 'pm25', 'number'
-            Integer pm25 = Integer.parseInt(descMap.value, 16) / 100000000
-            log.trace "${device.displayName} PM2.5: ${pm25} μg/m³"
-            descriptionText = "${device.displayName} PM2.5: ${pm25} μg/m³"
-            sendEvent(name: 'pm25', value: pm25, descriptionText: descriptionText)
+            Integer pm25Int = decodeIeee754Float(descMap.value)
+            if (logEnable) { log.debug "${device.displayName} PM2.5 raw hex: ${descMap.value}" }
+            if (logEnable) { log.debug "${device.displayName} PM2.5 decoded: ${pm25Int} μg/m³" }
+            // Check threshold from preference
+            Integer threshold = (settings.pm25ReportDelta ?: '03') as Integer
+            Integer lastPM25 = state.lastPM25 != null ? state.lastPM25 as Integer : null
+            if (lastPM25 != null && Math.abs(pm25Int - lastPM25) < threshold) {
+                if (logEnable) { log.debug "${device.displayName} PM2.5 change ${pm25Int - lastPM25} μg/m³ below threshold ${threshold} - event suppressed" }
+                return
+            }
+            state.lastPM25 = pm25Int
+            descriptionText = "${device.displayName} PM2.5: ${pm25Int} μg/m³"
+            sendEvent(name: 'pm25', value: pm25Int, unit: 'μg/m³', descriptionText: descriptionText)
             if (txtEnable) { log.info "${descriptionText}" }
             break
+        case '040D_0000': // CO₂ Concentration Measurement
+            Integer co2 = decodeIeee754Float(descMap.value)
+            if (logEnable) { log.debug "${device.displayName} CO₂ raw hex: ${descMap.value}" }
+            if (logEnable) { log.debug "${device.displayName} CO₂ decoded: ${co2} ppm" }
+            // Check threshold from preference
+            Integer threshold = (settings.co2ReportDelta ?: '10') as Integer
+            Integer lastCO2 = state.lastCO2 != null ? state.lastCO2 as Integer : null
+            if (lastCO2 != null && Math.abs(co2 - lastCO2) < threshold) {
+                if (logEnable) { log.debug "${device.displayName} CO₂ change ${co2 - lastCO2} ppm below threshold ${threshold} - event suppressed" }
+                return
+            }
+            state.lastCO2 = co2
+            descriptionText = "${device.displayName} CO₂: ${co2} ppm"
+            sendEvent(name: 'carbonDioxide', value: co2, unit: 'ppm', descriptionText: descriptionText)
+            if (txtEnable) { log.info "${descriptionText}" }
+            break
+        
+        // Additional Concentration Measurement cluster attributes (CO₂ and PM2.5)
+        case '040D_0001': // CO₂ MinMeasuredValue (IEEE754 float)
+        case '042A_0001': // PM2.5 MinMeasuredValue (IEEE754 float)
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
+                String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
+                Integer decoded = decodeIeee754Float(descMap.value)
+                String attrName = ConcentrationMeasurementClusterAttributes[0x0001]
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (hex: ${descMap.value})"
+            }
+            break
+        
+        case '040D_0002': // CO₂ MaxMeasuredValue (IEEE754 float)
+        case '042A_0002': // PM2.5 MaxMeasuredValue (IEEE754 float)
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
+                String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
+                Integer decoded = decodeIeee754Float(descMap.value)
+                String attrName = ConcentrationMeasurementClusterAttributes[0x0002]
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (hex: ${descMap.value})"
+            }
+            break
+        
+        case '040D_0007': // CO₂ Uncertainty (IEEE754 float)
+        case '042A_0007': // PM2.5 Uncertainty (IEEE754 float)
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
+                String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
+                Integer decoded = decodeIeee754Float(descMap.value)
+                String attrName = ConcentrationMeasurementClusterAttributes[0x0007]
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (hex: ${descMap.value})"
+            }
+            break
+        
+        case '040D_0008': // CO₂ MeasurementUnit (enum)
+        case '042A_0008': // PM2.5 MeasurementUnit (enum)
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
+                Integer attrIdInt = Integer.parseInt(descMap.attrId, 16)
+                String attrName = ConcentrationMeasurementClusterAttributes[attrIdInt]
+                Integer enumValue = Integer.parseInt(descMap.value, 16)
+                String decoded = decodeMeasurementUnit(enumValue)
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded}"
+            }
+            break
+        
+        case '040D_0009': // CO₂ MeasurementMedium (enum)
+        case '042A_0009': // PM2.5 MeasurementMedium (enum)
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
+                Integer attrIdInt = Integer.parseInt(descMap.attrId, 16)
+                String attrName = ConcentrationMeasurementClusterAttributes[attrIdInt]
+                Integer enumValue = Integer.parseInt(descMap.value, 16)
+                String decoded = decodeMeasurementMedium(enumValue)
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded}"
+            }
+            break
+        
+        case '040D_000A': // CO₂ LevelValue (enum)
+        case '042A_000A': // PM2.5 LevelValue (enum)
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
+                Integer attrIdInt = Integer.parseInt(descMap.attrId, 16)
+                String attrName = ConcentrationMeasurementClusterAttributes[attrIdInt]
+                Integer enumValue = Integer.parseInt(descMap.value, 16)
+                String decoded = decodeLevelValue(enumValue)
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded}"
+            }
+            break
+        
+        // Global cluster attributes (apply to all clusters: 005B, 040D, 042A, etc.)
+        case '005B_FFFC': // FeatureMap for Air Quality
+        case '040D_FFFC': // FeatureMap for CO₂
+        case '042A_FFFC': // FeatureMap for PM2.5
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
+                Integer featureMap = descMap.value ? Integer.parseInt(descMap.value, 16) : 0
+                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFFC] : ConcentrationMeasurementClusterAttributes[0xFFFC]
+                String decoded = descMap.cluster == '005B' ? 
+                    decodeAirQualityFeatureMap(featureMap) : 
+                    decodeConcentrationMeasurementFeatureMap(featureMap)
+                logInfo "${prefix}${clusterName} ${attrName}: 0x${descMap.value} (${featureMap}) - Features: ${decoded}"
+            }
+            break
+        
+        case '005B_FFFD': // ClusterRevision for Air Quality
+        case '040D_FFFD': // ClusterRevision for CO₂  
+        case '042A_FFFD': // ClusterRevision for PM2.5
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
+                Integer revision = descMap.value ? Integer.parseInt(descMap.value, 16) : 0
+                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFFD] : ConcentrationMeasurementClusterAttributes[0xFFFD]
+                logInfo "${prefix}${clusterName} ${attrName}: ${revision}"
+            }
+            break
+        
+        case '005B_FFFB': // AttributeList for Air Quality
+        case '040D_FFFB': // AttributeList for CO₂
+        case '042A_FFFB': // AttributeList for PM2.5
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
+                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFFB] : ConcentrationMeasurementClusterAttributes[0xFFFB]
+                logInfo "${prefix}${clusterName} ${attrName}: ${descMap.value}"
+            }
+            break
+        
+        case '005B_FFF9': // AcceptedCommandList for Air Quality
+        case '040D_FFF9': // AcceptedCommandList for CO₂
+        case '042A_FFF9': // AcceptedCommandList for PM2.5
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
+                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFF9] : ConcentrationMeasurementClusterAttributes[0xFFF9]
+                logInfo "${prefix}${clusterName} ${attrName}: ${descMap.value ?: '[]'}"
+            }
+            break
+        
+        case '005B_FFF8': // GeneratedCommandList for Air Quality
+        case '040D_FFF8': // GeneratedCommandList for CO₂
+        case '042A_FFF8': // GeneratedCommandList for PM2.5
+            if (isInfoMode) {
+                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
+                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFF8] : ConcentrationMeasurementClusterAttributes[0xFFF8]
+                logInfo "${prefix}${clusterName} ${attrName}: ${descMap.value ?: '[]'}"
+            }
+            break
+        
+        // Note: Temperature (0402) and Humidity (0405) are handled by the parent driver
+        // and sent as standard events, not as 'unprocessed'
         default:
-            if (logEnable) { log.warn "processUnprocessed: unexpected attrId:${descMap.attrId}" }
+            logWarn "processUnprocessed: unexpected cluster:${descMap.cluster} attrId:${descMap.attrId}"
     }
 }
 
-void refreshAll() {
-    if (logEnable) { log.debug "${device.displayName} refreshAll:" }
-    String id = (Integer.parseInt(device.getDataValue('id'), 16)).toString()
-    parent?.readAttribute([id, '91', '0'])    // AirQuality    (Mandatory)
-    parent?.readAttribute([id, '1066', '0'])  // PM2.5   (Mandatory)
+void getInfo() {
+    // Get ServerList to see what clusters are supported
+    List<String> serverList = getServerList()
+    if (serverList.isEmpty()) {
+        logWarn "getInfo: ServerList is empty or not available"
+        return
+    }
+    
+    logInfo "getInfo: Device supports clusters: ${serverList}"
+    
+    // Set state flags for info mode
+    if (state.states == null) { state.states = [:] }
+    if (state.lastTx == null) { state.lastTx = [:] }
+    state.states.isInfo = true
+    state.lastTx.infoTime = now()
+    
+    // Schedule job to turn off info mode after 10 seconds
+    runIn(10, 'clearInfoMode')
+    
+    // Get the endpoint ID
+    String endpointHex = device.getDataValue('id') ?: '1'
+    Integer endpoint = HexUtils.hexStringToInt(endpointHex)
+    
+    // Read ALL attributes from each supported cluster
+    // Cluster 0x0006 - OnOff / Switch
+    if (isClusterSupported('0006')) {
+        logInfo "getInfo: reading all OnOff cluster attributes"
+        parent?.readAttribute(endpoint, 0x0006, -1)
+    }
+    
+    // Cluster 0x005B - Air Quality
+    if (isClusterSupported('005B')) {
+        logInfo "getInfo: reading all Air Quality cluster attributes"
+        parent?.readAttribute(endpoint, 0x005B, -1)
+    }
+    
+    // Cluster 0x0402 - Temperature Measurement
+    if (isClusterSupported('0402')) {
+        logInfo "getInfo: reading all Temperature Measurement cluster attributes"
+        parent?.readAttribute(endpoint, 0x0402, -1)
+    }
+    
+    // Cluster 0x0405 - Relative Humidity Measurement
+    if (isClusterSupported('0405')) {
+        logInfo "getInfo: reading all Relative Humidity Measurement cluster attributes"
+        parent?.readAttribute(endpoint, 0x0405, -1)
+    }
+    
+    // Cluster 0x040D - Carbon Dioxide Concentration Measurement
+    if (isClusterSupported('040D')) {
+        logInfo "getInfo: reading all CO₂ Concentration Measurement cluster attributes"
+        parent?.readAttribute(endpoint, 0x040D, -1)
+    }
+    
+    // Cluster 0x042A - PM2.5 Concentration Measurement
+    if (isClusterSupported('042A')) {
+        logInfo "getInfo: reading all PM2.5 Concentration Measurement cluster attributes"
+        parent?.readAttribute(endpoint, 0x042A, -1)
+    }
+    
+    logInfo "getInfo: completed - check live logs and device data for results"
 }
 
+// Clear info mode flag (called by scheduled job)
+void clearInfoMode() {
+    if (state.states == null) { state.states = [:] }
+    state.states.isInfo = false
+    logDebug "clearInfoMode: info mode disabled"
+}
+
+// ============ FeatureMap Decoders ============
+
+/**
+ * Decode Air Quality cluster FeatureMap bitmap
+ * Bit 0 (0x01): FAIR - Fair Air Quality
+ * Bit 1 (0x02): MOD - Moderate Air Quality
+ * Bit 2 (0x04): VPOOR - Very Poor Air Quality
+ * Bit 3 (0x08): XPOOR - Extremely Poor Air Quality
+ */
+String decodeAirQualityFeatureMap(Integer featureMap) {
+    List<String> features = []
+    if (featureMap & 0x01) { features.add('Fair') }
+    if (featureMap & 0x02) { features.add('Moderate') }
+    if (featureMap & 0x04) { features.add('VeryPoor') }
+    if (featureMap & 0x08) { features.add('ExtremelyPoor') }
+    return features.isEmpty() ? 'None' : features.join(', ')
+}
+
+/**
+ * Decode Concentration Measurement cluster FeatureMap bitmap
+ * Applies to both CO₂ (0x040D) and PM2.5 (0x042A) clusters
+ * Bit 0 (0x01): MEA - NumericMeasurement
+ * Bit 1 (0x02): LEV - LevelIndication
+ * Bit 2 (0x04): MED - MediumLevel
+ * Bit 3 (0x08): CRI - CriticalLevel
+ * Bit 4 (0x10): PEA - PeakMeasurement
+ * Bit 5 (0x20): AVG - AverageMeasurement
+ */
+String decodeConcentrationMeasurementFeatureMap(Integer featureMap) {
+    List<String> features = []
+    if (featureMap & 0x01) { features.add('NumericMeasurement') }
+    if (featureMap & 0x02) { features.add('LevelIndication') }
+    if (featureMap & 0x04) { features.add('MediumLevel') }
+    if (featureMap & 0x08) { features.add('CriticalLevel') }
+    if (featureMap & 0x10) { features.add('PeakMeasurement') }
+    if (featureMap & 0x20) { features.add('AverageMeasurement') }
+    return features.isEmpty() ? 'None' : features.join(', ')
+}
+
+/**
+ * Decode MeasurementUnitEnum
+ * Per Matter spec Table 94
+ */
+String decodeMeasurementUnit(Integer value) {
+    switch (value) {
+        case 0: return 'PPM (parts per million)'
+        case 1: return 'PPB (parts per billion)'
+        case 2: return 'PPT (parts per trillion)'
+        case 3: return 'mg/m³ (milligrams per cubic meter)'
+        case 4: return 'μg/m³ (micrograms per cubic meter)'
+        case 5: return 'ng/m³ (nanograms per cubic meter)'
+        case 6: return 'pm/m³ (particles per cubic meter)'
+        case 7: return 'Bq/m³ (becquerels per cubic meter)'
+        default: return "Unknown (${value})"
+    }
+}
+
+/**
+ * Decode MeasurementMediumEnum
+ * Per Matter spec Table 95
+ */
+String decodeMeasurementMedium(Integer value) {
+    switch (value) {
+        case 0: return 'Air'
+        case 1: return 'Water'
+        case 2: return 'Soil'
+        default: return "Unknown (${value})"
+    }
+}
+
+/**
+ * Decode LevelValueEnum
+ * Per Matter spec Table 96
+ */
+String decodeLevelValue(Integer value) {
+    switch (value) {
+        case 0: return 'Unknown'
+        case 1: return 'Low'
+        case 2: return 'Medium'
+        case 3: return 'High'
+        case 4: return 'Critical'
+        default: return "Unknown (${value})"
+    }
+}
+
+
+// ============ Matter Air Quality Cluster Attributes Map ============
+// Air Quality cluster (0x005B) attributes per Matter spec
+@Field static final Map<Integer, String> AirQualityClusterAttributes = [
+    0x0000  : 'AirQuality',         // AirQualityEnum, R V, M
+    0xFFF8  : 'GeneratedCommandList',// list, R V, M
+    0xFFF9  : 'AcceptedCommandList', // list, R V, M
+    0xFFFB  : 'AttributeList',       // list, R V, M
+    0xFFFC  : 'FeatureMap',          // FeatureMap, R V, M
+    0xFFFD  : 'ClusterRevision'      // uint16, R V, M
+]
+
+// ============ Matter Concentration Measurement Cluster Attributes Map ============
+// Carbon Dioxide (0x040D) and PM2.5 (0x042A) Concentration Measurement clusters
+// Both share the same attribute structure per Matter spec
+@Field static final Map<Integer, String> ConcentrationMeasurementClusterAttributes = [
+    0x0000  : 'MeasuredValue',       // single (IEEE754), R V, M - Current concentration
+    0x0001  : 'MinMeasuredValue',    // single (IEEE754), R V, M - Minimum measurable value
+    0x0002  : 'MaxMeasuredValue',    // single (IEEE754), R V, M - Maximum measurable value
+    0x0007  : 'Uncertainty',         // single (IEEE754), R V, O - Measurement uncertainty
+    0x0008  : 'MeasurementUnit',     // MeasurementUnitEnum, R V, M - Unit of measurement
+    0x0009  : 'MeasurementMedium',   // MeasurementMediumEnum, R V, O - Medium being measured
+    0x000A  : 'LevelValue',          // LevelValueEnum, R V, M - Concentration level
+    0xFFF8  : 'GeneratedCommandList',// list, R V, M
+    0xFFF9  : 'AcceptedCommandList', // list, R V, M
+    0xFFFB  : 'AttributeList',       // list, R V, M
+    0xFFFC  : 'FeatureMap',          // FeatureMap, R V, M
+    0xFFFD  : 'ClusterRevision'      // uint16, R V, M
+]
 
 // 2.9.5.1. AirQualityEnum Type
 @Field static final Map<Integer, String> AirQualityEnum = [
