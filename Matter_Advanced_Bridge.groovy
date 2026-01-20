@@ -42,13 +42,11 @@
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
  * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : A major refactoring of the Door Lock driver; optimized subsciption management;
  *                                  water leak sensors (deviceType 0x0043) automatic detection
- * ver. 1.6.1  2026-01-18 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); adding ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement
+ * ver. 1.6.1  2026-01-19 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); adding ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
  * 
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: TADO Matter Thermostat - JSON supportedModes are missing ! 
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
-MATTER_DEVICE
- *                                   TODO: decode [0015] SpecificationVersion = 0x01030000 (16973824)  [000B] ManufacturingDate = 0x20250604 (539297284) [0009] SoftwareVersion = 0x01000009 (16777225)
  *                                   TODO: decode [0013] CapabilityMinima = 1524000324010318 [0012] UniqueID = 4A6A0276A1834629
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
@@ -60,7 +58,7 @@ MATTER_DEVICE
  */
 
 static String version() { '1.6.1' }
-static String timeStamp() { '2026/01/18 6:00 PM' }
+static String timeStamp() { '2026/01/19 2:45 PM' }
 
 @Field static final Boolean _DEBUG = true                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -721,6 +719,18 @@ void gatherAttributesValuesInfo(final Map descMap) {
                     tempIntValue = HexUtils.hexStringToInt(displayValue)
                     if (tempIntValue >= 10) {
                         tmpStr += ' = 0x' + displayValue + ' (' + tempIntValue + ')'
+                        if (descMap.attrId == '0015') {
+                            tmpStr += " [Matter Spec: ${(tempIntValue>>24)&0xFF}.${(tempIntValue>>16)&0xFF}.${(tempIntValue>>8)&0xFF}.${tempIntValue&0xFF}]"
+                        } else if (descMap.attrId == '000B') {
+                            // ManufacturingDate: 0xYYYYMMDD (hex string)
+                            String dateStr = String.format('%08X', tempIntValue)
+                            int y = dateStr[0..3] as int
+                            int m = dateStr[4..5] as int
+                            int d = dateStr[6..7] as int
+                            tmpStr += " [Manufacturing Date: ${y}-${String.format('%02d', m)}-${String.format('%02d', d)}]"
+                        } else if (descMap.attrId == '0009') {
+                            tmpStr += " [SW Ver: ${(tempIntValue>>24)&0xFF}.${(tempIntValue>>16)&0xFF}.${(tempIntValue>>8)&0xFF}.${tempIntValue&0xFF}]"
+                        }
                     } else {
                         tmpStr += ' = ' + displayValue
                     }
@@ -1590,17 +1600,17 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
         // Always route Matter *events* (evtId present) through the child parse() so component drivers can translate them.
         boolean isMatterEvent = (descMap?.evtId != null)
         if (isMatterEvent) {
-            logDebug "sendMatterEvent: sending Matter EVENT for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            logTrace "sendMatterEvent: sending Matter EVENT for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
             dw.parse([eventMap])
         }
         // Route internal events through parse() without requiring attribute declaration
         else if (name in INTERNAL_EVENTS) {
-            logDebug "sendMatterEvent: routing internal event '${name}' through child parse(): dw:${dw} dni:${dni}"
+            logTrace "sendMatterEvent: routing internal event '${name}' through child parse(): dw:${dw} dni:${dni}"
             dw.parse([eventMap])
         }
         // For attributes, keep the existing behavior: if child doesn't declare the attribute, send it directly.
         else if (dw?.hasAttribute(name) != true) {
-            logDebug "sendMatterEvent: sending directly (attribute '${name}' not declared in child driver): dw:${dw} dni:${dni} value:${value}"
+            logTrace "sendMatterEvent: sending directly (attribute '${name}' not declared in child driver): dw:${dw} dni:${dni} value:${value}"
             dw.sendEvent(eventMap)
             logInfo "${eventMap.descriptionText}"
             // added 2024/10/02 - update the data value in the child device
@@ -1608,7 +1618,7 @@ void sendMatterEvent(final Map<String, String> eventParams, Map descMap = [:], i
         }
         else {
             // send events to child for parsing. Any filtering of duplicated events will be potentially done in the child device handler.
-            logDebug "sendMatterEvent: sending for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            logTrace "sendMatterEvent: sending for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
             dw.parse([eventMap])
         }
     } else if (descMap?.endpoint == null || descMap?.endpoint == '00') {
@@ -2169,7 +2179,8 @@ String cleanSubscribeCmd() {
     List<Map<String, String>> minimizedPaths = []
     minimizedPaths = minimizeByWildcard(paths)
     logDebug "minimizedPaths for cleanSubscribe: ${minimizedPaths}"
-    return matter.cleanSubscribe(0, 0xFFFF, minimizedPaths)
+    //return matter.cleanSubscribe(0, 0xFFFF, minimizedPaths)
+    return matter.cleanSubscribe(1, 60, minimizedPaths)
 }
 
 List<Map<String, Object>> minimizeByWildcard(List<Map<String, Object>> paths) {
@@ -3546,16 +3557,22 @@ void sendRttEvent(String value=null) {
     Long now = new Date().getTime()
     if (state.lastTx == null) { state.lastTx = [:] }
     Integer timeRunning = now.toInteger() - (state.lastTx['pingTime'] ?: now).toInteger()
-    String descriptionText = "${device.displayName} Round-trip time is ${timeRunning} ms (min=${state.stats['pingsMin']} max=${state.stats['pingsMax']} average=${state.stats['pingsAvg']} (HE uptime: ${formatUptime()})"
+    // Calculate rxCtr delta
+    Integer rxCtrAtPing = state.lastTx['rxCtrAtPing'] ?: 0
+    Integer rxCtrNow = (state.stats != null && state.stats['rxCtr'] != null) ? state.stats['rxCtr'] : 0
+    Integer rxCtrDelta = rxCtrNow - rxCtrAtPing
+    String descriptionText = "${device.displayName} Round-trip time is ${timeRunning} ms (rxCtr delta=${rxCtrDelta}), min=${state.stats['pingsMin']} max=${state.stats['pingsMax']} average=${state.stats['pingsAvg']} (HE uptime: ${formatUptime()})"
     if (value == null) {
         logInfo "${descriptionText}"
         sendEvent(name: 'rtt', value: timeRunning, descriptionText: descriptionText, unit: 'ms', type: 'physical')
     }
     else {
-        descriptionText = "${device.displayName} Round-trip time : ${value} (healthStatus=<b>${device.currentValue('healthStatus')}</b> offlineCtr=${state.health['offlineCtr']} checkCtr3=${state.health['checkCtr3']})"
+        descriptionText = "${device.displayName} Round-trip time : ${value} (rxCtr delta=${rxCtrDelta}, healthStatus=<b>${device.currentValue('healthStatus')}</b> offlineCtr=${state.health['offlineCtr']} checkCtr3=${state.health['checkCtr3']})"
         logInfo "${descriptionText}"
         sendEvent(name: 'rtt', value: value, descriptionText: descriptionText, type: 'digital')
     }
+    // Update rxCtrAtPing for the next cycle
+    state.lastTx['rxCtrAtPing'] = rxCtrNow
 }
 
 // credits @thebearmay
