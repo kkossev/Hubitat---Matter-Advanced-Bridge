@@ -20,7 +20,7 @@
   * ver. 1.1.2  2024-08-12 kkossev - fixed importURL
   * ver. 1.2.0  2025-01-10 kkossev + Calude Sonnet 4.5 : Matter events handling rework; Door Lock working! :) added ping command and RTT attribute; removed switch capability
   * ver. 1.3.0  2025-01-14 kkossev - moved component methods from parent to component driver; major refactoring 
-  * ver. 1.3.1  2025-01-20 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements
+  * ver. 1.3.1  2025-01-22 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements (clearUser seems to be working!)
   * 
   *                                  TODO: add driver version to the state variables 
   *                                  TODO: initialize lock with 'unknown' attributes when the device is created
@@ -39,7 +39,7 @@ import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
 @Field static final String matterComponentLockVersion = '1.3.1'
-@Field static final String matterComponentLockStamp   = '2025/01/20 10:00 PM'
+@Field static final String matterComponentLockStamp   = '2025/01/22 7:31 AM'
 
 @Field static final Boolean _DEBUG_LOCK = true              // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true      // disable on production
@@ -299,14 +299,11 @@ void getUser(String userIndex) {
     
     parent?.componentLog(device, 'debug', "querying user information for index ${index}...")
     
-    // UserIndex is UINT16, context tag 0
-    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))
 
     List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(0x05, 0x00, userIndexHexLE))   // 0x05 == UINT16 (per your existing pattern)
+    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
 
-    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, cmdFields)
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, 01)
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, cmdFields)
     logDebug "getUser: cmd=${cmd}"
     parent?.sendToDevice(cmd)
 }
@@ -332,24 +329,11 @@ void clearUser(String userIndex) {
     if (deviceNumber == null) return
     
     parent?.componentLog(device, 'debug', "clearing user at index ${index}...")
-    
-    // Build ClearUser command (0x1D)
-    // Command has single field: UserIndex (UINT16)
-    // OLD CODE (using matter.cmdField - did not work correctly):
-    // List<Map<String, String>> cmdFields = []
-    // cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
-    // String cmd = matter.invoke(deviceNumber, 0x0101, 0x1D, cmdFields)
-    
-    // NEW CODE (manual TLV encoding - simple UINT16 field, no structure wrapper):
-    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))
-    
-    // Build TLV: context tag 0, UINT16 type, value (no structure wrapper needed)
-    String cmdPayload = '2501' + userIndexHexLE  // Context tag 0: UserIndex, UINT16
-    
-    logDebug "clearUser: index=${index}, payload={${cmdPayload}}"
-    
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x1D) + " {${cmdPayload}}"
-    parent?.sendToDevice(cmd)
+    logDebug "clearUser: clearing user at index ${index}"
+    List<Map<String, String>> cmdFields = []
+    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001D, 2000, cmdFields)
+
     parent?.sendToDevice(cmd)
 }
 
@@ -1274,6 +1258,14 @@ void processLockOperationErrorEvent(Map description) {
 
 void processLockUserChangeEvent(Map description) {
     // Event fields: lockDataType, dataOperationType, operationSource, userIndex, fabricIndex, sourceNode, dataIndex
+    //  [endpoint:01, cluster:0101, evtId:0004, timestamp:DC6D037279, priority:01, clusterInt:257, evtInt:4, 
+    //         values:[0:[type:04, isContextSpecific:true, value:02], 
+    //                 1:[type:04, isContextSpecific:true, value:01], 
+    //                 2:[type:04, isContextSpecific:true, value:07], 
+    //                 3:[type:04, isContextSpecific:true, value:0A], 
+    //                 4:[type:04, isContextSpecific:true, value:03], 
+    //                 5:[type:06, isContextSpecific:true, value:0001B669], 
+    //                 6:[type:04, isContextSpecific:true, value:0A]]]
     Map values = parseEventValues(description)
     
     Integer lockDataType = values[0]?.value ? Integer.parseInt(values[0].value, 16) : null
