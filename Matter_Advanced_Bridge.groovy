@@ -42,9 +42,9 @@
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
  * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : A major refactoring of the Door Lock driver; optimized subsciption management;
  *                                  water leak sensors (deviceType 0x0043) automatic detection
- * ver. 1.6.1  2026-01-22 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); adding ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
- *                                  added ping() delta calculcation; changed cleanSubscribe(1, 60)
- * 
+ * ver. 1.7.0  2026-01-23 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); adding ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
+ *                                  added ping() delta calculcation; added cleanSubscribeMin/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP);
+ *
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: TADO Matter Thermostat - JSON supportedModes are missing ! 
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
@@ -58,8 +58,8 @@
  *
  */
 
-static String version() { '1.6.1' }
-static String timeStamp() { '2026/01/22 7:27 PM' }
+static String version() { '1.7.0' }
+static String timeStamp() { '2026/01/23 11:14 AM' }
 
 @Field static final Boolean _DEBUG = true                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -67,7 +67,7 @@ static String timeStamp() { '2026/01/22 7:27 PM' }
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = true      // make it FALSE for production!
-@Field static final Boolean DO_NOT_TRACE_FFFX = true         // don't trace the FFFx global attributes
+@Field static final Boolean DO_NOT_TRACE_FFFX = false         // don't trace the FFFx global attributes
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
 //@Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
 @Field static final Boolean STATE_CACHING = false            // enable/disable state caching
@@ -81,6 +81,9 @@ static String timeStamp() { '2026/01/22 7:27 PM' }
 @Field static final String  UNKNOWN = 'UNKNOWN'
 @Field static final Integer SHORT_TIMEOUT  = 7
 @Field static final Integer LONG_TIMEOUT   = 15
+@Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 1
+@Field static final Integer CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT = 600
+@Field static final Integer CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL = 0xFFFF
 
 // Internal events that should be routed through parse() without requiring attribute declaration
 @Field static final List<String> INTERNAL_EVENTS = ['unprocessed']
@@ -152,6 +155,9 @@ metadata {
             input name: 'discoveryTimeoutScale', type: 'enum', title: '<b>Discovery timeout scale</b>', options: ['1':'1x (default)', '2':'2x', '3':'3x (slow/battery bridges)'], defaultValue: '1', required: true, description: '<i>Scales discovery/state-machine retry timeouts and discovery scheduling delays.</i>'
             input name: 'traceEnable', type: 'bool', title: '<b>Enable trace logging</b>', defaultValue: false, description: '<i>Turns on detailed extra trace logging for 30 minutes.</i>'
             input name: 'minimizeStateVariables', type: 'bool', title: '<b>Minimize State Variables</b>', defaultValue: MINIMIZE_STATE_VARIABLES_DEFAULT, description: '<i>Minimize the state variables size.</i>'
+            input name: 'newParse', type: 'bool', title: '<b>Use new parse(Map) handler</b>', defaultValue: false, description: '<i>Enable Hubitat"s new parse(Map) callback instead of the legacy description text.</i>'
+            input name: 'cleanSubscribeMinInterval', type: 'number', title: '<b>Clean subscribe minimum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, required: true, description: '<i>Minimum reporting interval used when subscribing to Matter attributes/events.</i>'
+            input name: 'cleanSubscribeMaxInterval', type: 'number', title: '<b>Clean subscribe maximum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, required: true, description: '<i>Maximum reporting interval used when subscribing to Matter attributes/events.</i>'
         }
     }
 }
@@ -333,10 +339,7 @@ metadata {
 
 //parsers
 void parse(final String description) {
-    checkDriverVersion()
-    checkSubscriptionStatus()
-    unschedule('deviceCommandTimeout')
-    setHealthStatusOnline()
+    prepareForParse()
 
     Map descMap
     try {
@@ -347,6 +350,41 @@ void parse(final String description) {
     }
     if (descMap == null) {
         logWarn "parse: descMap is null description:${description}"
+        return
+    }
+
+    processParsedDescription(descMap, description)
+}
+// New parse(Map) method to handle events (and attribute reports) when Device Data.newParse	is set to true
+// example : [callbackType:Report, endpointInt:2, clusterInt:59, attrInt:1, data:[1:UINT:0], value:0] 
+// example : [endpoint:01, cluster:003B, evtId:0006, clusterInt:59, evtInt:6, values:[0:[type:04, isContextSpecific:true, value:01], 1:[type:04, isContextSpecific:true, value:01]]]
+
+void parse(Map msg) {
+    if (!isNewParseEnabled()) {
+        logWarn 'parse(Map) received but newParse preference is disabled; enable the option to allow map parsing.'
+        return
+    }
+    Map pacthedNewParseMap = [:]
+    //log.trace "parse(Map) called with msg: ${msg}"
+    pacthedNewParseMap = newParseCompatibilityPatch(msg)
+    prepareForParse()
+    processParsedDescription(pacthedNewParseMap, "new Parse/Map payload: ${pacthedNewParseMap}")
+}
+
+private void prepareForParse() {
+    checkDriverVersion()
+    checkSubscriptionStatus()
+    unschedule('deviceCommandTimeout')
+    setHealthStatusOnline()
+}
+
+private boolean isNewParseEnabled() {
+    return settings?.newParse == true
+}
+
+private void processParsedDescription(final Map descMap, final String description) {
+    if (descMap == null) {
+        logWarn "processParsedDescription: descMap is null description:${description}"
         return
     }
 
@@ -370,7 +408,7 @@ void parse(final String description) {
     checkChildDevicePingResponse(descMap)
     
     parseGlobalElements(descMap)
-//return
+
     gatherAttributesValuesInfo(descMap)
 
     String parserFunc = ParsedMatterClusters[HexUtils.hexStringToInt(descMap.cluster)]
@@ -391,13 +429,12 @@ void parse(final String description) {
     }
 }
 
-// New parse(Map) method to handle events (and attribute reports) when Device Data.newParse	is set to true
-// example : [callbackType:Report, endpointInt:2, clusterInt:59, attrInt:1, data:[1:UINT:0], value:0] 
-// example : [endpoint:01, cluster:003B, evtId:0006, clusterInt:59, evtInt:6, values:[0:[type:04, isContextSpecific:true, value:01], 1:[type:04, isContextSpecific:true, value:01]]]
-
-void parse(Map msg) {
-    logDebug "<b>newParse(Map)</b> received  Map: ${msg}"
-    // TODO ...
+private void ensureNewParseFlag() {
+    String desiredValue = isNewParseEnabled() ? 'true' : 'false'
+    if (device.getDataValue('newParse') != desiredValue) {
+        device.updateDataValue('newParse', desiredValue)
+        logDebug "ensureNewParseFlag: newParse flag set to ${desiredValue}"
+    }
 }
 
 /**
@@ -504,6 +541,7 @@ Map myParseDescriptionAsMap(description) {
     if (descMap.value != null && descMap.attrId != null) {
         // Check for AttributeList and other list attributes that use TLV encoding
         if (descMap.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && descMap.value instanceof String && descMap.value.length() > 4) {
+            //logTrace "myParseDescriptionAsMap: (newParse=false) attempting TLV decoding for ${descMap.attrId}"
             try {
                 List<String> decodedAttrs = decodeTLVToHex(descMap.value)
                 if (decodedAttrs.size() > 0) {
@@ -544,6 +582,84 @@ Map myParseDescriptionAsMap(description) {
 
     return descMap
 }
+
+Map newParseCompatibilityPatch(final Map descMap) {
+    Map patchedMap = descMap.clone()
+    //log.trace "newParseCompatibilityPatch: descMap before patch:${descMap} settings.newParse:${settings.newParse} patchedMap before patch:${patchedMap}"
+    if (settings.newParse != true) {
+        return patchedMap
+    }
+
+    // newParse = true patches
+    if (patchedMap.attrId == null && patchedMap.attrInt != null) {
+        patchedMap.attrId = HexUtils.integerToHexString(patchedMap.attrInt as Integer, 2)
+    }
+    //log.trace "patchedMap.attrId?.length():${patchedMap.attrId?.length()}"
+    if (patchedMap.attrId?.length() > 4) {
+        patchedMap.attrId = patchedMap.attrId[-4..-1]
+    }
+
+
+    if (patchedMap.clusterInt != null) {
+        patchedMap.cluster = HexUtils.integerToHexString(patchedMap.clusterInt as Integer, 2)
+    }
+    if (patchedMap.cluster?.length() > 4) {
+        patchedMap.cluster = patchedMap.cluster[-4..-1]
+    }
+    
+    if (patchedMap.endpoint == null && patchedMap.endpointInt != null) {
+        patchedMap.endpoint = HexUtils.integerToHexString(patchedMap.endpointInt as Integer, 1)
+    }
+    if (patchedMap.cluster?.length() > 4) {
+        patchedMap.cluster = patchedMap.cluster[-4..-1]
+    }
+    if (patchedMap.endpoint?.length() > 2) {
+        patchedMap.endpoint = patchedMap.endpoint[-2..-1]
+    }
+
+    //log.trace "newParseCompatibilityPatch: newParse is enabled - checking for compatibility patches for descMap:${descMap}"
+    if (patchedMap.value != null && patchedMap.attrId != null) {
+        // Check for AttributeList and other list attributes that use TLV encoding
+        //log.trace "newParseCompatibilityPatch: descMap.attrId = ${patchedMap.attrId} descMap.value instanceof List = ${patchedMap.value instanceof List}"
+        if (/*patchedMap.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && */patchedMap.value instanceof List) {
+            logTrace "newParseCompatibilityPatch: newParse is enabled - converting the value ${patchedMap.value} to HEX for ${patchedMap.attrId}"
+            // descMap:[callbackType:Report, endpointInt:0, clusterInt:29, attrInt:65531, data:[65531:ARRAY-UINT:[0, 1, 2, 3, 65528, 65529, 65531, 65532, 65533]], value:[0, 1, 2, 3, 65528, 65529, 65531, 65532, 65533], cluster:001D, attrId:FFFB, endpoint:00]
+            // readAttribute 0x00 0x001D 0xFFFB
+            //log.trace "newParseCompatibilityPatch: descMap before HEX conversion:${patchedMap}"
+            try {
+                List<String> hexValues = []
+                if (patchedMap.value instanceof List) {
+                    patchedMap.value.each { val ->
+                        if (val != null) {
+                            String hexStr = HexUtils.integerToHexString((Integer) val, 2)
+                            hexValues.add(hexStr)
+                        }
+                    }
+                }
+                patchedMap.value = hexValues
+                logTrace "newParseCompatibilityPatch: converted to HEX for ${patchedMap.attrId}: ${hexValues}"
+            } catch (Exception ex) {
+                logTrace "newParseCompatibilityPatch: HEX conversion failed for ${patchedMap.attrId}: ${ex} - keeping raw value"
+            }
+        }
+        // Handle legacy empty list detection
+        else if (patchedMap.value in ['1518', '1618', '1818'] 
+            && ( patchedMap.attrId in ['FFF8', 'FFF9','FFFA', 'FFFB', 'FFFC', 'FFFD', 'FFFE', 'FFFF']
+            || patchedMap.cluster == '001D')
+        ) {
+            patchedMap.value = []
+            if (settings?.traceEnable) { log.warn "myParseDescriptionAsMap: legacy empty list detected: ${patchedMap} description:${description}" }
+        }
+        //log.trace "newParseCompatibilityPatch: descMap after patch:${patchedMap}"
+    }
+    else {
+        logDebug "newParseCompatibilityPatch: descMap.attrId is null or descMap.value is null: descMap:${patchedMap}"
+    }
+    //log.trace "newParseCompatibilityPatch: patchedMap after patch:${patchedMap}"
+    return patchedMap
+
+}
+
 
 boolean isDeviceDisabled(final Map descMap) {
     if (descMap.endpoint == '00') {
@@ -784,9 +900,41 @@ void parseGeneralDiagnostics(final Map descMap) {
     }
 }
 
+Integer getDescMapValueAsInt(final Map descMap) {
+    if (descMap == null) {
+        return null
+    }
+    Map dataMap = (descMap.data instanceof Map) ? descMap.data : null
+    //log.trace "getDescMapValueAsInt: dataMap:${dataMap} descMap.data instanceof Map:${descMap.data instanceof Map}"
+    if (dataMap != null) {
+        for (Object entry : dataMap.values()) {
+            String typeHint = null
+            if (entry instanceof Map) {
+                logTrace "getDescMapValueAsInt: entry Map:${entry}"
+                typeHint = (entry.type ?: entry.dataType)?.toString()?.toUpperCase()
+            } else if (entry instanceof String) {
+                logTrace "getDescMapValueAsInt: entry String:${entry}"
+                typeHint = entry.toUpperCase()
+            }
+            if (typeHint?.contains('UINT')) {
+                logTrace "getDescMapValueAsInt: typeHint contains UINT, returning safeNumberToInt for descMap.value:${descMap.value}"
+                return safeNumberToInt(descMap.value, null)
+            }
+        }
+    }
+    try {
+        //logTrace "getDescMapValueAsInt: trying 'toInteger' for descMap.value:${descMap.value}"
+        return descMap.value.toInteger()
+    } catch (e) {
+        logWarn "getDescMapValueAsInt: exception ${e} converting descMap.value:${descMap.value} to Integer"
+        return safeNumberToInt(descMap.value, null)
+    }
+}
+
 void parsePowerSource(final Map descMap) {
     logTrace "parsePowerSource: descMap:${descMap}"
     String attrName = getAttributeName(descMap)
+    //log.trace "after getAttributeName:${attrName}"
     Integer value
     String descriptionText = ''
     Map eventMap = [:]
@@ -797,17 +945,20 @@ void parsePowerSource(final Map descMap) {
             eventMap = [name: eventName, value: descMap.value, descriptionText: descriptionText]
             break
         case 'BatPercentRemaining' :   // BatteryPercentageRemaining 0x000C
-            value = HexUtils.hexStringToInt(descMap.value)
+            // newParse : : descMap:[callbackType:Report, endpointInt:2, clusterInt:47, attrInt:12, data:[12:UINT:114], value:114, attrId:000C, cluster:002F, endpoint:02]
+            value = getDescMapValueAsInt(descMap)
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Battery percentage remaining is ${value / 2}% (raw:${descMap.value})"
             eventMap = [name: 'battery', value: value / 2, descriptionText: descriptionText]
             break
         case 'BatVoltage' :   // BatteryVoltage 0x000B
-            value = HexUtils.hexStringToInt(descMap.value)
+            //log.trace "parsePowerSource: before getDescMapValueAsInt for BatVoltage:${descMap.value}"
+            value = getDescMapValueAsInt(descMap)
+            //log.trace "parsePowerSource: after getDescMapValueAsInt for BatVoltage:${value}"
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Battery voltage is ${value / 1000}V (raw:${descMap.value})"
             eventMap = [name: 'batteryVoltage', value: value / 1000, descriptionText: descriptionText]
             break
         case 'Status' :  // PowerSourceStatus 0x0000
-            String statusDesc = PowerSourceClusterStatus[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
+            String statusDesc = PowerSourceClusterStatus[getDescMapValueAsInt(descMap)] ?: UNKNOWN
             statusDesc = statusDesc[0].toLowerCase() + statusDesc[1..-1]  // change the powerSourceStatus attribute value first letter to lower case
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Power source status is ${statusDesc} (raw:${descMap.value})"
             eventMap = [name: 'powerSourceStatus', value: statusDesc, descriptionText: descriptionText]
@@ -1803,7 +1954,7 @@ void updated() {
     checkDriverVersion()
     logInfo "debug logging is: ${logEnable == true} description logging is: ${txtEnable == true}"
     if (settings.logEnable)   { runIn(86400, logsOff) }   // 24 hours
-    if (settings.traceEnable) { logTrace settings; runIn(1800, traceOff) }   // 1800 = 30 minutes
+    if (settings.traceEnable) { logTrace settings; runIn(7200, traceOff) }   // 7200 = 2 hours
 
     final int healthMethod = (settings.healthCheckMethod as Integer) ?: 0
     if (healthMethod == 1 || healthMethod == 2) {                            //    [0: 'Disabled', 1: 'Activity check', 2: 'Periodic polling']
@@ -1825,6 +1976,7 @@ void updated() {
         minimizeStateVariables(['true'])
     }
     state.preferences['minimizeStateVariables'] = settings.minimizeStateVariables
+    ensureNewParseFlag()
 }
 
 // delete all Preferences
@@ -2180,8 +2332,13 @@ String cleanSubscribeCmd() {
     List<Map<String, String>> minimizedPaths = []
     minimizedPaths = minimizeByWildcard(paths)
     logDebug "minimizedPaths for cleanSubscribe: ${minimizedPaths}"
-    //return matter.cleanSubscribe(0, 0xFFFF, minimizedPaths)
-    return matter.cleanSubscribe(1, 60, minimizedPaths)
+    Integer cleanSubscribeMin = safeNumberToInt(settings?.cleanSubscribeMinInterval, CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT)
+    Integer cleanSubscribeMax = safeNumberToInt(settings?.cleanSubscribeMaxInterval, CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT)
+    if (cleanSubscribeMin < 1) { cleanSubscribeMin = 1 }
+    if (cleanSubscribeMax < cleanSubscribeMin) { cleanSubscribeMax = cleanSubscribeMin }
+    if (cleanSubscribeMax > CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL) { cleanSubscribeMax = CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL }
+    logDebug "cleanSubscribe intervals: min=${cleanSubscribeMin} max=${cleanSubscribeMax}"
+    return matter.cleanSubscribe(cleanSubscribeMin, cleanSubscribeMax, minimizedPaths)
 }
 
 List<Map<String, Object>> minimizeByWildcard(List<Map<String, Object>> paths) {
@@ -3651,12 +3808,18 @@ void initializeVars(boolean fullInit = false) {
     if (fullInit || settings?.healthCheckMethod == null) { device.updateSetting('healthCheckMethod', [value: HealthcheckMethodOpts.defaultValue.toString(), type: 'enum']) }
     if (fullInit || settings?.healthCheckInterval == null) { device.updateSetting('healthCheckInterval', [value: HealthcheckIntervalOpts.defaultValue.toString(), type: 'enum']) }
     if (settings?.minimizeStateVariables == null) { device.updateSetting('minimizeStateVariables', [value: MINIMIZE_STATE_VARIABLES_DEFAULT, type: 'bool']) }
+    if (settings?.newParse == null) { device.updateSetting('newParse', [value: false, type: 'bool']) }
+    if (settings?.cleanSubscribeMinInterval == null) { device.updateSetting('cleanSubscribeMinInterval', [value: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, type: 'number']) }
+    if (settings?.cleanSubscribeMaxInterval == null) { device.updateSetting('cleanSubscribeMaxInterval', [value: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, type: 'number']) }
+    ensureNewParseFlag()
     if (device.currentValue('healthStatus') == null) { sendHealthStatusEvent('unknown') }
 }
 
 static Integer safeNumberToInt(val, Integer defaultVal=0) {
     try {
-        return val?.startsWith('0x') ? safeHexToInt(val.substring(2)) : safeToInt(val)
+        String stringVal = val == null ? null : val.toString()
+        if (stringVal == null) { return defaultVal }
+        return stringVal.startsWith('0x') ? safeHexToInt(stringVal.substring(2)) : safeToInt(stringVal)
     } catch (NumberFormatException e) {
         return defaultVal
     }
