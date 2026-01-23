@@ -61,7 +61,7 @@
  */
 
 static String version() { '1.7.0' }
-static String timeStamp() { '2026/01/23 10:03 PM' }
+static String timeStamp() { '2026/01/23 11:32 PM' }
 
 @Field static final Boolean _DEBUG = true                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -926,6 +926,17 @@ Integer getDescMapValueAsInt(final Map descMap) {
     if (descMap == null) {
         return null
     }
+    // Handle value as a list of maps (e.g., [[tag:0, value:268], ...])
+    def patchedValue = descMap.value
+    if (patchedValue instanceof List && patchedValue && patchedValue[0] instanceof Map && patchedValue[0].containsKey('value')) {
+        patchedValue = patchedValue[0].value
+    } else if (patchedValue instanceof Map && patchedValue.containsKey('value')) {
+        patchedValue = patchedValue.value
+    }
+    // If already an Integer, return directly (newParse = true case)
+    if (patchedValue instanceof Integer) {
+        return patchedValue
+    }
     Map dataMap = (descMap.data instanceof Map) ? descMap.data : null
     //log.trace "getDescMapValueAsInt: dataMap:${dataMap} descMap.data instanceof Map:${descMap.data instanceof Map}"
     if (dataMap != null) {
@@ -939,16 +950,16 @@ Integer getDescMapValueAsInt(final Map descMap) {
                 typeHint = entry.toUpperCase()
             }
             if (typeHint?.contains('UINT')) {
-                logTrace "getDescMapValueAsInt: typeHint contains UINT, returning safeNumberToInt for descMap.value:${descMap.value}"
-                return safeNumberToInt(descMap.value, null)
+                logTrace "getDescMapValueAsInt: typeHint contains UINT, returning safeNumberToInt for value:${patchedValue}"
+                return safeNumberToInt(patchedValue, null)
             }
         }
     }
     try {
-        //logTrace "getDescMapValueAsInt: trying 'toInteger' for descMap.value:${descMap.value}"
-        return descMap.value.toInteger()
+        //logTrace "getDescMapValueAsInt: trying 'toInteger' for value:${patchedValue}"
+        return patchedValue.toInteger()
     } catch (e) {
-        String rawValue = descMap.value?.toString()?.trim()
+        String rawValue = patchedValue?.toString()?.trim()
         if (rawValue) {
             String hexCandidate = rawValue
             if (hexCandidate.startsWith('0x') || hexCandidate.startsWith('0X')) {
@@ -958,8 +969,8 @@ Integer getDescMapValueAsInt(final Map descMap) {
                 return HexUtils.hexStringToInt(hexCandidate)
             }
         }
-        logWarn "getDescMapValueAsInt: exception ${e} converting descMap.value:${descMap.value} to Integer"
-        return safeNumberToInt(descMap.value, null)
+        logWarn "getDescMapValueAsInt: exception ${e} converting value:${patchedValue} to Integer"
+        return safeNumberToInt(patchedValue, null)
     }
 }
 
@@ -1062,7 +1073,7 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
     String endpointId = descMap.endpoint
     String fingerprintName =  getFingerprintName(descMap)  /*"fingerprint${endpointId}"
 /*
-[0000] DeviceTypeList = [16, 1818]
+[0000] DeviceTypeList = [0013, 0301] ('Bridged Node', 'Thermostat', best = 'Thermostat')
 [0001] ServerList = [03, 1D, 1F, 28, 29, 2A, 2B, 2C, 2E, 30, 31, 32, 33, 34, 37, 39, 3C, 3E, 3F, 40]
 [0002] ClientList = [03, 1F, 29, 39]
 [0003] PartsList = [01, 03, 04, 05, 06, 07, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F, 10, 11]
@@ -1070,10 +1081,24 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
     switch (descMap.attrId) {
         case ['0000', '0001', '0002', '0003'] :
             if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
-            // Normalize DeviceTypeList at storage time - extract only device types (even-indexed elements)
+            // Normalize DeviceTypeList at storage time for both legacy and newParse formats
             if (attrName == 'DeviceTypeList' && descMap.value instanceof List) {
                 List rawList = descMap.value as List
-                List deviceTypesOnly = (0..<rawList.size()).findAll { (it % 2) == 0 }.collect { rawList[it] }
+                List deviceTypesOnly = []
+                if (settings?.newParse == true && rawList && rawList[0] instanceof List && rawList[0][0] instanceof Map && rawList[0][0].containsKey('value')) {
+                    // newParse format: list of lists of maps
+                    rawList.each { structEntry ->
+                        if (structEntry instanceof List && structEntry.size() >= 1) {
+                            def deviceTypeEntry = structEntry[0]
+                            if (deviceTypeEntry instanceof Map && deviceTypeEntry.value != null) {
+                                deviceTypesOnly.add(HexUtils.integerToHexString((Integer) deviceTypeEntry.value, 2))
+                            }
+                        }
+                    }
+                } else {
+                    // Legacy format: even-indexed elements only
+                    deviceTypesOnly = (0..<rawList.size()).findAll { (it % 2) == 0 }.collect { rawList[it] }
+                }
                 state[fingerprintName][attrName] = deviceTypesOnly
                 logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> normalized and stored</b> ${deviceTypesOnly} (from raw ${rawList})"
             } else {
@@ -1150,7 +1175,7 @@ void parseLevelControlCluster(final Map descMap) {
     Integer value
     switch (descMap.attrId) {
         case '0000' : // CurrentLevel
-            value = hex254ToInt100(descMap.value)
+            value = hex254ToInt100((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
             sendMatterEvent([
                 name: 'level',
                 value: value, //.toString(),
@@ -1273,7 +1298,7 @@ void parseBooleanState(final Map descMap) {
 void parseIlluminanceMeasurement(final Map descMap) { // 0400
     if (descMap.cluster != '0400') { logWarn "parseIlluminanceMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Illuminance
-        Integer valueInt = HexUtils.hexStringToInt(descMap.value)
+        Integer valueInt = (descMap.value instanceof Integer) ? descMap.value : HexUtils.hexStringToInt(descMap.value)
         Integer valueLux = Math.pow( 10, (valueInt -1) / 10000)  as Integer
         if (valueLux < 0 || valueLux > 100000) {
             logWarn "parseIlluminanceMeasurement: valueInt:${valueInt} is out of range"
@@ -1456,7 +1481,7 @@ void parseColorControl(final Map descMap) { // 0300
     ChildDeviceWrapper dw = getDw(descMap)
     switch (descMap.attrId) {
         case '0000' : // CurrentHue
-            Integer valueInt = (HexUtils.hexStringToInt(descMap.value) / 2.54) as int
+            Integer valueInt = (HexUtils.hexStringToInt((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value) / 2.54) as int
             logTrace "parseColorControl: hue = ${valueInt}"
             sendMatterEvent([
                 name: 'hue',
@@ -1468,7 +1493,7 @@ void parseColorControl(final Map descMap) { // 0300
             }
             break
         case '0001' : // CurrentSaturation
-            Integer valueInt = (HexUtils.hexStringToInt(descMap.value) / 2.54) as int
+            Integer valueInt = (HexUtils.hexStringToInt((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value) / 2.54) as int
             logTrace "parseColorControl: CurrentSaturation = ${valueInt} (raw=0x${descMap.value})"
             sendMatterEvent([
                 name: 'saturation',
@@ -1480,7 +1505,8 @@ void parseColorControl(final Map descMap) { // 0300
             }
             break
         case '0007' : // ColorTemperatureMireds
-            Integer valueCt = miredHexToCt(descMap.value)
+            // parse: descMap:[callbackType:Report, endpointInt:11, clusterInt:768, attrInt:7, data:[7:UINT:263], value:263, attrId:0007, cluster:0300, endpoint:0B]
+            Integer valueCt = miredHexToCt((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
             logTrace "parseColorControl: ColorTemperatureCT = ${valueCt} (raw=0x${descMap.value})"
             sendMatterEvent([
                 name: 'colorTemperature',
@@ -1499,7 +1525,18 @@ void parseColorControl(final Map descMap) { // 0300
             }
             break
         case '0008' : // ColorMode
-            String colorMode = descMap.value == '00' ? 'RGB' : descMap.value == '01' ? 'XY' : descMap.value == '02' ? 'CT' : UNKNOWN
+            // Normalize value to integer for robust mapping
+            int colorModeInt
+            if (descMap.value instanceof Integer) {
+                colorModeInt = descMap.value
+            } else {
+                try {
+                    colorModeInt = Integer.parseInt(descMap.value as String, 10)
+                } catch (Exception e) {
+                    colorModeInt = -1
+                }
+            }
+            String colorMode = (colorModeInt == 0) ? 'RGB' : (colorModeInt == 1) ? 'XY' : (colorModeInt == 2) ? 'CT' : UNKNOWN
             logTrace "parseColorControl: ColorMode= ${colorMode} (raw=0x${descMap.value}) - sending <b>colorName</b>"
             if (dw != null) {
                 Integer colorTemperature = dw.currentValue('colorTemperature') ?: -1
@@ -1610,7 +1647,7 @@ String getTemperatureUnit() {
 }
 
 Double convertTemperature(String value) {
-    Double valueInt = HexUtils.hexStringToInt(value) / 100.0
+    Double valueInt = HexUtils.hexStringToInt((value instanceof Integer) ? value.toString() : value) / 100.0
     String unit
     //log.debug "convertTemperature: location.temperatureScale:${location.temperatureScale}"
     if (location.temperatureScale == 'F') {
@@ -1627,7 +1664,7 @@ void parseThermostat(final Map descMap) {
     String unit = getTemperatureUnit()
     switch (descMap.attrId) {
         case '0000' : // LocalTemperature -> temperature
-            valueIntCorrected = convertTemperature(descMap.value)
+            valueIntCorrected = convertTemperature((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
             sendMatterEvent([
                 name: 'temperature',
                 value: valueIntCorrected,
@@ -1636,7 +1673,7 @@ void parseThermostat(final Map descMap) {
             ], descMap, false)
             break
         case '0012' : // OccupiedHeatingSetpoint -> heatingSetpoint
-            valueIntCorrected = convertTemperature(descMap.value)
+            valueIntCorrected = convertTemperature((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
             sendMatterEvent([
                 name: 'heatingSetpoint',
                 value: valueIntCorrected,
@@ -1652,8 +1689,9 @@ void parseThermostat(final Map descMap) {
             }
             break
         case '001B' : // ControlSequenceOfOperation -> supportedThermostatModes
-            String controlSequenceMatter = ThermostatControlSequences[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
-            List<String> supportedThermostatModes = HubitatThermostatModes[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
+            String valueStr = (descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value
+            String controlSequenceMatter = ThermostatControlSequences[HexUtils.hexStringToInt(valueStr)] ?: UNKNOWN
+            List<String> supportedThermostatModes = HubitatThermostatModes[HexUtils.hexStringToInt(valueStr)] ?: UNKNOWN
             sendMatterEvent([
                 name: 'supportedThermostatModes',
                 value:  JsonOutput.toJson(supportedThermostatModes),
@@ -1661,7 +1699,8 @@ void parseThermostat(final Map descMap) {
             ], descMap, false)
             break
         case '001C' : // SystemMode -> ThermostatSystemMode -> thermostatMode 
-            String systemMode = ThermostatSystemModes[HexUtils.hexStringToInt(descMap.value)] ?: UNKNOWN
+            String valueStr = String.valueOf(descMap.value)
+            String systemMode = ThermostatSystemModes[HexUtils.hexStringToInt(valueStr)] ?: UNKNOWN
             // change the attribute name first letter to lower case
             systemMode = systemMode[0].toLowerCase() + systemMode[1..-1]
             sendMatterEvent([
@@ -1683,7 +1722,7 @@ void parseThermostat(final Map descMap) {
             if (attrName in ThermostatClusterAttributes.values().toList()) {
                 String valueFormatted = descMap.value
                 if (attrName in ['AbsMinHeatSetpointLimit', 'AbsMaxHeatSetpointLimit', 'MinHeatSetpointLimit', 'MaxHeatSetpointLimit']) {
-                    valueFormatted = convertTemperature(descMap.value).toString()   
+                    valueFormatted = convertTemperature((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value).toString()   
                 }
                 eventMap = [name: eventName, value:valueFormatted, descriptionText: "${eventName} is: ${valueFormatted}"]
                 if (logEnable) { logInfo "parseThermostat: ${attrName} = ${valueFormatted}" }

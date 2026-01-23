@@ -603,7 +603,7 @@ void discoverAllStateMachine(Map data = null) {
                 break  // Stay in same state to process next endpoint
             }
             
-            logDebug "discoverAllStateMachine: st:${st} - partEndpoint = ${partEndpoint} partEndpointInt = ${partEndpointInt}"
+            logTrace "discoverAllStateMachine: st:${st} - partEndpoint = ${partEndpoint} partEndpointInt = ${partEndpointInt}"
             state.states['isInfo'] = true
             state.states['cluster'] = '001D'     // HexUtils.integerToHexString(partEndpointInt, 2)
             state.tmp = null
