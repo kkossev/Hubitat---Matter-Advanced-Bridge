@@ -61,19 +61,16 @@
  */
 
 static String version() { '1.7.0' }
-static String timeStamp() { '2026/01/23 11:32 PM' }
+static String timeStamp() { '2026/01/23 11:59 PM' }
 
-@Field static final Boolean _DEBUG = true                    // make it FALSE for production!
+@Field static final Boolean _DEBUG = false                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = true      // make it FALSE for production!
-@Field static final Boolean DO_NOT_TRACE_FFFX = false         // don't trace the FFFx global attributes
+@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
+@Field static final Boolean DO_NOT_TRACE_FFFX = true         // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
-//@Field static final String  DEVICE_TYPE = 'MATTER_BRIDGE'
-@Field static final Boolean STATE_CACHING = false            // enable/disable state caching
-@Field static final Integer CACHING_TIMER = 60               // state caching time in seconds
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
 @Field static final Integer REFRESH_TIMER = 6000             // refresh time in miliseconds
 @Field static final Integer INFO_AUTO_CLEAR_PERIOD = 60      // automatically clear the Info attribute after 60 seconds
@@ -3955,14 +3952,6 @@ void parseTest(par) {
 void updateStateStats(Map descMap) {
     if (state.stats  != null) { state.stats['rxCtr'] = (state.stats['rxCtr'] ?: 0) + 1 } else { state.stats =  [:] }
     if (state.lastRx != null) { state.lastRx['checkInTime'] = new Date().getTime() }     else { state.lastRx = [:] }
-    if (STATE_CACHING == true) {
-        String dni = device.getId() + '_' + descMap['endpoint'] ?: 'XX'
-        if (stateCache[dni] == null) { stateCache[dni] = [:] }
-        if (stateCache[dni][stats] == null) { stateCache[dni][stats]  = [:] }
-        if (stateCache[dni][lastRx] == null) { stateCache[dni][lastRx]  = [:] }
-        stateCache[dni][lastRx]['checkInTime'] = new Date().getTime()
-        stateCache[dni][lastRx]['rxCtr'] = (stateCache[dni]['rxCtr'] ?: 0) + 1
-    }
 }
 
 @Field static final Map<String, Map> stateCache = new ConcurrentHashMap<>()
