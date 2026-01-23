@@ -45,6 +45,8 @@
  * ver. 1.7.0  2026-01-23 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); adding ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
  *                                  added ping() delta calculcation; added cleanSubscribeMin/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP);
  *
+ *                                   TODO: fix [0000] DeviceTypeList = [[[tag:0, value:17], [tag:1, value:1]]] 
+ *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: TADO Matter Thermostat - JSON supportedModes are missing ! 
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
@@ -59,7 +61,7 @@
  */
 
 static String version() { '1.7.0' }
-static String timeStamp() { '2026/01/23 11:14 AM' }
+static String timeStamp() { '2026/01/23 10:03 PM' }
 
 @Field static final Boolean _DEBUG = true                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -816,22 +818,42 @@ void gatherAttributesValuesInfo(final Map descMap) {
                     return
                 }
                 // Normalize DeviceTypeList for display (show device types only, no revision numbers)
+                // TODO - remove this patch when newParse is fully adopted !
                 def displayValue = descMap.value
                 String deviceTypeNamesStr = ''
+                
+                // Only process DeviceTypeList from Descriptor cluster (0x001D)
                 if (descMap.cluster == '001D' && attrName == 'DeviceTypeList' && descMap.value instanceof List) {
-                    List rawList = descMap.value as List
-                    displayValue = (0..<rawList.size()).findAll { (it % 2) == 0 }.collect { rawList[it] }
+                    List rawList = []
+                    
+                    if (settings.newParse == true) {
+                        // Extract device type IDs from newParse format: [[[tag:0, value:22], [tag:1, value:1]]]
+                        descMap.value.each { structEntry ->
+                            if (structEntry instanceof List && structEntry.size() >= 1) {
+                                def deviceTypeEntry = structEntry[0]
+                                if (deviceTypeEntry instanceof Map && deviceTypeEntry.value != null) {
+                                    rawList.add(HexUtils.integerToHexString((Integer) deviceTypeEntry.value, 2))
+                                }
+                            }
+                        }
+                    } else {
+                        // Extract device type IDs from legacy format (even-indexed elements only)
+                        List fullList = descMap.value as List
+                        rawList = (0..<fullList.size()).findAll { (it % 2) == 0 }.collect { fullList[it] }
+                    }
+                    
+                    displayValue = rawList
+                    
                     // Add human-readable device type names
                     Map typeNames = deviceTypeNames(displayValue)
                     if (typeNames.names) {
                         String namesStr = typeNames.names.collect { "'${it}'" }.join(', ')
-                        if (typeNames.names.size() > 1 && typeNames.best) {
-                            deviceTypeNamesStr = "  (${namesStr}, best = '${typeNames.best}')"
-                        } else {
-                            deviceTypeNamesStr = "  (${namesStr})"
-                        }
+                        deviceTypeNamesStr = typeNames.names.size() > 1 && typeNames.best 
+                            ? "  (${namesStr}, best = '${typeNames.best}')"
+                            : "  (${namesStr})"
                     }
                 }
+                //
                 try {
                     tempIntValue = HexUtils.hexStringToInt(displayValue)
                     if (tempIntValue >= 10) {
@@ -926,6 +948,16 @@ Integer getDescMapValueAsInt(final Map descMap) {
         //logTrace "getDescMapValueAsInt: trying 'toInteger' for descMap.value:${descMap.value}"
         return descMap.value.toInteger()
     } catch (e) {
+        String rawValue = descMap.value?.toString()?.trim()
+        if (rawValue) {
+            String hexCandidate = rawValue
+            if (hexCandidate.startsWith('0x') || hexCandidate.startsWith('0X')) {
+                hexCandidate = hexCandidate.substring(2)
+            }
+            if (hexCandidate.matches('[0-9A-Fa-f]+')) {
+                return HexUtils.hexStringToInt(hexCandidate)
+            }
+        }
         logWarn "getDescMapValueAsInt: exception ${e} converting descMap.value:${descMap.value} to Integer"
         return safeNumberToInt(descMap.value, null)
     }
@@ -2465,8 +2497,8 @@ void fingerprintsToSubscriptionsList() {
                         logDebug "fingerprintsToSubscriptionsList: updateStateSubscriptionsList: adding endpointId=${endpointId} clusterInt:${clusterInt} attribute:${attribute} clusterListName=${clusterListName} to the state.subscriptions list!"
                         updateStateSubscriptionsList(addOrRemove = 'add', endpoint = safeHexToInt(endpointId), cluster = clusterInt, attrId = safeToInt(attribute))
                     }
-                    else {
-                        logWarn "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} clusterListName ${clusterListName} is not in the fingerprintMap!"
+                    else {  // changed to logDebug  on 2024-06-10 
+                        logDebug "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} clusterListName ${clusterListName} is not in the fingerprintMap!"
                     }
                 }
                 // done!
@@ -3907,29 +3939,43 @@ void test(par) {
 
 // - to be moved to matterLib.groovy when tested ! - 
 
-@Field static final Map<Integer, String> MATTER_DEVICE_TYPE_NAMES = [
-    // Common “node / utility” types (you already see these on EP0 a lot)
+@Field static final Map<Integer, String> MATTER_DEVICE_TYPE_NAMES_SUPPORTED = [
+    // Utility / node
     0x0016: 'Root Node',
     0x0011: 'Power Source',
-    0x0012: 'OTA Requestor',
     0x000E: 'Aggregator',
     0x0013: 'Bridged Node',
 
-    // Sensors / actuators you referenced in your logs & driver mapping
-    0x0043: 'Water Leak Detector',
-    0x0015: 'Contact Sensor',
-    0x0107: 'Occupancy Sensor',
-    0x0301: 'Thermostat',
-
-    // Lights (you already use these)
+    // Lighting
+    0x0100: 'On/Off Light',
+    0x0101: 'Dimmable Light',
     0x010C: 'Color Temperature Light',
     0x010D: 'Extended Color Light',
 
-    // On/Off / plug-ish
+    // Plugs / outlets
     0x010A: 'On/Off Plug-in Unit',
+    0x010B: 'Dimmable Plug-In Unit',
 
-    // “Generic Switch” often used for button/switch endpoints in practice
-    0x000F: 'Generic Switch'
+    // Switches / controls
+    0x0103: 'On/Off Light Switch',
+    0x0104: 'Dimmer Switch',
+    0x0105: 'Color Dimmer Switch',
+    0x000F: 'Generic Switch',
+
+    // Closures
+    0x000A: 'Door Lock',
+    0x0202: 'Window Covering',
+
+    // HVAC
+    0x0301: 'Thermostat',
+
+    // Sensors
+    0x0015: 'Contact Sensor',
+    0x0106: 'Light Sensor',
+    0x0107: 'Occupancy Sensor',
+    0x0302: 'Temperature Sensor',
+    0x0307: 'Humidity Sensor',
+    0x002C: 'Air Quality Sensor',
 ]
 
 // Normalizes a single element like "0016", "0x0016", "16" to int 0x0016
@@ -3957,7 +4003,7 @@ Map deviceTypeNames(List deviceTypeList) {
     (deviceTypeList ?: []).each { dt ->
         Integer id = normalizeDeviceTypeId(dt)
         if (id == null) return
-        String name = MATTER_DEVICE_TYPE_NAMES[id]
+        String name = MATTER_DEVICE_TYPE_NAMES_SUPPORTED[id]
         if (name != null) {
             names << name
         } else {
@@ -4005,20 +4051,6 @@ private boolean isAggregatorDevice(Map bd) {
     return hasParts && hasBridgedBasicSomewhere
 }
 
-/*
-private boolean isMatterBridgeFromBridgeDescriptor() {
-    Map bd = state.bridgeDescriptor ?: [:]
-    List<String> dt    = (bd.DeviceTypeList ?: [])*.toUpperCase()
-    List<String> parts = (bd.PartsList ?: [])*.toUpperCase()
-
-    boolean hasAggregatorType = dt.contains('000E')   // Aggregator
-    boolean hasParts          = parts && parts.size() > 0
-
-    // Bridge/Aggregator => must have Aggregator type AND expose parts
-    logDebug "isMatterBridgeFromBridgeDescriptor(): hasAggregatorType=${hasAggregatorType} hasParts=${hasParts}"
-    return hasAggregatorType && hasParts
-}
-*/
 
 private boolean isMatterBridgeByAnyEndpoint() {
     // scan all fingerprints (endpoint descriptor snapshots)
