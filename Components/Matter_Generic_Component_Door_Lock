@@ -41,7 +41,7 @@ import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
 @Field static final String matterComponentLockVersion = '1.3.2'
-@Field static final String matterComponentLockStamp   = '2025/01/24 9:17 PM'
+@Field static final String matterComponentLockStamp   = '2025/01/24 9:31 PM'
 
 @Field static final Boolean _DEBUG_LOCK = true              // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true      // disable on production
@@ -627,39 +627,25 @@ void clearCredential(BigDecimal credentialTypePar = null, BigDecimal credentialI
         logWarn 'clearCredential: ProgrammingPIN cannot be cleared.'
         return
     }
-/*
-    int index = credentialIndex != null ? credentialIndex : 0xFFFE
-    // Build CredentialStruct using cmdField for each field
-    List<Map<String, String>> credentialStruct = []
-    List<Map<String, String>> cmdFields = []
 
-    credentialStruct.add(matter.cmdField(DataType.UINT8, 0x00, HexUtils.integerToHexString(credentialType, 1))) // credentialType
-    credentialStruct.add(matter.cmdField(DataType.UINT16, 0x01, zigbee.swapOctets(HexUtils.integerToHexString(index, 2)))) // credentialIndex
+    int index = (credentialIndex != null) ? credentialIndex : 0xFFFE
 
-    log.trace "cmdFields=${cmdFields} credentialStruct=${credentialStruct}"
+    String typeHex  = HexUtils.integerToHexString(credentialType, 1)             // e.g. "01"
+    String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))  // e.g. "0900"
 
- // Wrap CredentialStruct as command field 0 (outer struct)
-    cmdFields.add(
-        matter.cmdField(DataType.STRUCTURE, 0x00, credentialStruct)
-    )
-    log.trace "cmdFields=${cmdFields} credentialStruct=${credentialStruct}"
+    // Build TLV dynamically
+    String tlv =
+            "15" +            // start outer struct
+            "35" + "00" +     // context tag 0, STRUCTURE (CredentialStruct)
+            "24" + "00" + typeHex +     // tag 0: uint8 credentialType
+            "25" + "01" + indexHex +    // tag 1: uint16 credentialIndex (LE)
+            "18" +            // end inner struct
+            "18"              // end outer struct
 
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x26, cmdFields)
-    logDebug "clearCredential: cmd=${cmd}"
-    parent?.sendToDevice(cmd)
-    */
-        int index = (credentialIndex != null) ? credentialIndex : 0xFFFE
+    String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {1518} {${tlv}}"
 
-    String typeHex  = HexUtils.integerToHexString(credentialType, 1)               // e.g. "01"
-    String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))    // e.g. "0900"
-
-    // Outer struct { 0: CredentialStruct { 0:type(uint8)=TT, 1:index(uint16)=IIII } }
-    String tlv = "15350024" + "00" + typeHex + "25" + "01" + indexHex + "1818"
-
-    //String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {${tlv}}"
-    String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {1518} {153500240001250109001818}"
-    logDebug "clearCredential: type=${credentialType}, index=${index} tlv=${tlv} cmd=${cmd}"
-    parent?.sendToDevice(cmd)
+    logDebug "clearCredential: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
+    parent?.sendToDevice(cmd)   
 }
 
 @Field static final Map<Integer, String> CredentialTypeEnum = [
