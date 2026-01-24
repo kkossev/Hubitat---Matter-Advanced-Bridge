@@ -400,9 +400,9 @@ void testObject(Object p) {
  * This is the main state machine for discovering the Matter Bridge and the bridged devices.
  *
  * @param data (optional) A map containing additional data to control the state machine execution.
- *             The following keys are supported:    TODO !!!
+ *             The following keys are supported:
     *             - action: START, STOP, RUNNING
-    *             - endpoint: the endpoint to be discovered (0 for the bridge)      // TODO - check how the method is called !
+    *             - endpoint: the endpoint to be discovered (0 for the bridge)
     *             - cluster: the cluster to be discovered
     *             - attribute: the attribute to be discovered
  */
@@ -431,8 +431,6 @@ void discoverAllStateMachine(Map data = null) {
     Integer retry = state['stateMachines']['discoverAllRetry']
     Integer maxRetries = STATE_MACHINE_MAX_RETRIES * getDiscoveryTimeoutScale()
     Integer stateMachinePeriod = STATE_MACHINE_PERIOD              // can be changed, depending on the expected execution time of the different states
-    //String fingerprintName = getFingerprintName(data.endpoint)
-    //String attributeName = getAttributeName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: HexUtils.integerToHexString(data.attribute, 2)])
     logTrace "discoverAllStateMachine: st:${st} retry:${retry} data:${data}"
     switch (st) {
         case DISCOVER_ALL_STATE_IDLE :
@@ -444,14 +442,13 @@ void discoverAllStateMachine(Map data = null) {
             if (state.bridgeDescriptor == null) { state.bridgeDescriptor = [] } // or state['bridgeDescriptor'] = [:] ?
             state.states['isInfo'] = true
             state['stateMachines']['discoverAllResult'] = RUNNING
-            // TODO
             boolean oldLogEnable = settings?.logEnable
             initializeVars(fullInit = true)            // added 02/09/2024
             if (_DEBUG == true) { device?.updateSetting('logEnable', oldLogEnable) }
             sendInfoEvent('Removing all current subscriptions ...')
             clearSubscriptionsState()                  // clear the subscriptions state
             st = DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS
-        // continue with the next state
+            // break is skipped intentionally - continue with the next state
         case DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS :
             sendInfoEvent('Discovering the Matter Device...')
             disoverGlobalElementsStateMachine([action: START, endpoint: 0, cluster: 0x001D, debug: false])
@@ -474,8 +471,7 @@ void discoverAllStateMachine(Map data = null) {
             }
             break
         case DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_LIST :
-            // Basic Info cluster 0x0028
-            readAttribute(0, 0x0028, 0xFFFB)
+            readAttribute(0, 0x0028, 0xFFFB)        // Basic Info cluster 0x0028
             // here we fill in 'toBeConfirmed' and 'Confirmation', because the readAttribute() is called directly !
             state['stateMachines']['toBeConfirmed'] = [0, 0x0028, 0xFFFB];  state['stateMachines']['Confirmation'] = false
             retry = 0; st = DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_LIST_WAIT
@@ -516,8 +512,8 @@ void discoverAllStateMachine(Map data = null) {
             if (state['stateMachines']['Confirmation'] == true) {
                 logTrace "discoverAllStateMachine: st:${st} - received bridgeDescriptor Basic Info reading confirmation!"
                 logRequestedClusterAttrResult([cluster:0x28, endpoint:0])
-                //st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS`
-                // 07/31/20204  skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
+                // st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS`
+                // 07/31/2024  skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
                 st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
             }
             else {
@@ -530,7 +526,7 @@ void discoverAllStateMachine(Map data = null) {
                 }
             }
             break
-        case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS :    // skipped - 07/31/20204
+        case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS :    // skipped - 07/31/2024
             // check if the General Diagnostics cluster 0x0033 is in the ServerList
             List<String> serverList = state.bridgeDescriptor['ServerList']
             logDebug "discoverAllStateMachine: DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS - serverList:${serverList}"
@@ -607,7 +603,7 @@ void discoverAllStateMachine(Map data = null) {
             state.states['isInfo'] = true
             state.states['cluster'] = '001D'     // HexUtils.integerToHexString(partEndpointInt, 2)
             state.tmp = null
-            // do not call 'toBeConfirmed' and 'Confirmation' here - it is filled in in the disoverGlobalElementsStateMachine() !
+            // do not call 'toBeConfirmed' and 'Confirmation' here - it is filled in the disoverGlobalElementsStateMachine() !
             disoverGlobalElementsStateMachine([action: START, endpoint: partEndpointInt, cluster: 0x001D, debug: false])
             /////////////////////////////////////////////////////////////////////////////////////////////////////////////
             stateMachinePeriod = STATE_MACHINE_PERIOD * 3
@@ -619,10 +615,8 @@ void discoverAllStateMachine(Map data = null) {
             Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
             String fingerprintName = getFingerprintName(partEndpointInt)
             if (state['stateMachines']['discoverGlobalElementsResult']  == SUCCESS) {
-                //logWarn "AFTER : state.states['cluster'] = ${state.states['cluster']}"
                 logDebug "discoverAllStateMachine: st:${st} - ['PartsList'][$partEndpoint] confirmation!"
                 logRequestedClusterAttrResult([cluster: 0x001D, endpoint: partEndpointInt])
-                //state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
                 sendInfoEvent("Found bridged device part #${partsListIndex} ${fingerprintName}")
                 // for each child device that has the BridgedDeviceBasicInformationCluster '39' in the ServerList ->  read the BridgedDeviceBasicInformationCluster attributes
                 st = DISCOVER_ALL_STATE_GET_BRIDGED_DEVICE_BASIC_INFO_STATE
@@ -632,7 +626,7 @@ void discoverAllStateMachine(Map data = null) {
                 retry++
                 if (retry > maxRetries) {
                     logWarn "discoverAllStateMachine: st:${st} - fingerprint${fingerprintName} timeout waiting for cluster 0x1D reading results !"
-                    //st = DISCOVER_ALL_STATE_ERROR
+                    // st = DISCOVER_ALL_STATE_ERROR
                     // continue with the next device, even if there is an error
                     sendInfoEvent("<b>ERROR discovering bridged device #${partsListIndex} ${fingerprintName} - timeout waiting for cluster 0x1D reading results !</b>")
                     state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
@@ -661,7 +655,7 @@ void discoverAllStateMachine(Map data = null) {
                 logDebug "discoverAllStateMachine: st:${st} - fingerprint ${fingerprintName} BridgedDeviceBasicInformationCluster '0039' is not in the ServerList ! (this is not obligatory)"
                 state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
                 st = DISCOVER_ALL_STATE_GET_PARTS_LIST_NEXT_DEVICE_STATE
-            // check the next bridged device ...
+                // check the next bridged device ...
             }
             break
         case DISCOVER_ALL_STATE_GET_BRIDGED_DEVICE_BASIC_INFO_WAIT_STATE :
@@ -772,33 +766,27 @@ void discoverAllStateMachine(Map data = null) {
                 matchedClustersList?.each { cluster ->
                     String clusterHex = HexUtils.integerToHexString(cluster, 2).toUpperCase()
                     String endpointHex = HexUtils.integerToHexString(partEndpointInt, 1).padLeft(2, '0').toUpperCase()
-                    
                     // Add attribute read requests
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFB))    // AttributeList
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFF8))    // GeneratedCommandList
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFF9))    // AcceptedCommandList
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFC))    // FeatureMap
-                    
                     // Track expected responses
                     expectedAttributes["${endpointHex}_${clusterHex}_FFFB"] = false
                     expectedAttributes["${endpointHex}_${clusterHex}_FFF8"] = false
                     expectedAttributes["${endpointHex}_${clusterHex}_FFF9"] = false
                     expectedAttributes["${endpointHex}_${clusterHex}_FFFC"] = false
                 }
-                
                 sendToDevice(matter.readAttributes(attributePaths))
-                
                 // Store expected attributes and endpoint for wait state
                 state['stateMachines']['clusterDataExpected'] = expectedAttributes
                 state['stateMachines']['clusterDataEndpoint'] = partEndpoint
                 state['stateMachines']['clusterDataRetry'] = 0
-                
                 logDebug "discoverAllStateMachine: st:${st} - waiting for ${expectedAttributes.size()} cluster attributes from endpoint ${partEndpoint}"
-                
                 // Move to wait state instead of immediately copying
                 stateMachinePeriod = STATE_MACHINE_PERIOD
                 st = DISCOVER_ALL_STATE_CLUSTER_DATA_WAIT
-            // 02/12/2024 - go next device !
+                // 02/12/2024 - go next device !
             }
             else {
                 logDebug "discoverAllStateMachine: st:${st} - fingerprintName ${fingerprintName} SupportedMatterClusters ${supportedClusters} are not in the ServerList ${ServerListCluster} !"
@@ -809,30 +797,24 @@ void discoverAllStateMachine(Map data = null) {
 
         case DISCOVER_ALL_STATE_CLUSTER_DATA_WAIT:
             Map<String, Boolean> expectedAttributes = state['stateMachines']['clusterDataExpected'] ?: [:]
-            
             if (expectedAttributes.isEmpty()) {
                 // No attributes to wait for, proceed immediately
                 logDebug "discoverAllStateMachine: st:${st} - no cluster data expected, proceeding"
                 st = DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN
                 break
             }
-            
             // Check if all expected attributes have been received
             Boolean allReceived = expectedAttributes.values().every { it == true }
             Integer receivedCount = expectedAttributes.values().count { it == true }
             Integer totalCount = expectedAttributes.size()
-            
             if (allReceived) {
                 logDebug "discoverAllStateMachine: st:${st} - all ${totalCount} cluster attributes received!"
-                
                 // Clear tracking data
                 state['stateMachines']['clusterDataExpected'] = null
                 state['stateMachines']['clusterDataEndpoint'] = null
-                
                 // Move to next device index now (was done prematurely before)
                 Integer partsListIndex = state['stateMachines']['discoverAllPartsListIndex'] ?: 0
                 state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
-                
                 // Proceed to copy complete fingerprint
                 retry = 0
                 stateMachinePeriod = 100  // Quick transition
@@ -841,23 +823,18 @@ void discoverAllStateMachine(Map data = null) {
             else {
                 // Still waiting for some attributes
                 logTrace "discoverAllStateMachine: st:${st} - waiting for cluster data (${receivedCount}/${totalCount} received, retry=${retry})"
-                
                 retry++
                 stateMachinePeriod = STATE_MACHINE_PERIOD
-                
                 if (retry > maxRetries) {
                     // Timeout - proceed anyway with incomplete data
                     List<String> missing = expectedAttributes.findAll { k, v -> v == false }.collect { it.key }
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for cluster data! Missing: ${missing}"
-                    
                     // Clear tracking data
                     state['stateMachines']['clusterDataExpected'] = null
                     state['stateMachines']['clusterDataEndpoint'] = null
-                    
                     // Move to next device index
                     Integer partsListIndex = state['stateMachines']['discoverAllPartsListIndex'] ?: 0
                     state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
-                    
                     // Proceed to copy (incomplete) fingerprint
                     retry = 0
                     st = DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN
@@ -874,10 +851,8 @@ void discoverAllStateMachine(Map data = null) {
                 // Normalize endpoint to 2 characters for DNI (e.g., "0001" -> "01")
                 String normalizedEndpoint = HexUtils.integerToHexString(partEndpointInt, 1).toUpperCase()
                 String dni = "${device.id}-${normalizedEndpoint}"
-                
                 logDebug "discoverAllStateMachine: st:${st} - copying COMPLETE fingerprint ${fingerprintName} to child device ${dni}"
                 copyEntireFingerprintToChild(fingerprintName, dni)
-                
                 // Log what was copied for verification
                 Map fp = state[fingerprintName]
                 List<String> clusterKeys = fp?.keySet()?.findAll { it.contains('_') }?.toList()

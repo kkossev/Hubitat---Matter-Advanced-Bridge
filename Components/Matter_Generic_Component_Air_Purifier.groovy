@@ -307,9 +307,14 @@ void logWarn(msg)  { if (settings.logEnable)   { log.warn  "${device.displayName
  * @return Rounded integer value
  */
 Integer decodeIeee754Float(String hexValue) {
-    Integer bits = Integer.parseUnsignedInt(hexValue, 16)
-    Float floatValue = Float.intBitsToFloat(bits)
-    return Math.round(floatValue)
+    // Minimal version: expects valid String input (hex or decimal)
+    if (hexValue == null) return null
+    if (hexValue =~ /^\d+\.\d+$/) {
+        return Math.round(Float.parseFloat(hexValue))
+    } else {
+        Integer bits = Integer.parseUnsignedInt(hexValue, 16)
+        return Math.round(Float.intBitsToFloat(bits))
+    }
 }
 
 void refresh() {
@@ -456,8 +461,16 @@ void processUnprocessed(Map description) {
             if (txtEnable) { log.info "${descriptionText}" }
             break
         case '042A_0000': // attribute 'pm25', 'number'
-            Integer pm25Int = decodeIeee754Float(descMap.value)
-            if (logEnable) { log.debug "${device.displayName} PM2.5 raw hex: ${descMap.value}" }
+            Integer pm25Int
+            if (descMap.value instanceof Number) {
+                pm25Int = Math.round(descMap.value as Float)
+            } else if (descMap.value instanceof String) {
+                pm25Int = decodeIeee754Float(descMap.value)
+            } else {
+                logWarn "Unexpected type for PM2.5 value: value=${descMap.value}, not Number or String"
+                return
+            }
+            if (logEnable) { log.debug "${device.displayName} PM2.5 raw: ${descMap.value}" }
             if (logEnable) { log.debug "${device.displayName} PM2.5 decoded: ${pm25Int} μg/m³" }
             // Check threshold from preference
             Integer threshold = (settings.pm25ReportDelta ?: '03') as Integer
@@ -472,8 +485,16 @@ void processUnprocessed(Map description) {
             if (txtEnable) { log.info "${descriptionText}" }
             break
         case '040D_0000': // CO₂ Concentration Measurement
-            Integer co2 = decodeIeee754Float(descMap.value)
-            if (logEnable) { log.debug "${device.displayName} CO₂ raw hex: ${descMap.value}" }
+            Integer co2
+            if (descMap.value instanceof Number) {
+                co2 = Math.round(descMap.value as Float)
+            } else if (descMap.value instanceof String) {
+                co2 = decodeIeee754Float(descMap.value)
+            } else {
+                logWarn "Unexpected type for CO₂ value: value=${descMap.value}, not Number or String"
+                return
+            }
+            if (logEnable) { log.debug "${device.displayName} CO₂ raw: ${descMap.value}" }
             if (logEnable) { log.debug "${device.displayName} CO₂ decoded: ${co2} ppm" }
             // Check threshold from preference
             Integer threshold = (settings.co2ReportDelta ?: '10') as Integer
@@ -494,9 +515,17 @@ void processUnprocessed(Map description) {
             if (isInfoMode) {
                 String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
                 String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
-                Integer decoded = decodeIeee754Float(descMap.value)
+                Integer decoded
+                if (descMap.value instanceof Number) {
+                    decoded = Math.round(descMap.value as Float)
+                } else if (descMap.value instanceof String) {
+                    decoded = decodeIeee754Float(descMap.value)
+                } else {
+                    logWarn "Unexpected type for MinMeasuredValue: value=${descMap.value}, not Number or String"
+                    return
+                }
                 String attrName = ConcentrationMeasurementClusterAttributes[0x0001]
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (hex: ${descMap.value})"
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
             }
             break
         
@@ -505,9 +534,17 @@ void processUnprocessed(Map description) {
             if (isInfoMode) {
                 String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
                 String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
-                Integer decoded = decodeIeee754Float(descMap.value)
+                Integer decoded
+                if (descMap.value instanceof Number) {
+                    decoded = Math.round(descMap.value as Float)
+                } else if (descMap.value instanceof String) {
+                    decoded = decodeIeee754Float(descMap.value)
+                } else {
+                    logWarn "Unexpected type for MaxMeasuredValue: value=${descMap.value}, not Number or String"
+                    return
+                }
                 String attrName = ConcentrationMeasurementClusterAttributes[0x0002]
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (hex: ${descMap.value})"
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
             }
             break
         
@@ -516,9 +553,17 @@ void processUnprocessed(Map description) {
             if (isInfoMode) {
                 String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
                 String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
-                Integer decoded = decodeIeee754Float(descMap.value)
+                Integer decoded
+                if (descMap.value instanceof Number) {
+                    decoded = Math.round(descMap.value as Float)
+                } else if (descMap.value instanceof String) {
+                    decoded = decodeIeee754Float(descMap.value)
+                } else {
+                    logWarn "Unexpected type for Uncertainty: value=${descMap.value}, not Number or String"
+                    return
+                }
                 String attrName = ConcentrationMeasurementClusterAttributes[0x0007]
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (hex: ${descMap.value})"
+                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
             }
             break
         
