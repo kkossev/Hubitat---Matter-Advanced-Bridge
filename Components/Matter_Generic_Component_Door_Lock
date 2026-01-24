@@ -1,3 +1,4 @@
+
 /*
   *  'Matter Generic Component Door Lock' - component driver for Matter Advanced Bridge
   *
@@ -22,7 +23,8 @@
   * ver. 1.3.1  2025-01-22 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements (clearUser seems to be working!)
   * ver. 1.3.2  2025-01-24 kkossev + GPT-4.1 : newParse : true ; use matterCommonLib ;
   * 
-  *                                  TODO: add driver version to the state variables 
+  *                                  TODO: fingerprintData "AcceptedCommandList is empty !!!
+  *                                  TODO: add driver version to the state variables
   *                                  TODO: initialize lock with 'unknown' attributes when the device is created
   *                                  TODO: filter duplicated events
   *                                  TODO: add [physical] [digital] event type to events and logs
@@ -39,7 +41,7 @@ import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
 @Field static final String matterComponentLockVersion = '1.3.2'
-@Field static final String matterComponentLockStamp   = '2025/01/24 8:42 AM'
+@Field static final String matterComponentLockStamp   = '2025/01/24 9:17 PM'
 
 @Field static final Boolean _DEBUG_LOCK = true              // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true      // disable on production
@@ -70,7 +72,7 @@ metadata {
 
         command    'identify', [[name: 'Identify the lock device']]
         command    'getInfo', [[name: 'Check the live logs and the device data for additional infoormation on this device']]
-        command    'unlockWithPIN', [[name: 'pin*', type: 'STRING', description: 'unlock with PIN (not available on all locks)']]
+        //command    'unlockWithPIN', [[name: 'pin*', type: 'STRING', description: 'unlock with PIN (not available on all locks)']]
         command    'unboltDoor', [[name: 'Unbolt door (not available on all locks)']]
         
         // LockCodes custom commands with dynamic feature support indication
@@ -102,6 +104,8 @@ metadata {
             command 'getCredentialStatus', [[name:'pinIndex*', type: 'STRING', description: 'PIN Index (1-255)', defaultValue: '1']]
             command 'getUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
             command 'clearUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
+            command 'clearCredential', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type (0:ProgrammingPIN,1:PIN,2:RFID,3:Fingerprint,4:FingerVein,5:Face)', defaultValue: '1'],
+                                     [name:'credentialIndex', type: 'NUMBER', description: 'Credential Index (0 to clear all)', defaultValue: '9']]
             command 'testLock', [[name: 'testLock', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
         }
     }
@@ -473,7 +477,8 @@ void identify() {
     parent?.componentIdentify(device)
 }
 
-// Command to lock device
+// 5.2.10.1. LockDoor Command (0x00)
+// This command causes the lock device to lock the door. This command includes an optional code for the lock. The door lock MAY require a PIN depending on the value of the RequirePINForRemoteOperation attribute.
 void lock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
@@ -483,7 +488,8 @@ void lock() {
     parent?.sendToDevice(cmd)
 }
 
-// Command to unlock device
+// 5.2.10.2. UnlockDoor Command (0x01)
+// This command causes the lock device to unlock the door. This command includes an optional code for the lock. The door lock MAY require a code depending on the value of the RequirePINForRemoteOperation attribute.
 void unlock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
@@ -492,6 +498,205 @@ void unlock() {
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000)
     parent?.sendToDevice(cmd)
 }
+
+// 5.2.10.3. UnlockWithTimeout Command (0x02) - TODO: implemented it later if needed
+
+// Hubitat wrap for setUser
+void setCode(codePosition, pinCode, name = null) {
+    setUser(codePosition, pinCode, name)
+}   
+
+
+// TODO 
+// 5.2.10.34. SetUser Command (0x1A) - TODO: implement full user and credential management (very complex)
+void setUser(codePosition, pinCode, name = null) {
+    if (!supportsLockCodes()) {
+        logWarn "setCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "Lock <b>does not</b> support PIN codes", isStateChange: true)
+        return
+    }
+    
+    logInfo "setCode: position=${codePosition}, PIN=${pinCode ? '****' : 'null'}, name=${name}"
+    // TODO - implement full user and credential management
+    
+    logWarn "setCode: Not yet implemented - requires Matter User and Credential management"
+    sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "setCode (Matter command setUser) not yet implemented", isStateChange: true)
+}
+
+
+// TODO
+// 5.2.10.35. GetUser Command (0x1B)
+// Retrieve user.
+void getUser(String userIndex) {
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn "getUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
+        return
+    }
+    
+    if (!userIndex) { logWarn "getUser: User index is required" ; return }
+
+    Integer index = userIndex as Integer
+    // TODO: use device data "Number Of Total Users Supported" to validate index ! ( U200 supports up to 10 users )
+    if (index < 1 || index > 10) {
+        logWarn "getUser: User index must be 1-10, got '${userIndex}'"
+        return
+    }
+    
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+    
+
+    // cmdFields: ID:0, Name:UserIndex, Type:uint16, Constraint: 1 to NumberOfTotalUsersSupported, Conformance:Mandatory
+    // An InvokeResponse command SHALL be sent with an appropriate error (e.g. FAILURE, INVALID COMMAND, etc.) as needed otherwise the GetUserResponse Command SHALL be sent implying a status of SUCCESS
+    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    List<Map<String, String>> cmdFields = []
+    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
+
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, cmdFields)
+    logDebug "getUser: cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "querying user information for index ${index}...")
+    parent?.sendToDevice(cmd)
+}
+
+// 5.2.10.37. ClearUser Command (0x1D) - WORKING ! :) 
+// Clears a user or all Users. 
+// // cmdFields: ID:0, Name:UserIndex, Type:uint16, Constraint: 1 to NumberOfTotalUsersSupported, Default:0xFFFE, Conformance:Mandatory
+void clearUser(String userIndex) {
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn "clearUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
+        return
+    }
+    
+    if (!userIndex) {
+        logWarn "clearUser: User index is required"
+        return
+    }
+    // TODO: use device data "Number Of Total Users Supported" to validate index ! ( U200 supports up to 10 users )
+    Integer index = userIndex as Integer
+    if (index < 1 || index > 10) {
+        logWarn "clearUser: User index must be 1-10, got '${userIndex}'"
+        return
+    }
+    
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+    
+    parent?.componentLog(device, 'debug', "clearing user at index ${index}...")
+    logDebug "clearUser: clearing user at index ${index}"
+    List<Map<String, String>> cmdFields = []
+    cmdFields.add(matter.cmdField(DataType.UINT16, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001D, 2000, cmdFields)
+
+    parent?.sendToDevice(cmd)
+    // clearUser is working, for existing users it returns a response in an event : 
+    //       descMap = [callbackType:Event, endpointInt:1, clusterInt:257, evtId:4, timestamp:946765068557, priority:1, data:[4:STRUCT:[6:UINT:8, 3:UINT:8, 0:UINT:2, 1:UINT:1, 4:UINT:3, 5:UINT:112233, 2:UINT:7]], value:[6:8, 3:8, 0:2, 1:1, 4:3, 5:112233, 2:7], cluster:0101, endpoint:01]
+    // :) 
+}
+
+
+
+// 5.2.10.44. ClearCredential Command (0x26)
+// Clears a single credential, all credentials of one type, or all credentials of all types.
+// Usage:
+//   clearCredential()                  // Clear all credentials of all types
+//   clearCredential(type)              // Clear all credentials of one type (type: CredentialTypeEnum)
+//   clearCredential(type, index)       // Clear a single credential (type: CredentialTypeEnum, index: credential index)
+//
+// CredentialTypeEnum: 1=PIN, 2=RFID, 3=Fingerprint, 4=Face, etc. (ProgrammingPIN not allowed)
+// For all credentials of a type: index = 0xFFFE
+// For all credentials of all types: type = null, index = null
+// For a single credential: type = credential type, index = credential index
+//
+// cmdFields: ID:0, Name:Credential, Type:CredentialStruct, Quality:desc, Conformance:Mandatory
+void clearCredential(BigDecimal credentialTypePar = null, BigDecimal credentialIndexPar = null) {
+    Integer credentialType = credentialTypePar != null ? credentialTypePar.intValue() : null
+    Integer credentialIndex = credentialIndexPar != null ? credentialIndexPar.intValue() : null
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+
+    if (credentialType == null && credentialIndex == null) {
+        // Clear all credentials of all types (Credential field SHALL be null)
+        logInfo 'clearCredential: clearing all credentials of all types'
+        String cmd = matter.invoke(deviceNumber, 0x0101, 0x26)
+        parent?.sendToDevice(cmd)
+        return
+    }
+
+    if (credentialType == 0) {
+        logWarn 'clearCredential: ProgrammingPIN cannot be cleared.'
+        return
+    }
+/*
+    int index = credentialIndex != null ? credentialIndex : 0xFFFE
+    // Build CredentialStruct using cmdField for each field
+    List<Map<String, String>> credentialStruct = []
+    List<Map<String, String>> cmdFields = []
+
+    credentialStruct.add(matter.cmdField(DataType.UINT8, 0x00, HexUtils.integerToHexString(credentialType, 1))) // credentialType
+    credentialStruct.add(matter.cmdField(DataType.UINT16, 0x01, zigbee.swapOctets(HexUtils.integerToHexString(index, 2)))) // credentialIndex
+
+    log.trace "cmdFields=${cmdFields} credentialStruct=${credentialStruct}"
+
+ // Wrap CredentialStruct as command field 0 (outer struct)
+    cmdFields.add(
+        matter.cmdField(DataType.STRUCTURE, 0x00, credentialStruct)
+    )
+    log.trace "cmdFields=${cmdFields} credentialStruct=${credentialStruct}"
+
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x26, cmdFields)
+    logDebug "clearCredential: cmd=${cmd}"
+    parent?.sendToDevice(cmd)
+    */
+        int index = (credentialIndex != null) ? credentialIndex : 0xFFFE
+
+    String typeHex  = HexUtils.integerToHexString(credentialType, 1)               // e.g. "01"
+    String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))    // e.g. "0900"
+
+    // Outer struct { 0: CredentialStruct { 0:type(uint8)=TT, 1:index(uint16)=IIII } }
+    String tlv = "15350024" + "00" + typeHex + "25" + "01" + indexHex + "1818"
+
+    //String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {${tlv}}"
+    String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {1518} {153500240001250109001818}"
+    logDebug "clearCredential: type=${credentialType}, index=${index} tlv=${tlv} cmd=${cmd}"
+    parent?.sendToDevice(cmd)
+}
+
+@Field static final Map<Integer, String> CredentialTypeEnum = [
+    0: 'ProgrammingPIN', // Programming PIN code credential type (O)
+    1: 'PIN',            // PIN code credential type (PIN)
+    2: 'RFID',           // RFID identifier credential type (RID)
+    3: 'Fingerprint',    // Fingerprint identifier credential type (FGP)
+    4: 'FingerVein',     // Finger vein identifier credential type (FGP)
+    5: 'Face'            // Face identifier credential type (FACE)
+]
+
+@Field static final Map<Integer, String> DataOperationTypeEnum = [
+    0: 'Add',    // Data is being added or was added (M)
+    1: 'Clear',  // Data is being cleared or was cleared (M)
+    2: 'Modify'  // Data is being modified or was modified (M)
+]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Command to unbolt door (for locks with separate bolt mechanism)
 void unboltDoor() {
@@ -504,19 +709,14 @@ void unboltDoor() {
     parent?.sendToDevice(cmd)
 }
 
+/*
 //Command to unlock device with PIN
 void unlockWithPIN(String pin) {
     if (!pin) {
         logWarn "unlockWithPIN: PIN is required"
         return
     }
-    /* TODO: validate PIN format and length, depending on lock capabilities and the driver settings
-    if (!(pin ==~ /^\d{6}$/)) {
-        logWarn "unlockWithPIN: PIN must be exactly 6 digits, got '${pin}'"
-        return
-    }
-    */
-    
+
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
     
@@ -536,6 +736,7 @@ void unlockWithPIN(String pin) {
     logDebug "unlockWithPIN: sending command with payload: ${cmdPayload}"
     parent?.sendToDevice(cmd)
 }
+*/
 
 // Command to query PIN credential status
 void getCredentialStatus(String pinIndex) {
@@ -582,65 +783,7 @@ void getCredentialStatus(String pinIndex) {
     parent?.sendToDevice(cmd)
 }
 
-// Command to get user information
-void getUser(String userIndex) {
-    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
-        logWarn "getUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
-        return
-    }
-    
-    if (!userIndex) {
-        logWarn "getUser: User index is required"
-        return
-    }
-    Integer index = userIndex as Integer
-    if (index < 1 || index > 65534) {
-        logWarn "getUser: User index must be 1-65534, got '${userIndex}'"
-        return
-    }
-    
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "querying user information for index ${index}...")
-    
 
-    List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
-
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, cmdFields)
-    logDebug "getUser: cmd=${cmd}"
-    parent?.sendToDevice(cmd)
-}
-
-// Command to clear/delete a user
-void clearUser(String userIndex) {
-    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
-        logWarn "clearUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
-        return
-    }
-    
-    if (!userIndex) {
-        logWarn "clearUser: User index is required"
-        return
-    }
-    Integer index = userIndex as Integer
-    if (index < 1 || index > 65534) {
-        logWarn "clearUser: User index must be 1-65534, got '${userIndex}'"
-        return
-    }
-    
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "clearing user at index ${index}...")
-    logDebug "clearUser: clearing user at index ${index}"
-    List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001D, 2000, cmdFields)
-
-    parent?.sendToDevice(cmd)
-}
 
 // Helper function to check if setCodeLength is supported by this lock
 Boolean isSetCodeLengthEnabled() {
@@ -721,30 +864,8 @@ String isCodeAllowed() {
 // Note: These methods are part of the LockCodes capability which is always declared
 // However, not all Matter locks support PIN management. Each method checks feature support.
 
-/**
- * Set a PIN code for a user (LockCodes capability)
- * @param codePosition Position/slot number (1-based)
- * @param pinCode PIN code (4-8 digits typically)
- * @param name Optional user name
- */
-void setCode(codePosition, pinCode, name = null) {
-    if (!supportsLockCodes()) {
-        logWarn "setCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
-        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "Lock <b>does not</b> support PIN codes", isStateChange: true)
-        return
-    }
-    
-    logInfo "setCode: position=${codePosition}, PIN=${pinCode ? '****' : 'null'}, name=${name}"
-    
-    // TODO: Implement SetCredential command (0x22) with proper TLV encoding
-    // This requires:
-    // 1. Check if user exists at this position (GetUser 0x1B)
-    // 2. If not, create user (SetUser 0x1A)
-    // 3. Set credential (SetCredential 0x22)
-    
-    logWarn "setCode: Not yet implemented - requires Matter User and Credential management"
-    sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "setCode not yet implemented", isStateChange: true)
-}
+
+
 
 /**
  * Delete a PIN code (LockCodes capability)
@@ -1120,6 +1241,7 @@ void processLockOperationEvent(Map eventMap) {
     sendEvent(name: 'lastOperationSource', value: source, descriptionText: descriptionText, isStateChange: true)
 }
 
+// LockOperationError (0x03)
 void processLockOperationErrorEvent(Map eventMap) {
     // Event fields: lockOperationType, operationSource, operationError, userIndex, fabricIndex, sourceNode, credentials
     logDebug "processLockOperationErrorEvent: description=${eventMap}"
@@ -1145,6 +1267,7 @@ void processLockOperationErrorEvent(Map eventMap) {
     sendEvent(name: 'lastLockOperationError', value: error, descriptionText: descriptionText, isStateChange: true)
 }
 
+// LockUserChange (0x04) event
 void processLockUserChangeEvent(Map description) {
     // Event fields: lockDataType, dataOperationType, operationSource, userIndex, fabricIndex, sourceNode, dataIndex
     // descMap = [callbackType:Event, endpointInt:1, clusterInt:257, evtId:4, timestamp:946743149680, priority:1, 
@@ -1295,6 +1418,53 @@ void clearInfoMode() {
     0xFFFC  : 'FeatureMap',                                         // FeatureMap, R V, M
     0xFFFD  : 'ClusterRevision'                                     // uint16, R V, M
 ]
+
+// Aqara U200 : [FFF9] AcceptedCommandList: [0000, 0001, 0003, 001A, 001B, 001D, 0022, 0024, 0026]
+// Aqara U200 : [FFF8] GeneratedCommandList: [001C, 0023, 0025]
+
+@Field static final Map<Integer, String> DoorLockClusterCommands = [
+    // Command ID : Name (per Matter 5.2.10)
+    0x00    : 'LockDoor',                    // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:M
+    0x01    : 'UnlockDoor',                  // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:M
+    0x02    : 'Toggle',                      // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:X
+    0x03    : 'UnlockWithTimeout',           // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:O
+    0x04    : 'GetLogRecord',                // Direction:client ⇒ server; Response:GetLogRecordResponse; Access:M; Conformance:LOG
+    0x05    : 'SetPINCode',                  // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & PIN
+    0x06    : 'GetPINCode',                  // Direction:client ⇒ server; Response:GetPINCodeResponse; Access:A; Conformance:!USR & PIN
+    0x07    : 'ClearPINCode',                // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & PIN
+    0x08    : 'ClearAllPINCodes',            // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & PIN
+    0x09    : 'SetUserStatus',               // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x0A    : 'GetUserStatus',               // Direction:client ⇒ server; Response:GetUserStatusResponse; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x0B    : 'SetWeekDaySchedule',          // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:WDSCH
+    0x0C    : 'GetWeekDaySchedule',          // Direction:client ⇒ server; Response:GetWeekDayScheduleResponse; Access:A; Conformance:WDSCH
+    0x0D    : 'ClearWeekDaySchedule',        // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:WDSCH
+    0x0E    : 'SetYearDaySchedule',          // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:YDSCH
+    0x0F    : 'GetYearDaySchedule',          // Direction:client ⇒ server; Response:GetYearDayScheduleResponse; Access:A; Conformance:YDSCH
+    0x10    : 'ClearYearDaySchedule',        // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:YDSCH
+    0x11    : 'SetHolidaySchedule',          // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:HDSCH
+    0x12    : 'GetHolidaySchedule',          // Direction:client ⇒ server; Response:GetHolidayScheduleResponse; Access:A; Conformance:HDSCH
+    0x13    : 'ClearHolidaySchedule',        // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:HDSCH
+    0x14    : 'SetUserType',                 // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x15    : 'GetUserType',                 // Direction:client ⇒ server; Response:GetUserTypeResponse; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x16    : 'SetRFIDCode',                 // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & RID
+    0x17    : 'GetRFIDCode',                 // Direction:client ⇒ server; Response:GetRFIDCodeResponse; Access:A; Conformance:!USR & RID
+    0x18    : 'ClearRFIDCode',               // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & RID
+    0x19    : 'ClearAllRFIDCodes',           // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & RID
+    0x1A    : 'SetUser',                     // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:USR
+    0x1B    : 'GetUser',                     // Direction:client ⇒ server; Response:GetUserResponse; Access:A; Conformance:USR
+    0x1C    : 'GetUserResponse',             // Direction:client ⇐ server; Response:No; Access:N; Conformance:USR
+    0x1D    : 'ClearUser',                   // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:USR
+    0x20    : 'OperatingEventNotification',  // Direction:client ⇐ server; Response:No; Access:N; Conformance:[NOT]
+    0x21    : 'ProgrammingEventNotification',// Direction:client ⇐ server; Response:No; Access:N; Conformance:[NOT]
+    0x22    : 'SetCredential',               // Direction:client ⇒ server; Response:SetCredentialResponse; Access:A T; Conformance:USR
+    0x23    : 'SetCredentialResponse',       // Direction:client ⇐ server; Response:No; Access:N; Conformance:USR
+    0x24    : 'GetCredentialStatus',         // Direction:client ⇒ server; Response:GetCredentialStatusResponse; Access:A; Conformance:USR
+    0x25    : 'GetCredentialStatusResponse', // Direction:client ⇐ server; Response:No; Access:N; Conformance:USR
+    0x26    : 'ClearCredential',             // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:USR
+    0x27    : 'UnboltDoor'                   // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:UBOLT
+]
+
+
 
 // 5.2.6.2. LockState Attribute (0x0000)
 @Field static final Map<Integer, String> DoorLockClusterLockState = [
