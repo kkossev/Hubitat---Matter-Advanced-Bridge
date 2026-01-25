@@ -42,10 +42,10 @@
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
  * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : A major refactoring of the Door Lock driver; optimized subsciption management;
  *                                  water leak sensors (deviceType 0x0043) automatic detection
- * ver. 1.7.0  2026-01-23 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); adding ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
- *                                  added ping() delta calculcation; added cleanSubscribeMin/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP);
+ * ver. 1.7.0  2026-01-25 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); added ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
+ *                                  added ping() delta calculcation; added cleanSubscribe Min/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP); added matterCommonLib.groovy library for common functions;
  *
- *                                   TODO: add matterCommonLib.groovy library for common functions
+ *                                   TODO: thermostat component - supported modes JSON initialization
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: TADO Matter Thermostat - JSON supportedModes are missing ! 
@@ -62,16 +62,16 @@
  */
 
 static String version() { '1.7.0' }
-static String timeStamp() { '2026/01/24 12:13 PM' }
+static String timeStamp() { '2026/01/25 8:30 PM' }
 
-@Field static final Boolean _DEBUG = true                    // make it FALSE for production!
+@Field static final Boolean _DEBUG = false                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
-@Field static final Boolean DO_NOT_TRACE_FFFX = false         // make it  TRUE for production! (don't trace the FFFx global attributes)
-@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
+@Field static final Boolean DO_NOT_TRACE_FFFX = true         // make it  TRUE for production! (don't trace the FFFx global attributes)
+@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
 @Field static final Integer REFRESH_TIMER = 6000             // refresh time in miliseconds
 @Field static final Integer INFO_AUTO_CLEAR_PERIOD = 60      // automatically clear the Info attribute after 60 seconds
@@ -1229,11 +1229,29 @@ void parseOccupancySensing(final Map descMap) {
     }
 }
 
-String getEventName(final Map descMap) { 
-    return (descMap.evtId != null) ? getEventName(descMap.cluster, descMap.evtId) : 'NONE' 
+String getEventName(final Map descMap) {
+    if (descMap?.evtId == null) {
+        return 'NONE'
+    }
+
+    Integer evtInt = null
+    Object evtIdVal = descMap.evtId
+
+    // newParse=true: Hubitat provides evtId as a Number (typically Long)
+    if (evtIdVal instanceof Number) {
+        evtInt = ((Number)evtIdVal).intValue()
+    }
+    // newParse=false: evtId is typically a 4-char hex String (e.g. '0006')
+    else {
+        evtInt = safeHexToInt(evtIdVal?.toString(), null)
+    }
+
+    return (evtInt != null) ? (getEventsMapByClusterId(descMap.cluster)?.get(evtInt) ?: UNKNOWN) : UNKNOWN
 }
+
 String getEventName(final String cluster, String evtId) {
-     return getEventsMapByClusterId(cluster)?.get(HexUtils.hexStringToInt(evtId)) ?: UNKNOWN 
+    Integer evtInt = safeHexToInt(evtId, null)
+    return (evtInt != null) ? (getEventsMapByClusterId(cluster)?.get(evtInt) ?: UNKNOWN) : UNKNOWN
 }
 
 
@@ -1328,7 +1346,7 @@ void parseIlluminanceMeasurement(final Map descMap) { // 0400
 void parseTemperatureMeasurement(final Map descMap) { // 0402
     if (descMap.cluster != '0402') { logWarn "parseTemperatureMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Temperature
-        Double valueInt = HexUtils.hexStringToInt(descMap.value) / 100.0
+        Double valueInt = safeHexToInt(descMap.value) / 100.0
         String unit
         //log.debug "parseTemperatureMeasurement: location.temperatureScale:${location.temperatureScale}"
         if (valueInt < -100 || valueInt > 300) {
@@ -1361,7 +1379,7 @@ void parseHumidityMeasurement(final Map descMap) { // 0405
         return
     }
     if (descMap.attrId == '0000') { // Humidity
-        Double valueInt = HexUtils.hexStringToInt(descMap.value) / 100.0
+        Double valueInt = safeHexToInt(descMap.value) / 100.0
         if (valueInt <= 0 || valueInt > 100) {
             logWarn "parseHumidityMeasurement: valueInt:${valueInt} is out of range"
             return
@@ -1656,8 +1674,8 @@ String getTemperatureUnit() {
     return location.temperatureScale == 'F' ? "\u00B0" + 'F' : "\u00B0" + 'C'
 }
 
-Double convertTemperature(String value) {
-    Double valueInt = HexUtils.hexStringToInt((value instanceof Integer) ? value.toString() : value) / 100.0
+Double convertTemperature(final Map descMap) {
+    Double valueInt = safeHexToInt(descMap.value) / 100.0
     String unit
     //log.debug "convertTemperature: location.temperatureScale:${location.temperatureScale}"
     if (location.temperatureScale == 'F') {
@@ -1674,7 +1692,7 @@ void parseThermostat(final Map descMap) {
     String unit = getTemperatureUnit()
     switch (descMap.attrId) {
         case '0000' : // LocalTemperature -> temperature
-            valueIntCorrected = convertTemperature((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
+            valueIntCorrected = convertTemperature(descMap)
             sendHubitatEvent([
                 name: 'temperature',
                 value: valueIntCorrected,
@@ -1683,7 +1701,7 @@ void parseThermostat(final Map descMap) {
             ], descMap, false)
             break
         case '0012' : // OccupiedHeatingSetpoint -> heatingSetpoint
-            valueIntCorrected = convertTemperature((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
+            valueIntCorrected = convertTemperature(descMap)
             sendHubitatEvent([
                 name: 'heatingSetpoint',
                 value: valueIntCorrected,
@@ -1732,7 +1750,7 @@ void parseThermostat(final Map descMap) {
             if (attrName in ThermostatClusterAttributes.values().toList()) {
                 String valueFormatted = descMap.value
                 if (attrName in ['AbsMinHeatSetpointLimit', 'AbsMaxHeatSetpointLimit', 'MinHeatSetpointLimit', 'MaxHeatSetpointLimit']) {
-                    valueFormatted = convertTemperature((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value).toString()   
+                    valueFormatted = convertTemperature(descMap).toString()   
                 }
                 eventMap = [name: eventName, value:valueFormatted, descriptionText: "${eventName} is: ${valueFormatted}"]
                 if (logEnable) { logInfo "parseThermostat: ${attrName} = ${valueFormatted}" }
@@ -1848,7 +1866,7 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
             dw.sendEvent(eventMap)
             logInfo "${eventMap.descriptionText}"
             // added 2024/10/02 - update the data value in the child device
-            dw.updateDataValue(name, value)
+            dw.updateDataValue(name, value.toString())  // 2026/01/25
         }
         else {
             // send events to child for parsing. Any filtering of duplicated Matter messages will be potentially done in the child device handler.
@@ -3384,7 +3402,7 @@ private Integer createChildDevices() {
     state.each { fingerprintName, fingerprintMap ->
         if (fingerprintName.startsWith('fingerprint')) {
             List<String> serverListStr = fingerprintMap['ServerList']
-            List<Integer> serverListInt = serverListStr.collect { Integer.parseInt(it, 16) }
+            List<Integer> serverListInt = serverListStr.collect { safeHexToInt(it) }
             if (supportedClusters.any { it in serverListInt }) {
                 logDebug "createChildDevices(): creating child device for fingerprintName: ${fingerprintName} ProductName: ${fingerprintMap['ProductName']}"
                 result = createChildDevices(fingerprintToData(fingerprintName))

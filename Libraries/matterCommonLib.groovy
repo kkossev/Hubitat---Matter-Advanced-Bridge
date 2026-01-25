@@ -27,6 +27,7 @@ library(
   * ver. 1.0.0  2026-01-24 kkossev  - first release
 */
 
+import hubitat.helper.HexUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 

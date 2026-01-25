@@ -21,7 +21,8 @@
   * ver. 1.2.0  2025-01-10 kkossev + Calude Sonnet 4.5 : Matter events handling rework; Door Lock working! :) added ping command and RTT attribute; removed switch capability
   * ver. 1.3.0  2025-01-14 kkossev - moved component methods from parent to component driver; major refactoring 
   * ver. 1.3.1  2025-01-22 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements (clearUser seems to be working!)
-  * ver. 1.3.2  2025-01-24 kkossev + GPT-4.1 : newParse : true ; use matterCommonLib ;
+  * ver. 1.3.2  2025-01-25 kkossev + GPT-4.1 : newParse: true decoding; use matterCommonLib; 
+  *                                  capability 'LockCodes' is commented out temporarily: (lock codes still not working)
   * 
   *                                  TODO: fingerprintData "AcceptedCommandList is empty !!!
   *                                  TODO: add driver version to the state variables
@@ -41,10 +42,10 @@ import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
 @Field static final String matterComponentLockVersion = '1.3.2'
-@Field static final String matterComponentLockStamp   = '2025/01/24 9:31 PM'
+@Field static final String matterComponentLockStamp   = '2025/01/25 8:36 AM'
 
-@Field static final Boolean _DEBUG_LOCK = true              // MAKE IT false for PRODUCTION !   
-@Field static final Boolean _DEFAULT_LOG_ENABLE = true      // disable on production
+@Field static final Boolean _DEBUG_LOCK = false              // MAKE IT false for PRODUCTION !   
+@Field static final Boolean _DEFAULT_LOG_ENABLE = false      // disable on production
 
 // Matter Door Lock Feature Map bits (from Matter specification 1.3)
 @Field static final Integer FEATURE_PIN_CREDENTIAL = 0x0001          // Bit 0: PIN credential support
@@ -67,11 +68,12 @@ metadata {
         capability 'Actuator'
         capability 'Battery'
         capability 'Lock'       // lock - ENUM ["locked", "unlocked with timeout", "unlocked", "unknown"]
-        capability 'LockCodes'  // lockCodes, codeChanged, codeLength, maxCodes | setCode(pos,pin,name), deleteCode(pos), getCodes(), setCodeLength(len)
+        //capability 'LockCodes'  // lockCodes, codeChanged, codeLength, maxCodes | setCode(pos,pin,name), deleteCode(pos), getCodes(), setCodeLength(len)
         capability 'Refresh'
 
         command    'identify', [[name: 'Identify the lock device']]
         command    'getInfo', [[name: 'Check the live logs and the device data for additional infoormation on this device']]
+        /*
         //command    'unlockWithPIN', [[name: 'pin*', type: 'STRING', description: 'unlock with PIN (not available on all locks)']]
         command    'unboltDoor', [[name: 'Unbolt door (not available on all locks)']]
         
@@ -81,7 +83,7 @@ metadata {
                                [name: 'name', type: 'STRING', description: "User name (optional)<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
         command    'deleteCode', [[name: 'codePosition*', type: 'NUMBER', description: "Code slot to delete<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
         command    'getCodes', [[name: "Retrieve all PIN codes<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
-
+        */
         // TODO - move these to state variables or device data ?
         attribute 'lockType', 'ENUM', ['deadbolt', 'magnetic', 'other', 'mortise', 'rim', 'latchbolt', 'cylindricalLock', 'tubularLock', 'interconnectedLock', 'deadLatch', 'doorFurniture', 'eurocylinder']
         attribute 'actuatorEnabled', 'ENUM', ['enabled', 'disabled']
@@ -104,9 +106,12 @@ metadata {
             command 'getCredentialStatus', [[name:'pinIndex*', type: 'STRING', description: 'PIN Index (1-255)', defaultValue: '1']]
             command 'getUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
             command 'clearUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
+            command 'setUser', [[name: 'codePosition*', type: 'NUMBER', description: 'Code slot (1-based)'],
+                                           [name: 'pinCode*', type: 'STRING', description: 'PIN code (4-8 digits)'],
+                                           [name: 'name', type: 'STRING', description: "User name (optional)<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
             command 'clearCredential', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type (0:ProgrammingPIN,1:PIN,2:RFID,3:Fingerprint,4:FingerVein,5:Face)', defaultValue: '1'],
                                      [name:'credentialIndex', type: 'NUMBER', description: 'Credential Index (0 to clear all)', defaultValue: '9']]
-            command 'testLock', [[name: 'testLock', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
+            command 'testInvoke', [[name: 'testInvoke', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
         }
     }
 }
@@ -507,8 +512,8 @@ void setCode(codePosition, pinCode, name = null) {
 }   
 
 
-// TODO 
-// 5.2.10.34. SetUser Command (0x1A) - TODO: implement full user and credential management (very complex)
+// NOT WORKING! :( )
+// 5.2.10.34. SetUser Command (0x1A)
 void setUser(codePosition, pinCode, name = null) {
     if (!supportsLockCodes()) {
         logWarn "setCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
@@ -516,11 +521,93 @@ void setUser(codePosition, pinCode, name = null) {
         return
     }
     
-    logInfo "setCode: position=${codePosition}, PIN=${pinCode ? '****' : 'null'}, name=${name}"
-    // TODO - implement full user and credential management
-    
-    logWarn "setCode: Not yet implemented - requires Matter User and Credential management"
-    sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "setCode (Matter command setUser) not yet implemented", isStateChange: true)
+    if (!codePosition) {
+        logWarn 'setUser: user index is required'
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: 'setUser: missing user index', isStateChange: true)
+        return
+    }
+
+    Integer userIndex
+    try {
+        userIndex = (codePosition as BigDecimal)?.intValue()
+    } catch (Exception ignored) {
+        userIndex = null
+    }
+    if (userIndex == null || userIndex < 1 || userIndex > 255) {
+        logWarn "setUser: user index must be 1-255, got '${codePosition}'"
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "setUser: invalid user index '${codePosition}'", isStateChange: true)
+        return
+    }
+
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) {
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: 'setUser: deviceNumber is null', isStateChange: true)
+        return
+    }
+
+    // Matter SetUser (0x1A) payload is a TLV structure with context-tagged fields:
+    // 0: userIndex (uint16)
+    // 1: userName (string)
+    // 2: userUniqueID (uint32) (nullable)
+    // 3: userStatus (enum8)
+    // 4: userType (enum8)
+    // 5: credentialRule (enum8)
+    // We build it manually (same approach as clearCredential) because nested/typed payloads can be finicky.
+
+    int index = userIndex
+    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))
+
+    // Default values (works well for typical locks; can be made configurable later)
+    int userStatus = 0x01      // commonly "OccupiedEnabled" in Matter/Zigbee family enums
+    int userType = 0x00        // commonly "UnrestrictedUser"
+    int credentialRule = 0x00  // Single
+
+    String userStatusHex = HexUtils.integerToHexString(userStatus, 1)
+    String userTypeHex = HexUtils.integerToHexString(userType, 1)
+    String credentialRuleHex = HexUtils.integerToHexString(credentialRule, 1)
+
+    // UserName: send as UTF-8 string (empty string if not provided)
+    String userName = (name != null) ? name.toString() : ''
+    byte[] userNameBytes = userName.getBytes('UTF-8')
+    int userNameLen = userNameBytes.length
+    String userNameHex = userNameBytes.collect { String.format('%02X', it) }.join()
+
+    // TLV element for context tag 1: UTF8 string with 1-byte or 2-byte length
+    String userNameTlv
+    if (userNameLen <= 0xFF) {
+        // control 0x2C = context-specific (1-byte tag) + UTF81 (0x0C)
+        userNameTlv = '2C' + '01' + HexUtils.integerToHexString(userNameLen, 1) + userNameHex
+    } else {
+        // control 0x2D = context-specific (1-byte tag) + UTF82 (0x0D)
+        String lenHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userNameLen, 2))
+        userNameTlv = '2D' + '01' + lenHexLE + userNameHex
+    }
+
+    // userUniqueID: leave NULL for now (many locks ignore it / don't require it)
+    // control 0x34 = context-specific (1-byte tag) + NULL (0x14)
+    String userUniqueIdTlv = '34' + '02'
+
+    // Build TLV structure (anonymous struct)
+    String tlv =
+            '15' +
+            '25' + '00' + userIndexHexLE +
+            userNameTlv +
+            userUniqueIdTlv +
+            '24' + '03' + userStatusHex +
+            '24' + '04' + userTypeHex +
+            '24' + '05' + credentialRuleHex +
+            '18'
+
+    String endpointHex = HexUtils.integerToHexString(deviceNumber, 1)
+
+    String cmd = "he invoke 0x${endpointHex} 0x0101 0x001A 0x07D0 {1518} {${tlv}}"
+
+    logDebug "setUser: index=${index}, nameLen=${userNameLen}, tlv=${tlv}, cmd=${cmd}"
+    parent?.sendToDevice(cmd)
+
+    // NOTE: This only creates/updates the user record. Setting the actual PIN credential requires SetCredential (0x22).
+    // We keep that separate for now.
+    sendEvent(name: 'codeChanged', value: "${codePosition} set", descriptionText: "setUser sent for user ${index}", isStateChange: true)
 }
 
 
@@ -695,34 +782,6 @@ void unboltDoor() {
     parent?.sendToDevice(cmd)
 }
 
-/*
-//Command to unlock device with PIN
-void unlockWithPIN(String pin) {
-    if (!pin) {
-        logWarn "unlockWithPIN: PIN is required"
-        return
-    }
-
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "unlocking with PIN...")
-    
-    // Build PINCode field manually as TLV octet string
-    String pinHex = asciiToHex(pin)
-    String pinLength = HexUtils.integerToHexString(pinHex.length() / 2, 1)
-    
-    // Build TLV structure: context tag 0, octet string type (0x0C), length, data
-    String cmdPayload = '15'  // Structure start
-    cmdPayload += '0C00' + pinLength + pinHex  // Context tag 0, OCTET_STRING1, length, PIN bytes
-    cmdPayload += '18'  // Structure end
-    
-    // TODO - not tested yet!
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000) + " {${cmdPayload}}"
-    logDebug "unlockWithPIN: sending command with payload: ${cmdPayload}"
-    parent?.sendToDevice(cmd)
-}
-*/
 
 // Command to query PIN credential status
 void getCredentialStatus(String pinIndex) {
@@ -1820,6 +1879,15 @@ Integer safeParseHex(String hexValue) {
     }
 }
 
+
+def testInvoke(params) {
+    // 0x01 0x0101 0x0000 0x07D0 {1518}
+    logDebug "testInvoke called with params: ${params}"
+    String cmd = "he invoke ${params}"
+    log.warn "testInvoke: sending command: ${cmd}"
+    parent?.sendToDevice(cmd)    
+
+}
 
 // --------- common matter libraries included below --------
 

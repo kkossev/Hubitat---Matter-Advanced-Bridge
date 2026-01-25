@@ -20,6 +20,7 @@
  * ver. 1.1.0  2025-01-10 kkossev   - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.2.0  2025-01-18 kkossev   - added ALPSTUGA Air Quality Monitor support
  * 
+ *                                   TODO: use matterCommonLib and safeToHex methods;  decodeIeee754Float method float value
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
  *                                   TODO: add cluster 0202 'Window Covering' endpointId:"0B"
  *
@@ -32,7 +33,7 @@ import hubitat.helper.HexUtils
 @Field static final String matterComponentAirPurifierVersion = '1.2.0'
 @Field static final String matterComponentAirPurifierStamp   = '2026/01/18 9:13 PM'
 
-@Field static final Boolean _DEBUG_AIR_PURIFIER = true
+@Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 
 metadata {
     definition(name: 'Matter Generic Component Air Purifier', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Air_Quality') {
@@ -285,7 +286,7 @@ void updated() {
     log.info "${device.displayName} driver configuration updated"
     if (logEnable) {
         log.debug settings
-        runIn(86400, 'logsOff')
+        runIn(14400, 'logsOff')
     }
     // TODO!
 }
