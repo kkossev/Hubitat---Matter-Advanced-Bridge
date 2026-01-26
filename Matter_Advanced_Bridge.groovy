@@ -44,11 +44,14 @@
  *                                  water leak sensors (deviceType 0x0043) automatic detection
  * ver. 1.7.0  2026-01-25 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); added ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
  *                                  added ping() delta calculcation; added cleanSubscribe Min/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP); added matterCommonLib.groovy library for common functions;
+ * ver. 1.7.1  2026-01-26 kkossev   (dev. branch) reduced debug/warn logging; Best Name auto-label for all child devices @iEnam
  *
- *                                   TODO: thermostat component - supported modes JSON initialization
+ *                                   TODO: 
+ *                                   TODO: Composite grouping of different attributes of a child device @iEnam
+ *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events
+ *                                   TODO: thermostat component - supported modes JSON initialization duafter discovery
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
- *                                   TODO: TADO Matter Thermostat - JSON supportedModes are missing ! 
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
  *                                   TODO: decode [0013] CapabilityMinima = 1524000324010318 [0012] UniqueID = 4A6A0276A1834629
  *                                   TODO: add ping as a first step in the state machines before reading attributes
@@ -58,20 +61,21 @@
  *                                   DONE: add cluster 042A 'PM2.5ConcentrationMeasurement' (v1.4.0)
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
  *                                   TODO: add cluster 0202 'Window Covering'
+ *                                   TODO: check if duplicated:  updateChildFingerprintData() and copyEntireFingerprintToChild(); 
  *
  */
 
-static String version() { '1.7.0' }
-static String timeStamp() { '2026/01/25 8:30 PM' }
+static String version() { '1.7.1' }
+static String timeStamp() { '2026/01/26 11:59 PM' }
 
 @Field static final Boolean _DEBUG = false                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // make it  TRUE for production! (don't trace the FFFx global attributes)
-@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
+@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
 @Field static final Integer REFRESH_TIMER = 6000             // refresh time in miliseconds
 @Field static final Integer INFO_AUTO_CLEAR_PERIOD = 60      // automatically clear the Info attribute after 60 seconds
@@ -1617,7 +1621,7 @@ void parseColorControl(final Map descMap) { // 0300
                         logInfo "parseColorControl: ${oldName} has hue/saturation - upgrading from CT to RGBW driver"
                         
                         try {
-                            deleteChildDevice(dni)
+                            deleteChildDevice(dni)      // TODO : check if this changes the deviceId ...
                             def newChild = addChildDevice('hubitat', 'Generic Component RGBW', dni, [name: oldName])
                             if (oldLabel && oldLabel != oldName) { newChild.label = oldLabel }
                             newChild.updateDataValue('id', descMap.endpoint)
@@ -1838,11 +1842,11 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
             logWarn "sendHubitatEvent: error checking for duplicates: ${e}"
         }
         if (isDuplicate) {
-            logTrace "sendHubitatEvent: <b>IGNORED</b> duplicate event: ${eventMap.descriptionText} (value:${value} dataType:${latestEvent?.dataType})"
+            logTrace "sendHubitatEvent: IGNORED duplicate event: ${eventMap.descriptionText} (value:${value} dataType:${latestEvent?.dataType})"
             return
         }
         else {
-            logTrace "sendHubitatEvent: <b>NOT IGNORED</b> event: ${eventMap.descriptionText} (value:${value} latestEvent.value = ${latestEvent?.value} dataType:${latestEvent?.dataType})"
+            logTrace "sendHubitatEvent: NOT IGNORED event: ${eventMap.descriptionText} (value:${value} latestEvent.value = ${latestEvent?.value} dataType:${latestEvent?.dataType})"
         }
     }
     else {
@@ -1866,7 +1870,7 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
             dw.sendEvent(eventMap)
             logInfo "${eventMap.descriptionText}"
             // added 2024/10/02 - update the data value in the child device
-            dw.updateDataValue(name, value.toString())  // 2026/01/25
+            // dw.updateDataValue(name, value.toString())  // 2026/01/25    // commented out 2026-01-26 as it is not needed
         }
         else {
             // send events to child for parsing. Any filtering of duplicated Matter messages will be potentially done in the child device handler.
@@ -2116,12 +2120,11 @@ void deleteAllChildDevices() {
 }
 
 void loadAllDefaults() {
-    logWarn 'loadAllDefaults() !!!'
+    logInfo 'Loading All Defaults...'
     deleteAllSettings()
     deleteAllCurrentStates()
     deleteAllScheduledJobs()
     deleteAllStates()
-    //deleteAllChildDevices()
     initializeVars(fullInit = true)
     updated()
     sendInfoEvent('All Defaults Loaded! F5 to refresh')
@@ -2269,7 +2272,7 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
         Integer cluster = entry.getKey()
         Integer attribute = null
         List<List<Integer>> value = entry.getValue()
-        logTrace "Cluster:${cluster}, value:${value}"
+        //logTrace "Cluster:${cluster}, value:${value}"
         // check if the cluster is in the supported clusters list
         if (!SupportedMatterClusters.containsKey(cluster)) {
             logWarn "getSubscribeCmdList(): cluster 0x${HexUtils.integerToHexString(cluster, 2)} is not in the SupportedMatterClusters list!"
@@ -2277,12 +2280,12 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
         }
         // Sample groupedSubscriptionsByAttribute Attribute 0 : [[36, 768, 0]]
         Map<Integer, List<List<Integer>>> groupedSubscriptionsByAttribute = value.groupBy { it[2] }
-        logTrace "groupedSubscriptionsByAttribute=${groupedSubscriptionsByAttribute}"
+        //logTrace "groupedSubscriptionsByAttribute=${groupedSubscriptionsByAttribute}"
         for (Map.Entry<Integer, List<List<Integer>>> entry2 : groupedSubscriptionsByAttribute.entrySet()) {
             List<Map<String, String>> attributePaths = []       // individual attributePaths for each attribute
             attribute = entry2.getKey()
             List<List<Integer>> endpointsList = entry2.getValue()
-            logTrace "Cluster:${cluster}, Attribute:${attribute}, endpointsList:${endpointsList}"
+            //logTrace "Cluster:${cluster}, Attribute:${attribute}, endpointsList:${endpointsList}"
 
             List<List<Map<Integer, Map<String, Integer>>>> supportedSubscriptions = SupportedMatterClusters[cluster]['subscriptions']
             //def supportedSubscriptions = SupportedMatterClusters[cluster]['subscriptions']
@@ -2293,7 +2296,7 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
             }
             // make a list of integer keys from  the supportedSubscriptions list
             List<Integer> supportedSubscriptionsKeys = supportedSubscriptions*.keySet().flatten()
-            logTrace "supportedSubscriptionsKeys=${supportedSubscriptionsKeys}"
+            //logTrace "supportedSubscriptionsKeys=${supportedSubscriptionsKeys}"
             // check if the attribute is in the supportedSubscriptionsKeys list
             if (!supportedSubscriptionsKeys.contains(attribute)) {
                 logWarn "getSubscribeCmdList(): attribute 0x${HexUtils.integerToHexString(attribute, 2)} is not in the supportedSubscriptionsKeys:${supportedSubscriptionsKeys} list! "
@@ -2311,13 +2314,13 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
                 }
                 attributePaths.add(matter.attributePath(endpoint, cluster, attribute))
             }
-            logTrace "attribute: ${attribute} attributePaths:${attributePaths} supportedSubscriptions[attribute]:${supportedSubscriptions[attribute]}"
+            //logTrace "attribute: ${attribute} attributePaths:${attributePaths} supportedSubscriptions[attribute]:${supportedSubscriptions[attribute]}"
             // assume the min, max and delta values are the same for all endpoints
             def firstSupportedSubscription = supportedSubscriptions[attribute]?.get(0)
-            logTrace "firstSupportedSubscription = ${firstSupportedSubscription}"
+            //logTrace "firstSupportedSubscription = ${firstSupportedSubscription}"
             Integer min = firstSupportedSubscription?.get('min') ?: 0
             Integer max = firstSupportedSubscription?.get('max') ?: 0xFFFF
-            logTrace "min=${min}, max=${max}, delta=${delta}"
+            //logTrace "min=${min}, max=${max}, delta=${delta}"
             if (action == 'REFRESH_ALL') {
                 cmdsList.add(matter.readAttributes(attributePaths))
             }
@@ -2559,14 +2562,14 @@ void fingerprintsToSubscriptionsList() {
                         // 0006_FFFB=[00, 4000, 4001, 4002, 4003, FFF8, FFF9, FFFB, FFFC, FFFD]
                         // check if the attribute is in the clusterAttrList
                         if (!clusterAttrList.contains(attribute)) {
-                            logWarn "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} is not in the clusterListName=${clusterListName} clusterAttrList ${clusterAttrList}!"
+                            logDebug "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} is not in the clusterListName=${clusterListName} clusterAttrList ${clusterAttrList}!"    // downgraded to logDebug on 2026-01-26
                             return  // continue with the next attribute
                         }
                         logDebug "fingerprintsToSubscriptionsList: updateStateSubscriptionsList: adding endpointId=${endpointId} clusterInt:${clusterInt} attribute:${attribute} clusterListName=${clusterListName} to the state.subscriptions list!"
                         updateStateSubscriptionsList(addOrRemove = 'add', endpoint = safeHexToInt(endpointId), cluster = clusterInt, attrId = safeToInt(attribute))
                     }
-                    else {  // changed to logDebug  on 2024-06-10 
-                        logDebug "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} clusterListName ${clusterListName} is not in the fingerprintMap!"
+                    else {  // changed to logDebug  on 2024-06-10  logTrace 2026-01-26
+                        logTrace "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} clusterListName ${clusterListName} is not in the fingerprintMap!"
                     }
                 }
                 // done!
@@ -3432,46 +3435,25 @@ private boolean createChildDevices(Map d) {
     } else {
         logWarn "createChildDevices(Map d): mapping.driver is ${mapping.driver} !"
     }
-/*
-
-    if (mapping.devices == null) {
-        logWarn "mapping.devices is ${mapping.devices} !"
-        return false
-    }
-
-    // Tuya Device to Multiple Hubitat Devices
-    String baseName = d.name
-    Map baseFunctions = d.functions
-    Map baseStatusSet = d.statusSet
-    Map subdevices = mapping.devices.findAll { entry -> entry.key in baseFunctions.keySet() }
-
-    logDebug "createChildDevices(Map d): baseName:${baseName} baseFunctions:${baseFunctions} baseStatusSet:${baseStatusSet} subdevices:${subdevices}"
-    return
-
-    subdevices.each { code, submap ->
-        d.name = "${baseName} ${submap.suffix ?: code}"
-        d.functions = [ (code): baseFunctions[(code)] ]
-        d.statusSet = [ (code): baseStatusSet[(code)] ]
-        createChildDevice("${device.id}-${d.id}-${code}", [
-            namespace: submap.namespace ?: mapping.namespace,
-            driver: submap.driver ?: mapping.driver
-        ], d)
-    }
-*/
     return true
 }
 
 private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
-    logDebug "createChildDevice(String dni, Map mapping, Map d): dni:${dni} mapping:${mapping} d:${d}"
     ChildDeviceWrapper dw = getChildDevice(dni)
-    logDebug "createChildDevice(String dni, Map mapping, Map d): dw:${dw}"
+    logDebug "createChildDevice(String dni, Map mapping, Map d): dni:${dni} mapping:${mapping} d:${d} dw:${dw}"
 
     if (dw == null) {
         logInfo "Creating device ${d.name} using ${mapping.driver} driver (name: ${d.product_name}, label: ${d.name})"
         try {
             dw = addChildDevice(mapping.namespace ?: 'hubitat', mapping.driver, dni,
                 [
-                    name: d.name    // was  d.product_name
+                    name: d.product_name ?: d.ProductLabel ?: d.ProductName ?:  d.name ?: 'Matter Device' as String,
+                    label: d.NodeLabel /*?: d.ProductName ?: d.product_name ?: d.name*/ ?: '' as String
+
+                    //name: d.ProductLabel ?: d.ProductName ?: d.product_name ?: d.name ?: 'Matter Device',
+                    //label: d.NodeLabel ?: d.ProductName ?: d.product_name ?: d.name ?: 'Matter Device'
+
+                    //name: d.name      // was  d.product_name; was d.name; 
                     //label: null     // do not set the label here, it will be set by the user!
                 ]
             )
@@ -3494,16 +3476,6 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
         updateDataValue 'fingerprintName', d.fingerprintName
         updateDataValue 'product_name', d.product_name
         // ServerList is now stored in fingerprintData, not as separate device data
-        // TODO !!1
-
-        /*
-        updateDataValue 'local_key', d.local_key
-        updateDataValue 'product_id', d.product_id
-        updateDataValue 'category', d.category
-        updateDataValue 'functions', functionJson
-        updateDataValue 'statusSet', JsonOutput.toJson(d.statusSet)
-        updateDataValue 'online', d.online as String
-        */
     }
 
     return dw
@@ -3752,12 +3724,9 @@ void deviceHealthCheck() {
 void sendHealthStatusEvent(String value) {
     String descriptionText = "${device.displayName} healthStatus changed to ${value}"
     sendEvent(name: 'healthStatus', value: value, descriptionText: descriptionText, isStateChange: true,  type: 'digital')
-    if (value == 'online') {
-        logInfo "${descriptionText}"
-    }
-    else {
-        if (settings?.txtEnable) { log.warn "${device.displayName}} <b>${descriptionText}</b>" }
-    }
+    if (value == 'online') { logInfo "${descriptionText}" }
+    else if (value == 'offline') { if (settings?.txtEnable) { log.warn "${device.displayName}} <b>${descriptionText}</b>" } }
+    else { logDebug "${descriptionText}" }
 }
 
 String getCron(int timeInSeconds) {
@@ -3878,7 +3847,7 @@ void resetStats() {
 void initializeVars(boolean fullInit = false) {
     logDebug "InitializeVars()... fullInit = ${fullInit}"
     if (fullInit == true || state.deviceType == null) {
-        logWarn 'forcing fullInit = true'
+        logDebug 'forcing fullInit = true'
         state.clear()
         unschedule()
         resetStats()

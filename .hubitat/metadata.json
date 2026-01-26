@@ -4,13 +4,13 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1570
+      "version": 1580
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
       "id": 162,
       "codeType": "library",
-      "version": 92
+      "version": 94
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterLib.groovy",

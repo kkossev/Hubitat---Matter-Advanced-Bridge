@@ -756,7 +756,6 @@ void discoverAllStateMachine(Map data = null) {
                 }
                 else {
                     logDebug "discoverAllStateMachine: st:${st} - createChildDevice(${deviceData}) returned ${result}"
-                    // fingerPrintToData: deviceData:[id:08, fingerprintName:fingerprint08, product_name:Humidity Sensor, name:Device#08, ServerList:[1D, 03, 0405]]
                     sendInfoEvent("Created child device ${deviceData?.name} (${deviceData?.product_name})")
                 }
                 // Read cluster-specific global attributes for all matched clusters
