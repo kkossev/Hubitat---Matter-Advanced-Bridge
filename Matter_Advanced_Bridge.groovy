@@ -42,11 +42,12 @@
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
  * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : A major refactoring of the Door Lock driver; optimized subsciption management;
  *                                  water leak sensors (deviceType 0x0043) automatic detection
- * ver. 1.7.0  2026-01-25 kkossev   (dev. branch) DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); added ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
+ * ver. 1.7.0  2026-01-25 kkossev   DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); added ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
  *                                  added ping() delta calculcation; added cleanSubscribe Min/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP); added matterCommonLib.groovy library for common functions;
- * ver. 1.7.1  2026-01-26 kkossev   (dev. branch) reduced debug/warn logging; Best Name auto-label for all child devices @iEnam
+ * ver. 1.7.1  2026-01-26 kkossev   reduced debug/warn logging; Best Name auto-label for all child devices @iEnam
+ * ver. 1.7.2  2026-01-29 kkossev   (dev. branch) bugfixes: contact/water/motion/lock state parsing issue; child device pings; Patch for Zemismart M1 battery percentage reporting issue; 
  *
- *                                   TODO: 
+ *                                   TODO: callbackType:WriteAttributes : Aqara E1 thermostat : dev:53772026-01-30 00:06:08.504warnAqara M3 Matter parserFunc: exception java.lang.NumberFormatException: For input string: "null" Failed to parse description: new Parse/Map payload: [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
  *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events
  *                                   TODO: thermostat component - supported modes JSON initialization duafter discovery
@@ -65,8 +66,8 @@
  *
  */
 
-static String version() { '1.7.1' }
-static String timeStamp() { '2026/01/26 11:59 PM' }
+static String version() { '1.7.2' }
+static String timeStamp() { '2026/01/29 11:59 PM' }
 
 @Field static final Boolean _DEBUG = false                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -186,7 +187,8 @@ metadata {
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
     0x002F : [parser: 'parsePowerSource', attributes: 'PowerSourceClusterAttributes',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Status
+              subscriptions : [
+                            //   [0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Status - commented out 2026-01-29
                             //   [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // Order
                             //   [0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // Description
                                [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // BatVoltage (11)
@@ -215,7 +217,7 @@ metadata {
     ],
     */
     // Contact Sensor Cluster
-    0x0045 : [attributes: 'BooleanStateClusterAttributes', parser: 'parseContactSensor',
+    0x0045 : [attributes: 'BooleanStateClusterAttributes', parser: 'parseBooleanState',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
     // Air Quality Cluster
@@ -1003,6 +1005,11 @@ void parsePowerSource(final Map descMap) {
         case 'BatPercentRemaining' :   // BatteryPercentageRemaining 0x000C
             // newParse : : descMap:[callbackType:Report, endpointInt:2, clusterInt:47, attrInt:12, data:[12:UINT:114], value:114, attrId:000C, cluster:002F, endpoint:02]
             value = getDescMapValueAsInt(descMap)
+            // Patch for Zemismart M1 - reports battery percentage remaining as 1 ???? TODO
+            if (value == 1 && device.getDataValue('model') == 'Zemismart M1 Hub') {
+                value = 200  // interpret as 100%
+                logDebug "parsePowerSource: applying Zemismart M1 battery percentage patch, setting value to 200"
+            }
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Battery percentage remaining is ${value / 2}% (raw:${descMap.value})"
             eventMap = [name: 'battery', value: value / 2, descriptionText: descriptionText]
             break
@@ -1149,7 +1156,7 @@ void parseOnOffCluster(final Map descMap) {
 
     switch (descMap.attrId) {
         case '0000' : // Switch
-            String switchState = descMap.value == '01' ? 'on' : 'off'
+            String switchState = ((descMap.value?.toString()?.trim()?.toLowerCase()) in ['1', '01', 'true', 'on']) ? 'on' : 'off'
             sendHubitatEvent([
                 name: 'switch',
                 value: switchState,
@@ -1221,7 +1228,7 @@ void parseOccupancySensing(final Map descMap) {
         logWarn "parseOccupancySensing: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"
         return
     }
-    String motionAttr = descMap.value == '01' ? 'active' : 'inactive'
+    String motionAttr = ((descMap.value?.toString()?.trim()?.toLowerCase()) in ['1', '01', 'true', 'on']) ? 'active' : 'inactive'
     if (descMap.attrId == '0000') { // Occupancy
         sendHubitatEvent([
             name: 'motion',
@@ -1297,8 +1304,9 @@ void parseBooleanState(final Map descMap) {
     if (descMap.cluster != '0045') { logWarn "parseBooleanState: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     
     if (descMap.attrId == '0000') { // StateValue attribute
-        String boolValue = descMap.value == '01' ? 'closed' : 'open'
-        String waterValue = descMap.value == '01' ? 'wet' : 'dry'
+        boolean isActive = ((descMap.value?.toString()?.trim()?.toLowerCase()) in ['1', '01', 'true', 'on'])
+        String boolValue = isActive ? 'closed' : 'open'
+        String waterValue = isActive ? 'wet' : 'dry'
         
         // Determine sensor type from DeviceTypeList in fingerprint
         String fingerprintName = getFingerprintName(descMap)
@@ -1401,7 +1409,8 @@ void parseHumidityMeasurement(final Map descMap) { // 0405
 void parseDoorLock(final Map descMap) { // 0101
     if (descMap.cluster != '0101') { logWarn "parseDoorLock: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // LockState
-        String lockState = descMap.value == '01' ? 'locked' : 'unlocked'
+        boolean isLocked = ((descMap.value?.toString()?.trim()?.toLowerCase()) in ['1', '01', 'true', 'on'])
+        String lockState = isLocked ? 'locked' : 'unlocked'
         sendHubitatEvent([
             name: 'lock',
             value: lockState,

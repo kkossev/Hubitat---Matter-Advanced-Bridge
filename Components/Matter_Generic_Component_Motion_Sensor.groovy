@@ -1,5 +1,4 @@
-/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
-/*
+    /*
  *  'Matter Generic Component Motion Sensor' - component driver for Matter Advanced Bridge
  *
  *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
@@ -16,13 +15,15 @@
  *
  * ver. 1.0.0  2024-03-16 kkossev  - first release
  * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib
+ * ver. 1.1.1  2025-01-29 kkossev  - common libraries
  *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentMotionVersion = '1.1.0'
-@Field static final String matterComponentMotionStamp   = '2025/01/10 6:35 PM'
+@Field static final String matterComponentMotionVersion = '1.1.1'
+@Field static final String matterComponentMotionStamp   = '2025/01/29 10:33 PM'
+
 metadata {
     definition(name: 'Matter Generic Component Motion Sensor', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Motion_Sensor.groovy') {
         capability 'Sensor'
@@ -41,7 +42,6 @@ preferences {
     }
 }
 
-/* groovylint-disable-next-line UnusedMethodParameter */
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
@@ -126,4 +126,5 @@ void refresh() {
     parent?.componentRefresh(this.device)
 }
 
+#include kkossev.matterCommonLib
 #include kkossev.matterHealthStatusLib

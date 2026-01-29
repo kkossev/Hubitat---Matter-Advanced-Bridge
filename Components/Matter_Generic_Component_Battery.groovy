@@ -1,4 +1,3 @@
-/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods, StaticMethodsBeforeInstanceMethods */
 /*
   *  'Matter Generic Component Battery' - component driver for Matter Advanced Bridge
   *
@@ -15,19 +14,19 @@
   *  for the specific language governing permissions and limitations under the License.
   *
   * ver. 1.0.0  2024-03-16 kkossev  - first release
+  * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib and matterCommonLib
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentBatteryVersion = '1.0.0'
-@Field static final String matterComponentBatteryStamp   = '2024/03/16 9:23 AM'
+@Field static final String matterComponentBatteryVersion = '1.1.0'
+@Field static final String matterComponentBatteryStamp   = '2025/01/10 9:23 AM'
 
 metadata {
     definition(name: 'Matter Generic Component Battery', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Battery.groovy') {
         capability 'Sensor'
         capability 'Battery'
         capability 'Refresh'
-        //capability 'Health Check'
         attribute  'batteryVoltage', 'number'
         attribute  'batStatus', 'string'
         attribute  'batOrder', 'string'
@@ -38,8 +37,6 @@ metadata {
         attribute  'batReplaceability', 'string'
         attribute  'batReplacementDescription', 'string'
         attribute  'batQuantity', 'string'
-
-        //attribute 'healthStatus', 'enum', ['unknown', 'offline', 'online']
     }
 }
 
@@ -100,6 +97,6 @@ void refresh() {
     parent?.componentRefresh(this.device)
 }
 
-static void ping() {
-    refresh()
-}
+
+#include kkossev.matterCommonLib
+#include kkossev.matterHealthStatusLib

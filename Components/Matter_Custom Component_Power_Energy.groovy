@@ -1,5 +1,4 @@
 
-/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
  *  'Matter Custom Component Power Energy' - component driver for Matter Advanced Bridge
  *
@@ -16,13 +15,14 @@
  *
  * ver. 1.0.0  2025-04-06 kkossev  - first release
  * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib
+ * ver. 1.1.1  2025-01-29 kkossev  - common libraries
  *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentPowerEnergyVersion = '1.1.0'
-@Field static final String matterComponentPowerEnergyStamp   = '2025/01/10 7:36 PM'
+@Field static final String matterComponentPowerEnergyVersion = '1.1.1'
+@Field static final String matterComponentPowerEnergyStamp   = '2025/01/29 10:41 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Energy.groovy') {
@@ -56,7 +56,6 @@ preferences {
     }
 }
 
-/* groovylint-disable-next-line UnusedMethodParameter */
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
@@ -210,4 +209,5 @@ void processUnprocessed(Map description) {
     }
 }
 
+#include kkossev.matterCommonLib
 #include kkossev.matterHealthStatusLib

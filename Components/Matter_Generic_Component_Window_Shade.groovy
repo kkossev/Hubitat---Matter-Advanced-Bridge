@@ -1,4 +1,3 @@
-/* groovylint-disable CouldBeSwitchStatement, DuplicateNumberLiteral, MethodCount, MethodParameterTypeRequired, NoDef, StaticMethodsBeforeInstanceMethods, UnnecessaryElseStatement, UnnecessaryGetter, UnnecessarySetter, VariableTypeRequired */
 /*
  *  ''Matter Generic Component Window Shade' - component driver for Matter Advanced Bridge
  *
@@ -22,14 +21,15 @@
  * ver. 1.1.0  2025-01-12 kkossev - (dev.branch) added capabilities 'Switch' and 'SwitchLevel'
  * ver. 1.2.0  2025-01-10 kkossev - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.2.1  2025-01-10 kkossev - bugfix: changed OPEN/CLOSED to Hubitat standard (100/0) for correct Dashboard display; invertPosition preference default to true
+ * ver. 1.2.2  2025-01-29 kkossev - common libraries
  *
  *                                   TODO:
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '1.2.1'
-@Field static final String matterComponentWindowShadeStamp   = '2025/01/10 11:07 PM'
+@Field static final String matterComponentWindowShadeVersion = '1.2.2'
+@Field static final String matterComponentWindowShadeStamp   = '2025/01/29 10:30 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -440,4 +440,5 @@ void parseTest(description) {
     parse([map])
 }
 
+#include kkossev.matterCommonLib
 #include kkossev.matterHealthStatusLib

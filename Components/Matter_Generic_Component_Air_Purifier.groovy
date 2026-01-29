@@ -1,4 +1,3 @@
-/* groovylint-disable BitwiseOperatorInConditional, CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
  *  'Matter Generic Component Air Purifier' - component driver for Matter Advanced Bridge
  *
@@ -19,8 +18,9 @@
  * ver. 1.0.0  2024-10-10 kkossev   - first version
  * ver. 1.1.0  2025-01-10 kkossev   - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.2.0  2025-01-18 kkossev   - added ALPSTUGA Air Quality Monitor support
+ * ver. 1.2.1  2026-01-29 kkossev   - added common library matterCommonLib
  * 
- *                                   TODO: use matterCommonLib and safeToHex methods;  decodeIeee754Float method float value
+ *                                   TODO: use safeToHex methods;  decodeIeee754Float method float value
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
  *                                   TODO: add cluster 0202 'Window Covering' endpointId:"0B"
  *
@@ -30,8 +30,8 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 
-@Field static final String matterComponentAirPurifierVersion = '1.2.0'
-@Field static final String matterComponentAirPurifierStamp   = '2026/01/18 9:13 PM'
+@Field static final String matterComponentAirPurifierVersion = '1.2.1'
+@Field static final String matterComponentAirPurifierStamp   = '2026/01/29 10:38 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 
@@ -147,7 +147,6 @@ preferences {
 ]
 
 
-/* groovylint-disable-next-line UnusedMethodParameter */
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
@@ -297,10 +296,6 @@ private void logsOff() {
     device.updateSetting('logEnable', [value: 'false', type: 'bool'] )
 }
 
-void logInfo(msg)  { if (settings.txtEnable)   { log.info  "${device.displayName} " + msg } }
-void logDebug(msg) { if (settings.logEnable)   { log.debug "${device.displayName} " + msg } }
-void logTrace(msg) { if (settings.logEnable)   { log.trace "${device.displayName} " + msg } }
-void logWarn(msg)  { if (settings.logEnable)   { log.warn  "${device.displayName} " + msg } }
 
 /**
  * Decode IEEE754 single-precision float from hex string
@@ -880,6 +875,5 @@ String fmtHelpInfo(String str) {
 		"<div style='text-align: center; position: absolute; top: 46px; right: 60px; padding: 0px;'><ul class='nav'><li>${topLink}</ul></li></div>"
 }
 
+#include kkossev.matterCommonLib
 #include kkossev.matterHealthStatusLib
-
-

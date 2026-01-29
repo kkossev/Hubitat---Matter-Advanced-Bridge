@@ -17,14 +17,15 @@
   * ver. 1.0.1  2026-01-10 kkossev - adding ping() and RTT
   * ver. 1.0.2  2026-01-11 kkossev + Claude Sonnet 4.5 - added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
   * ver. 1.0.3  2026-01-25 kkossev + + GPT-5.2 : newParse=true fixes (evtId as Integer)
+  * ver. 1.0.4  2026-01-29 kkossev  - common libraries
   *
 */
 
 import groovy.transform.Field
 import groovy.json.JsonSlurper
 
-@Field static final String matterComponentButtonVersion = '1.0.3'
-@Field static final String matterComponentButtonStamp   = '2026/01/25 8:30 PM'
+@Field static final String matterComponentButtonVersion = '1.0.4'
+@Field static final String matterComponentButtonStamp   = '2026/01/29 10:35 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
