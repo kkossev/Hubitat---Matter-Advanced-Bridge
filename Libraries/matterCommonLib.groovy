@@ -64,15 +64,6 @@ static Integer safeHexToInt(val, Integer defaultVal=0) {
     return defaultVal
 }
 
-/*
-static Integer safeToInt(val, Integer defaultVal=0) {
-    return "${val}"?.isInteger() ? "${val}".toInteger() : defaultVal
-}
-
-static Double safeToDouble(val, Double defaultVal=0.0) {
-    return "${val}"?.isDouble() ? "${val}".toDouble() : defaultVal
-}
-*/
 
 /**
  * Safe conversion to Integer with default value

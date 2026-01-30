@@ -45,7 +45,8 @@
  * ver. 1.7.0  2026-01-25 kkossev   DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); added ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
  *                                  added ping() delta calculcation; added cleanSubscribe Min/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP); added matterCommonLib.groovy library for common functions;
  * ver. 1.7.1  2026-01-26 kkossev   reduced debug/warn logging; Best Name auto-label for all child devices @iEnam
- * ver. 1.7.2  2026-01-29 kkossev   (dev. branch) bugfixes: contact/water/motion/lock state parsing issue; child device pings; Patch for Zemismart M1 battery percentage reporting issue; 
+ * ver. 1.7.2  2026-01-29 kkossev   bugfixes: contact/water/motion/lock state parsing issue; child device pings; Patch for Zemismart M1 battery percentage reporting issue; 
+ * ver. 1.7.3  2026-01-30 kkossev   (dev.branch) newParse=true by default; bugfixes: RGB&CT bulbs level parsing;
  *
  *                                   TODO: callbackType:WriteAttributes : Aqara E1 thermostat : dev:53772026-01-30 00:06:08.504warnAqara M3 Matter parserFunc: exception java.lang.NumberFormatException: For input string: "null" Failed to parse description: new Parse/Map payload: [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
@@ -66,8 +67,8 @@
  *
  */
 
-static String version() { '1.7.2' }
-static String timeStamp() { '2026/01/29 11:59 PM' }
+static String version() { '1.7.3' }
+static String timeStamp() { '2026/01/30 2:47 PM' }
 
 @Field static final Boolean _DEBUG = false                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
@@ -160,7 +161,7 @@ metadata {
             input name: 'discoveryTimeoutScale', type: 'enum', title: '<b>Discovery timeout scale</b>', options: ['1':'1x (default)', '2':'2x', '3':'3x (slow/battery bridges)'], defaultValue: '1', required: true, description: '<i>Scales discovery/state-machine retry timeouts and discovery scheduling delays.</i>'
             input name: 'traceEnable', type: 'bool', title: '<b>Enable trace logging</b>', defaultValue: false, description: '<i>Turns on detailed extra trace logging for 30 minutes.</i>'
             input name: 'minimizeStateVariables', type: 'bool', title: '<b>Minimize State Variables</b>', defaultValue: MINIMIZE_STATE_VARIABLES_DEFAULT, description: '<i>Minimize the state variables size.</i>'
-            input name: 'newParse', type: 'bool', title: '<b>Use new parse(Map) handler</b>', defaultValue: false, description: '<i>Enable Hubitat"s new parse(Map) callback instead of the legacy description text.</i>'
+            input name: 'newParse', type: 'bool', title: '<b>Use new parse(Map) handler</b>', defaultValue: true, description: '<i>Enable Hubitat"s new parse(Map) callback instead of the legacy description text.</i>'
             input name: 'cleanSubscribeMinInterval', type: 'number', title: '<b>Clean subscribe minimum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, required: true, description: '<i>Minimum reporting interval used when subscribing to Matter attributes/events.</i>'
             input name: 'cleanSubscribeMaxInterval', type: 'number', title: '<b>Clean subscribe maximum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, required: true, description: '<i>Maximum reporting interval used when subscribing to Matter attributes/events.</i>'
         }
@@ -343,7 +344,7 @@ metadata {
 // Random number generator
 @Field static final Random random = new Random()
 
-//parsers
+// old parser
 void parse(final String description) {
     prepareForParse()
 
@@ -361,8 +362,11 @@ void parse(final String description) {
 
     processParsedDescription(descMap, description)
 }
+
+
 // New parse(Map) method to handle events (and attribute reports) when Device Data.newParse	is set to true
 // example : [callbackType:Report, endpointInt:2, clusterInt:59, attrInt:1, data:[1:UINT:0], value:0] 
+// example:  [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
 // example : [endpoint:01, cluster:003B, evtId:0006, clusterInt:59, evtInt:6, values:[0:[type:04, isContextSpecific:true, value:01], 1:[type:04, isContextSpecific:true, value:01]]]
 
 void parse(Map msg) {
@@ -382,10 +386,6 @@ private void prepareForParse() {
     checkSubscriptionStatus()
     unschedule('deviceCommandTimeout')
     setHealthStatusOnline()
-}
-
-private boolean isNewParseEnabled() {
-    return settings?.newParse == true
 }
 
 private void processParsedDescription(final Map descMap, final String description) {
@@ -435,12 +435,23 @@ private void processParsedDescription(final Map descMap, final String descriptio
     }
 }
 
+
+private boolean isNewParseEnabled() {
+    return settings?.newParse == true
+}
+
 private void ensureNewParseFlag() {
     String desiredValue = isNewParseEnabled() ? 'true' : 'false'
     if (device.getDataValue('newParse') != desiredValue) {
         device.updateDataValue('newParse', desiredValue)
         logDebug "ensureNewParseFlag: newParse flag set to ${desiredValue}"
     }
+}
+
+private void forceNewParseFlag() {
+    device.updateSettings(updateSettings('newParse', true))
+    ensureNewParseFlag()
+    sendInfoEvent "forceNewParseFlag: newParse flag forced to <b>true</b>"
 }
 
 /**
@@ -1189,13 +1200,38 @@ void parseOnOffCluster(final Map descMap) {
     }
 }
 
+Integer hex254ToInt100(String value) {
+    return Math.round(hexStrToUnsignedInt(value) / 2.54)
+}
+
+Integer int256ToInt100(Integer value) {
+    return Math.round(value / 2.54)
+}
+
+String int100ToHex254(value) {
+    return intToHexStr(Math.round(value * 2.54))
+}
+
+Integer getLuxValue(rawValue) {
+    return Math.max((Math.pow(10, (rawValue / 10000)) - 1).toInteger(), 1)
+}
+
+
 void parseLevelControlCluster(final Map descMap) {
-    logTrace "parseLevelControlCluster: descMap:${descMap}"
+    Integer scaledValue = safeHexToInt(descMap.value)   // integer value if newParse=true, else hex string 
+    logTrace "parseLevelControlCluster: _scaledValue:${scaledValue} (descMap:${descMap})"
     if (descMap.cluster != '0008') { logWarn "parseLevelControlCluster: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     Integer value
     switch (descMap.attrId) {
         case '0000' : // CurrentLevel
-            value = hex254ToInt100((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
+            if (descMap.callbackType == 'Report') {
+                // newParse : [callbackType:Report, endpointInt:23, clusterInt:8, attrInt:0, data:[0:UINT:53], value:53, cluster:0008, endpoint:17, attrId:0000]
+                value = int256ToInt100(scaledValue ?: 0)
+                logTrace "parseLevelControlCluster: newParse:true : CurrentLevel Report scaledValue:${scaledValue} value:${value}"
+            } else {
+                value = int256ToInt100(scaledValue ?: 0)
+                logTrace "parseLevelControlCluster: newParse:false : CurrentLevel Report scaledValue:${scaledValue} value:${value}"
+            }
             sendHubitatEvent([
                 name: 'level',
                 value: value, //.toString(),
@@ -1203,17 +1239,18 @@ void parseLevelControlCluster(final Map descMap) {
             ], descMap, true)
             break
         default :
+            value = scaledValue
             Map eventMap = [:]
             String attrName = getAttributeName(descMap)
             String fingerprintName = getFingerprintName(descMap)
             if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
             String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
             if (attrName in ['CurrentLevel', 'RemainingTime', 'MinLevel', 'MaxLevel', 'OnOffTransitionTime', 'OnLevel', 'OnTransitionTime', 'OffTransitionTime', 'Options', 'StartUpCurrentLevel', 'Reachable']) {
-                eventMap = [name: eventName, value:descMap.value, descriptionText: "${eventName} is: ${descMap.value}"]
-                if (logEnable) { logInfo "parseLevelControlCluster: ${attrName} = ${descMap.value}" }
+                eventMap = [name: eventName, value:value, descriptionText: "${eventName} is: ${value}"]
+                if (logEnable) { logInfo "parseLevelControlCluster: ${attrName} = ${value}" }
             }
             else {
-                logDebug "parseLevelControlCluster: unsupported LevelControl: attribute ${descMap.attrId} ${attrName} = ${descMap.value}"
+                logDebug "parseLevelControlCluster: unsupported LevelControl: attribute ${descMap.attrId} ${attrName} = ${value}"
             }
             if (eventMap != [:]) {
                 eventMap.type = 'physical'; eventMap.isStateChange = true
@@ -1517,37 +1554,62 @@ void parseWindowCovering(final Map descMap) { // 0102
     }
 }
 
+/**
+ * Convert a color temperature in Kelvin to a mired value
+ * @param kelvin color temperature in Kelvin
+ * @return mired value
+ */
+ @CompileStatic
+private static Integer ctToMired(final int kelvin) {
+    return (1000000 / kelvin).toInteger()
+}
+
+/**
+ * Mired to Kelvin conversion
+ * @param mired mired value in hex
+ * @return color temperature in Kelvin
+ */
+private int miredHexToCt(final String mired) {
+    Integer miredInt = hexStrToUnsignedInt(mired)
+    return miredInt > 0 ? (1000000 / miredInt) as int : 0
+}
+
+private int miredIntToCt(final Integer miredInt) {
+    return miredInt > 0 ? (1000000 / miredInt) as int : 0
+}
+
 void parseColorControl(final Map descMap) { // 0300
     if (descMap.cluster != '0300') { logWarn "parseColorControl: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     ChildDeviceWrapper dw = getDw(descMap)
+    Integer value = safeHexToInt(descMap.value)
     switch (descMap.attrId) {
         case '0000' : // CurrentHue
-            Integer valueInt = (HexUtils.hexStringToInt((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value) / 2.54) as int
-            logTrace "parseColorControl: hue = ${valueInt}"
+            Integer scaledValue = int256ToInt100(value ?: 0)
+            logTrace "parseColorControl: hue = ${scaledValue} (raw=0x${descMap.value})"
             sendHubitatEvent([
                 name: 'hue',
-                value: valueInt,
-                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} hue is ${valueInt}"
+                value: scaledValue,
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} hue is ${scaledValue}"
             ], descMap, true)
             if (dw?.currentValue('colorMode') != 'CT') {
-                sendColorNameEvent(descMap, hue=valueInt, saturation=null)   // added 02/19/2024
+                sendColorNameEvent(descMap, hue=scaledValue, saturation=null)   // added 02/19/2024
             }
             break
         case '0001' : // CurrentSaturation
-            Integer valueInt = (HexUtils.hexStringToInt((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value) / 2.54) as int
-            logTrace "parseColorControl: CurrentSaturation = ${valueInt} (raw=0x${descMap.value})"
+            Integer scaledValue = int256ToInt100(value ?: 0)
+            logTrace "parseColorControl: CurrentSaturation = ${scaledValue} (raw=0x${descMap.value})"
             sendHubitatEvent([
                 name: 'saturation',
-                value: valueInt,
-                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} saturation is ${valueInt}"
+                value: scaledValue,
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} saturation is ${scaledValue}"
             ], descMap, true)
             if (dw?.currentValue('colorMode') != 'CT') {
-                sendColorNameEvent(descMap, hue=null, saturation=valueInt)   // added 02/19/2024
+                sendColorNameEvent(descMap, hue=null, saturation=scaledValue)   // added 02/19/2024
             }
             break
         case '0007' : // ColorTemperatureMireds
             // parse: descMap:[callbackType:Report, endpointInt:11, clusterInt:768, attrInt:7, data:[7:UINT:263], value:263, attrId:0007, cluster:0300, endpoint:0B]
-            Integer valueCt = miredHexToCt((descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value)
+            Integer valueCt = miredIntToCt(value ?: 0)
             logTrace "parseColorControl: ColorTemperatureCT = ${valueCt} (raw=0x${descMap.value})"
             sendHubitatEvent([
                 name: 'colorTemperature',
@@ -1567,16 +1629,7 @@ void parseColorControl(final Map descMap) { // 0300
             break
         case '0008' : // ColorMode
             // Normalize value to integer for robust mapping
-            int colorModeInt
-            if (descMap.value instanceof Integer) {
-                colorModeInt = descMap.value
-            } else {
-                try {
-                    colorModeInt = Integer.parseInt(descMap.value as String, 10)
-                } catch (Exception e) {
-                    colorModeInt = -1
-                }
-            }
+            int colorModeInt = safeHexToInt(descMap.value, -1)
             String colorMode = (colorModeInt == 0) ? 'RGB' : (colorModeInt == 1) ? 'XY' : (colorModeInt == 2) ? 'CT' : UNKNOWN
             logTrace "parseColorControl: ColorMode= ${colorMode} (raw=0x${descMap.value}) - sending <b>colorName</b>"
             if (dw != null) {
@@ -1615,6 +1668,7 @@ void parseColorControl(final Map descMap) { // 0300
             break
         case ['FFF8', 'FFF9', 'FFFA', 'FFFB', 'FFFC', 'FFFD', '00FE'] :
             // Check if FFFB (AttributeList) indicates this CT device should be RGBW
+            // TODO - remove this patch !!!!!!!!!!!!!!!!!!!!!!!!!!!!
             if (descMap.attrId == 'FFFB' && descMap.value instanceof List) {
                 List colorAttrList = descMap.value
                 boolean hasHue = colorAttrList?.contains('00')
@@ -2671,17 +2725,6 @@ void traceOff() {
     device.updateSetting('traceEnable', [value: 'false', type: 'bool'])
 }
 
-Integer hex254ToInt100(String value) {
-    return Math.round(hexStrToUnsignedInt(value) / 2.54)
-}
-
-String int100ToHex254(value) {
-    return intToHexStr(Math.round(value * 2.54))
-}
-
-Integer getLuxValue(rawValue) {
-    return Math.max((Math.pow(10, (rawValue / 10000)) - 1).toInteger(), 1)
-}
 
 void sendToDevice(List<String> cmds, Integer delay = 300) {
     logDebug "sendToDevice (List): (${cmds})"
@@ -3196,25 +3239,6 @@ void componentSetPreviousEffect(DeviceWrapper dw) {
     logWarn "componentSetPreviousEffect(${dw}) id=${id} (TODO: not implemented!)"
 }
 
-/**
- * Convert a color temperature in Kelvin to a mired value
- * @param kelvin color temperature in Kelvin
- * @return mired value
- */
- @CompileStatic
-private static Integer ctToMired(final int kelvin) {
-    return (1000000 / kelvin).toInteger()
-}
-
-/**
- * Mired to Kelvin conversion
- * @param mired mired value in hex
- * @return color temperature in Kelvin
- */
-private int miredHexToCt(final String mired) {
-    Integer miredInt = hexStrToUnsignedInt(mired)
-    return miredInt > 0 ? (1000000 / miredInt) as int : 0
-}
 
 // Component command to set position  (used by Window Shade)
 void componentSetPosition(DeviceWrapper dw, BigDecimal positionPar) {
@@ -3638,6 +3662,7 @@ void checkDriverVersion() {
         setStateDriverVersion(driverVersionAndTimeStamp())
         final boolean fullInit = false
         initializeVars(fullInit)
+        // forceNewParseFlag() // uncomment to force re-parsing all child devices on driver update
     }
 }
 
