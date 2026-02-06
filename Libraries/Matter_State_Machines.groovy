@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
-    version: '1.1.0',
+    version: '1.1.1',
     documentationLink: ''
 )
 /*
@@ -32,14 +32,15 @@ library(
   * ver. 1.0.4  2026-01-06 GPT-5.2  - added discoveryTimeoutScale
   * ver. 1.0.5  2026-01-08 GPT-5.2  - skip discovery for disabled child devices to eliminate timeouts
   * ver. 1.1.0  2026-01-17 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine; added finalizeDeviceType() call
+  * ver. 1.1.1  2026-01-17 GPT-5.2  - restored DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.1.0'
-@Field static final String matterStateMachinesLibStamp   = '2026/01/17 10:06 PM'
+@Field static final String matterStateMachinesLib = '1.1.1'
+@Field static final String matterStateMachinesLibStamp   = '2026/02/06 11:17 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -512,9 +513,9 @@ void discoverAllStateMachine(Map data = null) {
             if (state['stateMachines']['Confirmation'] == true) {
                 logTrace "discoverAllStateMachine: st:${st} - received bridgeDescriptor Basic Info reading confirmation!"
                 logRequestedClusterAttrResult([cluster:0x28, endpoint:0])
-                // st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS`
-                // 07/31/2024  skipped General Diagnostics cluster 0x0033 discovery - Aqara M3 returns error reading attribute 0x0000
-                st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
+                // Minimal/safe discovery: if bridge exposes General Diagnostics (0x0033), read only AttributeList (0xFFFB)
+                // to populate state.bridgeDescriptor['0033_FFFB'] without reading all attributes (some devices error on 0x0000).
+                st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
             }
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
@@ -526,35 +527,46 @@ void discoverAllStateMachine(Map data = null) {
                 }
             }
             break
-        case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS :    // skipped - 07/31/2024
-            // check if the General Diagnostics cluster 0x0033 is in the ServerList
+        case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS :
+            // Check if the General Diagnostics cluster 0x0033 is in the bridge ServerList
             List<String> serverList = state.bridgeDescriptor['ServerList']
-            logDebug "discoverAllStateMachine: DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS - serverList:${serverList}"
-            if (serverList?.contains('33')) {
-                logDebug "discoverAllStateMachine: st:${st} - found General Diagnostics cluster 0x0033 in the ServerList !"
+            boolean hasGeneralDiagnostics = serverList?.any { String c ->
+                try {
+                    return HexUtils.hexStringToInt(c) == 0x0033
+                } catch (ignored) {
+                    return false
+                }
+            } ?: false
+
+            logDebug "discoverAllStateMachine: DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS - serverList:${serverList} hasGeneralDiagnostics=${hasGeneralDiagnostics}"
+            if (hasGeneralDiagnostics) {
+                logDebug "discoverAllStateMachine: st:${st} - reading General Diagnostics AttributeList (0x0033/0xFFFB)"
                 state.states['isInfo'] = true
                 state.tmp = null
                 state.states['cluster'] = '0033'
-                // do not call 'toBeConfirmed' and 'Confirmation' here - it is filled in in the disoverGlobalElementsStateMachine() !
-                disoverGlobalElementsStateMachine([action: START, endpoint: 0, cluster: 0x0033, debug: false])
-                stateMachinePeriod = STATE_MACHINE_PERIOD * 2
-                retry = 0; st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS_WAIT
+                // Read ONLY AttributeList for 0x0033; parseGlobalElements will store it as state.bridgeDescriptor['0033_FFFB'].
+                state['stateMachines']['toBeConfirmed'] = [0, 0x0033, 0xFFFB]
+                state['stateMachines']['Confirmation'] = false
+                readAttribute(0, 0x0033, 0xFFFB)
+                retry = 0
+                st = DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS_WAIT
             }
             else {
-                logWarn "discoverAllStateMachine: st:${st} - General Diagnostics cluster 0x0033 is not in the ServerList !"
-                st = DISCOVER_ALL_STATE_NEXT_STATE
+                logWarn "discoverAllStateMachine: st:${st} - General Diagnostics cluster 0x0033 is not in the ServerList"
+                st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
             }
+            break
         case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS_WAIT :
-            if (state['stateMachines']['discoverGlobalElementsResult']  == SUCCESS) {
-                logDebug "discoverAllStateMachine: st:${st} - received General Diagnostics confirmation!"
+            if (state['stateMachines']['Confirmation'] == true) {
+                logDebug "discoverAllStateMachine: st:${st} - received General Diagnostics AttributeList confirmation"
                 logRequestedClusterAttrResult([cluster: 0x0033, endpoint: 0])
                 st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
             }
             else {
-                logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value retry=${retry})"
+                logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
                 if (retry > maxRetries) {
-                    logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value retry=${retry})!"
+                    logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     state['stateMachines']['errorText'] = 'state BRIDGE_GENERAL_DIAGNOSTICS_WAIT timeout !'
                     st = DISCOVER_ALL_STATE_ERROR
                 }

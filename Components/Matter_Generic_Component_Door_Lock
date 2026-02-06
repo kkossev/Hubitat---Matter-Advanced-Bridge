@@ -1,4 +1,4 @@
-/*
+ /*
   *  'Matter Generic Component Door Lock' - component driver for Matter Advanced Bridge
   *
   *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
@@ -22,11 +22,13 @@
   * ver. 1.3.1  2025-01-22 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements (clearUser seems to be working!)
   * ver. 1.3.2  2025-01-25 kkossev + GPT-4.1 : newParse: true decoding; use matterCommonLib; 
   *                                  capability 'LockCodes' is commented out temporarily: (lock codes still not working)
+  * ver. 1.3.3  2025-02-06 kkossev   (dev. branch) added events 'locking', 'unlocking' for better UI feedback; experimenting ...
   * 
+  *                                  TODO: 
+  *                                  TODO: filter duplicated events
   *                                  TODO: fingerprintData "AcceptedCommandList is empty !!!
   *                                  TODO: add driver version to the state variables
   *                                  TODO: initialize lock with 'unknown' attributes when the device is created
-  *                                  TODO: filter duplicated events
   *                                  TODO: add [physical] [digital] event type to events and logs
   *                                  TODO: analyze https://github.com/SmartThingsCommunity/SmartThingsEdgeDrivers/tree/main/drivers/SmartThings/matter-lock 
   *                                  TODO: analyze https://matter-survey.org/cluster/0x0101
@@ -40,8 +42,8 @@ import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
-@Field static final String matterComponentLockVersion = '1.3.2'
-@Field static final String matterComponentLockStamp   = '2025/01/25 8:36 AM'
+@Field static final String matterComponentLockVersion = '1.3.3'
+@Field static final String matterComponentLockStamp   = '2025/02/06 9:27 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false              // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false      // disable on production
@@ -84,6 +86,7 @@ metadata {
         command    'getCodes', [[name: "Retrieve all PIN codes<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
         */
         // TODO - move these to state variables or device data ?
+        attribute 'lock', 'ENUM', ["locked", "unlocked with timeout", "unlocked", "unknown", "locking", "unlocking"]  // added 'locking' and 'unlocking' for better UI feedback during lock/unlock operations
         attribute 'lockType', 'ENUM', ['deadbolt', 'magnetic', 'other', 'mortise', 'rim', 'latchbolt', 'cylindricalLock', 'tubularLock', 'interconnectedLock', 'deadLatch', 'doorFurniture', 'eurocylinder']
         attribute 'actuatorEnabled', 'ENUM', ['enabled', 'disabled']
         attribute 'operatingMode', 'ENUM', ['Normal', 'Vacation', 'Privacy', 'NoRemoteLockUnlock', 'Passage']
@@ -110,6 +113,10 @@ metadata {
                                            [name: 'name', type: 'STRING', description: "User name (optional)<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
             command 'clearCredential', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type (0:ProgrammingPIN,1:PIN,2:RFID,3:Fingerprint,4:FingerVein,5:Face)', defaultValue: '1'],
                                      [name:'credentialIndex', type: 'NUMBER', description: 'Credential Index (0 to clear all)', defaultValue: '9']]
+            //(BigDecimal credentialIndexPar, String pinCode, BigDecimal userIndexPar = null) 
+            command  'setCredentialPIN' , [[name:'credentialIndex*', type: 'NUMBER', description: 'Credential Index (1-255)', defaultValue: '1'],
+                                           [name:'pinCode*', type: 'STRING', description: 'PIN code (4-8 digits)', defaultValue: '1234'],
+                                           [name:'userIndex', type: 'NUMBER', description: 'User Index (1-65534)', defaultValue: '1']]
             command 'testInvoke', [[name: 'testInvoke', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
         }
     }
@@ -151,7 +158,7 @@ void parse(List<Map> parsedEvents) {
                 sendEvent(d)
             }
             else {
-                logDebug ": ignored lock event '${d.value}' (no change)"
+                logDebug "parse: ${parsedEvents} : ignored lock event '${d.value}' (no change)"
             }
         }
         else if (d.name == 'rtt') {
@@ -486,7 +493,8 @@ void identify() {
 void lock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    
+    sendEvent(name: 'lock', value: 'locking', descriptionText: "${device.displayName} is locking...", type: 'digital')
+    logInfo "locking..."
     parent?.componentLog(device, 'debug', 'locking...')
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, 2000)
     parent?.sendToDevice(cmd)
@@ -497,7 +505,8 @@ void lock() {
 void unlock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    
+    sendEvent(name: 'lock', value: 'unlocking', descriptionText: "${device.displayName} is unlocking...", type: 'digital')
+    logInfo "unlocking..."
     parent?.componentLog(device, 'debug', 'unlocking...')
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000)
     parent?.sendToDevice(cmd)
@@ -509,6 +518,135 @@ void unlock() {
 void setCode(codePosition, pinCode, name = null) {
     setUser(codePosition, pinCode, name)
 }   
+
+
+// 5.2.10.42 SetCredential Command (0x22)
+// Implemented for PIN only (credentialType = 1)
+//
+// Usage examples:
+//   setCredentialPIN(1, "1234")           // set PIN in credential slot 1 (userIndex null)
+//   setCredentialPIN(1, "1234", 1)        // set PIN in credential slot 1 and associate to userIndex 1
+//
+// Notes:
+// - credentialIndex is usually 1..NumberOfPINUsersSupported (often 1..10 for U200)
+// - userIndex is often the same as credentialIndex for many locks (but not always)
+// - operationType = 0 (Add)
+void setCredentialPIN(BigDecimal credentialIndexPar, String pinCode, BigDecimal userIndexPar = null) {
+    if (!supportsLockCodes()) {
+        logWarn "setCredentialPIN: This lock <b>does not</b> support PIN/User management (FeatureMap indicates no PIN/User support)"
+        sendEvent(name: 'codeChanged', value: "${credentialIndexPar} failed", descriptionText: "Lock does not support PIN/User management", isStateChange: true)
+        return
+    }
+
+    if (credentialIndexPar == null) {
+        logWarn "setCredentialPIN: credential index is required"
+        return
+    }
+    Integer credentialIndex = credentialIndexPar.intValue()
+    if (credentialIndex < 1 || credentialIndex > 255) {
+        logWarn "setCredentialPIN: credential index must be 1..255, got '${credentialIndex}'"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Invalid credential index ${credentialIndex}", isStateChange: true)
+        return
+    }
+
+    if (!pinCode) {
+        logWarn "setCredentialPIN: pinCode is required"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Missing pinCode", isStateChange: true)
+        return
+    }
+
+    // Basic sanity (you can relax this if your lock supports other lengths)
+    if (pinCode.size() < 4 || pinCode.size() > 8) {
+        logWarn "setCredentialPIN: pinCode length must be 4..8 digits, got ${pinCode.size()}"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Invalid PIN length", isStateChange: true)
+        return
+    }
+
+    Integer userIndex = (userIndexPar != null) ? userIndexPar.intValue() : null
+    if (userIndex != null && (userIndex < 1 || userIndex > 65534)) {
+        logWarn "setCredentialPIN: userIndex must be 1..65534 (or null), got '${userIndex}'"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Invalid userIndex ${userIndex}", isStateChange: true)
+        return
+    }
+
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) {
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "deviceNumber is null", isStateChange: true)
+        return
+    }
+
+    // ---- Build TLV ----
+    // operationType enum8 (tag 0): Add=0
+    String opTypeHex = "00" // Add
+
+    // credential struct (tag 1)
+    //   tag0: credentialType enum8 = 1 (PIN)
+    //   tag1: credentialIndex uint16 LE
+    String credTypeHex = "01"
+    String credIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(credentialIndex, 2))  // 1 -> 0100
+
+    // credentialData octet string (tag 2): bytes of PIN ASCII/UTF-8
+    byte[] pinBytes = pinCode.getBytes('UTF-8')
+    int pinLen = pinBytes.length
+    String pinHex = pinBytes.collect { String.format('%02X', it) }.join()
+
+    // Encode credentialData as ByteString1/2 (octet string), context tag 2
+    // Context(1-byte) control for ByteString1 is 0x30, for ByteString2 is 0x31 (matches your UTF8 0x2C/0x2D logic)
+    String credentialDataTlv
+    if (pinLen <= 0xFF) {
+        credentialDataTlv = "30" + "02" + HexUtils.integerToHexString(pinLen, 1) + pinHex
+    } else {
+        String lenHexLE = zigbee.swapOctets(HexUtils.integerToHexString(pinLen, 2))
+        credentialDataTlv = "31" + "02" + lenHexLE + pinHex
+    }
+
+    // userIndex nullable uint16 (tag 3)
+    String userIndexTlv
+    if (userIndex == null) {
+        // NULL: control 0x34 (context + null), tag 3
+        userIndexTlv = "34" + "03"
+    } else {
+        String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
+        // uint16: control 0x25 (context + uint16), tag 3
+        userIndexTlv = "25" + "03" + userIndexHexLE
+    }
+
+    // userStatus nullable enum8 (tag 4) - keep NULL for now (HA sends None)
+    String userStatusTlv = "34" + "04"
+
+    // userType nullable enum8 (tag 5) - keep NULL for now
+    String userTypeTlv = "34" + "05"
+
+    // Credential struct field (tag 1): control 0x35 (context + struct), tag 1
+    // Follow the same working pattern as clearCredential(): NO extra inner "15" here.
+    String credentialStructField =
+            "35" + "01" +
+                "24" + "00" + credTypeHex +
+                "25" + "01" + credIndexHexLE +
+            "18"
+
+    // Full command struct
+    String tlv =
+            "15" +
+                "24" + "00" + opTypeHex +   // tag0 operationType
+                credentialStructField +      // tag1 credential struct
+                credentialDataTlv +          // tag2 credentialData (octet string)
+                userIndexTlv +               // tag3 userIndex (nullable)
+                userStatusTlv +              // tag4 userStatus (nullable)
+                userTypeTlv +                // tag5 userType (nullable)
+            "18"
+
+    // Use Hubitat invoke envelope (timed invoke)
+    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x0022, 2000) + " {${tlv}}"
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x0022, 9000) + " {${tlv}}"
+
+    logDebug "setCredentialPIN: credIndex=${credentialIndex}, userIndex=${userIndex}, pinLen=${pinLen}, credIndexHexLE=${credIndexHexLE}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "setting PIN credential slot ${credentialIndex}..." + (userIndex != null ? " (user ${userIndex})" : ""))
+    parent?.sendToDevice(cmd)
+
+    // Optimistic event (until we parse SetCredentialResponse 0x23)
+    sendEvent(name: 'codeChanged', value: "${credentialIndex} set", descriptionText: "SetCredential sent for slot ${credentialIndex}", isStateChange: true)
+}
 
 
 // NOT WORKING! :( )
@@ -544,69 +682,75 @@ void setUser(codePosition, pinCode, name = null) {
         return
     }
 
-    // Matter SetUser (0x1A) payload is a TLV structure with context-tagged fields:
+    
+    // ---- Build TLV payload ----
     // 0: userIndex (uint16)
-    // 1: userName (string)
-    // 2: userUniqueID (uint32) (nullable)
+    // 1: userName (string, nullable on some implementations)
+    // 2: userUniqueID (nullable uint32) -> we send NULL
     // 3: userStatus (enum8)
     // 4: userType (enum8)
     // 5: credentialRule (enum8)
-    // We build it manually (same approach as clearCredential) because nested/typed payloads can be finicky.
 
-    int index = userIndex
-    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))
+    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
 
-    // Default values (works well for typical locks; can be made configurable later)
-    int userStatus = 0x01      // commonly "OccupiedEnabled" in Matter/Zigbee family enums
-    int userType = 0x00        // commonly "UnrestrictedUser"
-    int credentialRule = 0x00  // Single
+    int userStatus = 0x01      // OccupiedEnabled (common)
+    int userType = 0x00        // UnrestrictedUser (common)
+    int credentialRule = 0x00  // Single (common)
 
     String userStatusHex = HexUtils.integerToHexString(userStatus, 1)
     String userTypeHex = HexUtils.integerToHexString(userType, 1)
     String credentialRuleHex = HexUtils.integerToHexString(credentialRule, 1)
 
-    // UserName: send as UTF-8 string (empty string if not provided)
-    String userName = (name != null) ? name.toString() : ''
-    byte[] userNameBytes = userName.getBytes('UTF-8')
-    int userNameLen = userNameBytes.length
-    String userNameHex = userNameBytes.collect { String.format('%02X', it) }.join()
-
-    // TLV element for context tag 1: UTF8 string with 1-byte or 2-byte length
+    // userName:
+    // If no name provided -> send NULL (more compatible than empty string on some locks)
     String userNameTlv
-    if (userNameLen <= 0xFF) {
-        // control 0x2C = context-specific (1-byte tag) + UTF81 (0x0C)
-        userNameTlv = '2C' + '01' + HexUtils.integerToHexString(userNameLen, 1) + userNameHex
+    if (name == null || name.toString().trim().isEmpty()) {
+        // NULL: control 0x34, tag 1
+        userNameTlv = "34" + "01"
     } else {
-        // control 0x2D = context-specific (1-byte tag) + UTF82 (0x0D)
-        String lenHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userNameLen, 2))
-        userNameTlv = '2D' + '01' + lenHexLE + userNameHex
+        String userName = name.toString()
+        byte[] userNameBytes = userName.getBytes('UTF-8')
+        int userNameLen = userNameBytes.length
+        String userNameHex = userNameBytes.collect { String.format('%02X', it) }.join()
+
+        if (userNameLen <= 0xFF) {
+            // UTF81: control 0x2C, tag 1, 1-byte length
+            userNameTlv = "2C" + "01" + HexUtils.integerToHexString(userNameLen, 1) + userNameHex
+        } else {
+            // UTF82: control 0x2D, tag 1, 2-byte length (LE)
+            String lenHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userNameLen, 2))
+            userNameTlv = "2D" + "01" + lenHexLE + userNameHex
+        }
     }
 
-    // userUniqueID: leave NULL for now (many locks ignore it / don't require it)
-    // control 0x34 = context-specific (1-byte tag) + NULL (0x14)
-    String userUniqueIdTlv = '34' + '02'
+    // userUniqueID: NULL (tag 2)
+    // String userUniqueIdTlv = "34" + "02"
+// userUniqueID: uint32 (tag 2) -> use userIndex as value
+String userUniqueIdHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 4))
+// control 0x26 = context-specific + uint32
+String userUniqueIdTlv = "26" + "02" + userUniqueIdHexLE    
 
-    // Build TLV structure (anonymous struct)
+    // Build command struct
     String tlv =
-            '15' +
-            '25' + '00' + userIndexHexLE +
-            userNameTlv +
-            userUniqueIdTlv +
-            '24' + '03' + userStatusHex +
-            '24' + '04' + userTypeHex +
-            '24' + '05' + credentialRuleHex +
-            '18'
+            "15" +
+              "25" + "00" + userIndexHexLE +   // tag 0 uint16
+              userNameTlv +                    // tag 1 string or NULL
+              userUniqueIdTlv +                // tag 2 NULL
+              "24" + "03" + userStatusHex +    // tag 3 enum8
+              "24" + "04" + userTypeHex +      // tag 4 enum8
+              "24" + "05" + credentialRuleHex +// tag 5 enum8
+            "18"
 
-    String endpointHex = HexUtils.integerToHexString(deviceNumber, 1)
+    // IMPORTANT: use matter.invoke() to build the Hubitat envelope correctly
+    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x001A, 2000) + " {${tlv}}"
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001A) + " {${tlv}}"
 
-    String cmd = "he invoke 0x${endpointHex} 0x0101 0x001A 0x07D0 {1518} {${tlv}}"
-
-    logDebug "setUser: index=${index}, nameLen=${userNameLen}, tlv=${tlv}, cmd=${cmd}"
+    logDebug "setUser: index=${userIndex}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "setting user ${userIndex}..." + (name ? " (${name})" : ""))
     parent?.sendToDevice(cmd)
 
-    // NOTE: This only creates/updates the user record. Setting the actual PIN credential requires SetCredential (0x22).
-    // We keep that separate for now.
-    sendEvent(name: 'codeChanged', value: "${codePosition} set", descriptionText: "setUser sent for user ${index}", isStateChange: true)
+    sendEvent(name: 'codeChanged', value: "${codePosition} set", descriptionText: "setUser sent for user ${userIndex}", isStateChange: true)
+
 }
 
 
@@ -637,9 +781,9 @@ void getUser(String userIndex) {
     // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
+    cmdFields.add(matter.cmdField(DataType.UINT16, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
 
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, cmdFields)
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, 9000,cmdFields)
     logDebug "getUser: cmd=${cmd}"
     parent?.componentLog(device, 'debug', "querying user information for index ${index}...")
     parent?.sendToDevice(cmd)
@@ -714,7 +858,9 @@ void clearCredential(BigDecimal credentialTypePar = null, BigDecimal credentialI
         return
     }
 
-    int index = (credentialIndex != null) ? credentialIndex : 0xFFFE
+
+
+    int index = (credentialIndex != null) ? credentialIndex : 1
 
     String typeHex  = HexUtils.integerToHexString(credentialType, 1)             // e.g. "01"
     String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))  // e.g. "0900"
@@ -728,10 +874,38 @@ void clearCredential(BigDecimal credentialTypePar = null, BigDecimal credentialI
             "18" +            // end inner struct
             "18"              // end outer struct
 
-    String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {1518} {${tlv}}"
 
-    logDebug "clearCredential: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
-    parent?.sendToDevice(cmd)   
+/*
+int index = (credentialIndex != null) ? credentialIndex : 1
+
+String typeHex  = HexUtils.integerToHexString(credentialType, 1)             // "01"
+String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))  // "0100" LE
+
+String f0 = matter.cmdFieldStr(0x00, 0x04, typeHex)
+String f1 = matter.cmdFieldStr(0x01, 0x05, indexHex)
+
+log.warn "f0=${f0} f1=${f1}"
+
+// f0/f1 produced by cmdFieldStr
+String innerRaw = "${f0}${f1}"
+String innerTlv = matter.cmdFields(innerRaw)   // returns "15...18"
+
+log.warn "innerTlv=${innerTlv}"
+
+String tlv =
+    "15" +            // start outer struct
+    "35" + "00" +     // context tag 0, STRUCTURE (CredentialStruct)
+    innerTlv +        // already 15..18
+    "18"              // end outer struct
+*/
+
+String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {1518} {${tlv}}"
+//String cmd = matter.invoke(0x01, 0x0101, 0x0026, 0x07D0, tlv)
+
+logDebug "clearCredential: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
+parent?.sendToDevice(cmd)
+
+
 }
 
 @Field static final Map<Integer, String> CredentialTypeEnum = [
@@ -803,7 +977,7 @@ void getCredentialStatus(String pinIndex) {
     if (deviceNumber == null) return
     
     parent?.componentLog(device, 'debug', "querying PIN credential status for index ${index}...")
-    
+/*    
     // Build GetCredentialStatus command (0x24)
     // Command has single field: credential structure {credentialType: enum8, credentialIndex: uint16}
     // Build TLV manually since we need nested structure
@@ -825,6 +999,39 @@ void getCredentialStatus(String pinIndex) {
     
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x24) + " {${cmdPayload}}"
     parent?.sendToDevice(cmd)
+
+*/
+
+    // Build TLV using the SAME pattern as clearCredential() (known-good)
+    // Outer struct:
+    //   tag 0: CredentialStruct (struct)
+    //        tag 0: credentialType (uint8/enum8)
+    //        tag 1: credentialIndex (uint16 LE)
+
+    int credentialType = 1  // PIN
+
+    String typeHex    = HexUtils.integerToHexString(credentialType, 1)                 // 01
+    String indexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))       // 3 -> 0300
+
+    // IMPORTANT: follow the SAME encoding pattern as clearCredential()
+    // outer struct:
+    //   tag0: CredentialStruct (struct)
+    //      tag0: type (uint8/enum8)
+    //      tag1: index (uint16 LE)
+    String tlv =
+            "15" +
+              "35" + "00" +
+                "24" + "00" + typeHex +
+                "25" + "01" + indexHexLE +
+              "18" +
+            "18"
+
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x0024, 2000) + " {${tlv}}"
+
+    logDebug "getCredentialStatus: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "querying credential status: type=${credentialType}, index=${index}...")
+    parent?.sendToDevice(cmd)
+
 }
 
 
@@ -1035,6 +1242,7 @@ private void logsOff() {
 }
 
 void refresh() {
+    logInfo "refreshing device state and attributes..."
     clearOldStateVariables()
     parent?.componentRefresh(this.device)
 }

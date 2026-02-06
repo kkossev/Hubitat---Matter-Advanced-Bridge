@@ -46,11 +46,15 @@
  *                                  added ping() delta calculcation; added cleanSubscribe Min/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP); added matterCommonLib.groovy library for common functions;
  * ver. 1.7.1  2026-01-26 kkossev   reduced debug/warn logging; Best Name auto-label for all child devices @iEnam
  * ver. 1.7.2  2026-01-29 kkossev   bugfixes: contact/water/motion/lock state parsing issue; child device pings; Patch for Zemismart M1 battery percentage reporting issue; 
- * ver. 1.7.3  2026-01-30 kkossev   (dev.branch) newParse=true by default; bugfixes: RGB&CT bulbs level parsing;
+ * ver. 1.7.3  2026-01-30 kkossev   newParse=true by default; bugfixes: RGB&CT bulbs level parsing;
+ * ver. 1.7.4  2026-02-06 kkossev   (dev.branch) device ping() bugfix; filter all events (including Door Lock) after reboot/resubscribe; eventPaths are subscribed first; removed lockType and operatingMode and supportedOperatingModes attributes subscriptins; 
+ *                                  added General Diagnostics (0x0033) to SupportedMatterClusters with subscriptions for RebootCount (0x0001) and UpTime (0x0002) using min 60 / max 3600 / delta 60
  *
+ *                                   TODO: 
+ *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events
+ *                                   TODO: _discoverAll to call updated() or to start the periodic jobs
  *                                   TODO: callbackType:WriteAttributes : Aqara E1 thermostat : dev:53772026-01-30 00:06:08.504warnAqara M3 Matter parserFunc: exception java.lang.NumberFormatException: For input string: "null" Failed to parse description: new Parse/Map payload: [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
- *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events
  *                                   TODO: thermostat component - supported modes JSON initialization duafter discovery
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
@@ -67,15 +71,16 @@
  *
  */
 
-static String version() { '1.7.3' }
-static String timeStamp() { '2026/01/30 2:47 PM' }
+static String version() { '1.7.4' }
+static String timeStamp() { '2026/02/06 11:54 PM' }
+
 
 @Field static final Boolean _DEBUG = false                    // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
@@ -198,6 +203,14 @@ metadata {
                             //   [0x000F: [min: 0, max: 0xFFFF, delta: 0]]    // BatReplacementNeeded (15)
               ]
     ],
+
+     // General Diagnostics Cluster (bridge/node)
+     0x0033 : [attributes: 'GeneralDiagnosticsClusterAttributes', parser: 'parseGeneralDiagnostics',
+                subscriptions : [
+                    [0x0001: [min: 60, max: 3600, delta: 60]],  // RebootCount
+                    [0x0002: [min: 60, max: 3600, delta: 60]]   // UpTime
+                ]
+     ],
     /*
     0x0039 : [attributes: 'BridgedDeviceBasicAttributes', commands: 'BridgedDeviceBasicCommands', parser: 'parseBridgedDeviceBasic',            // BridgedDeviceBasic
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
@@ -247,9 +260,10 @@ metadata {
     // DoorLock Cluster
     0x0101 : [attributes: 'DoorLockClusterAttributes', commands: 'DoorLockClusterCommands', parser: 'parseDoorLock',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // LockState (Mandatory)
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // ActuatorEnabled (Mandatory)
-                               [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // DoorState (Optional but recommended if supported)
-                               [0x0025: [min: 0, max: 0xFFFF, delta: 0]]],  // OperatingMode (Mandatory)
+                               //[0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // ActuatorEnabled (Mandatory)
+                               //[0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // DoorState (Optional but recommended if supported)
+                               //[0x0025: [min: 0, max: 0xFFFF, delta: 0]]],  // OperatingMode (Mandatory)
+              ],
               eventSubscriptions : [-1]  // Subscribe to ALL Door Lock events (DoorLockAlarm, DoorStateChange, LockOperation, LockOperationError, LockUserChange)
     ],
     // WindowCovering
@@ -417,7 +431,8 @@ private void processParsedDescription(final Map descMap, final String descriptio
 
     gatherAttributesValuesInfo(descMap)
 
-    String parserFunc = ParsedMatterClusters[HexUtils.hexStringToInt(descMap.cluster)]
+    Integer clusterInt = (descMap.clusterInt != null) ? safeToInt(descMap.clusterInt, null) : safeHexToInt(descMap.cluster, null)
+    String parserFunc = (clusterInt != null) ? ParsedMatterClusters[clusterInt] : null
 
     if (parserFunc) {
         if (_DEBUG) {
@@ -464,24 +479,27 @@ void checkChildDevicePingResponse(final Map descMap) {
         return
     }
     
-    Integer endpointInt = descMap.endpoint ? HexUtils.hexStringToInt(descMap.endpoint) : null
+    Integer endpointInt = (descMap.endpoint != null) ? safeHexToInt(descMap.endpoint, null) : null
     if (endpointInt == null || descMap.cluster == null || descMap.attrId == null) {
         return
     }
     
-    // Find matching ping entry
+    // Find matching ping entry: choose the most recent (prevents stale matches)
     String matchedPingId = null
+    Map matchedPingEntry = null
     state.pendingPings.each { pingId, pingEntry ->
-        if (pingEntry.deviceNumber == endpointInt && 
-            pingEntry.cluster == descMap.cluster && 
+        if (pingEntry.deviceNumber == endpointInt &&
+            pingEntry.cluster == descMap.cluster &&
             pingEntry.attrId == descMap.attrId) {
-            matchedPingId = pingId
+            if (matchedPingEntry == null || (pingEntry.startTime as Long) > (matchedPingEntry.startTime as Long)) {
+                matchedPingId = pingId
+                matchedPingEntry = pingEntry
+            }
         }
     }
     
-    if (matchedPingId != null) {
-        Map pingEntry = state.pendingPings[matchedPingId]
-        Long rttMs = now() - pingEntry.startTime
+    if (matchedPingId != null && matchedPingEntry != null) {
+        Long rttMs = now() - (matchedPingEntry.startTime as Long)
         
         // Send ping response event to child device
         sendHubitatEvent([
@@ -491,11 +509,11 @@ void checkChildDevicePingResponse(final Map descMap) {
             type: 'digital'
         ], [endpoint: descMap.endpoint], false)
         
-        logDebug "Ping response from device ${pingEntry.deviceNumber}, RTT: ${rttMs}ms"
+        logDebug "Ping response from device ${matchedPingEntry.deviceNumber}, RTT: ${rttMs}ms"
         
         // Cleanup
         state.pendingPings.remove(matchedPingId)
-        unschedule('pingTimeout')
+        // Do NOT unschedule pingTimeout globally; old scheduled timeouts will harmlessly no-op
     }
 }
 
@@ -716,7 +734,7 @@ void checkStateMachineConfirmation(final Map descMap) {
         return
     }
     // toBeConfirmedList first element is endpoint, second is clusterInt, third is attrInt
-    if (HexUtils.hexStringToInt(descMap.endpoint) == toBeConfirmedList[0] && descMap.clusterInt == toBeConfirmedList[1] && descMap.attrInt == toBeConfirmedList[2]) {
+    if (safeHexToInt(descMap.endpoint, null) == toBeConfirmedList[0] && descMap.clusterInt == toBeConfirmedList[1] && descMap.attrInt == toBeConfirmedList[2]) {
         logDebug "checkStateMachineConfirmation: endpoint:${descMap.endpoint} cluster:${descMap.cluster} attrId:${descMap.attrId} - CONFIRMED!"
         state['stateMachines']['Confirmation'] = true
     }
@@ -931,15 +949,15 @@ void parseGeneralDiagnostics(final Map descMap) {
     Integer value
     switch (descMap.attrId) {
         case '0001' :   // RebootCount -  a best-effort count of the number of times the Node has rebooted
-            value = HexUtils.hexStringToInt(descMap.value)
+            value = getDescMapValueAsInt(descMap)
             sendHubitatEvent([name: 'rebootCount', value: value,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} RebootCount is ${value}"])
             break
         case '0002' :   // UpTime -  a best-effort assessment of the length of time, in seconds,since the Node’s last reboot
-            value = HexUtils.hexStringToInt(descMap.value)
+            value = getDescMapValueAsInt(descMap)
             sendHubitatEvent([name: 'upTime', value:value,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} UpTime is ${value} seconds"])
             break
         case '0003' :   // TotalOperationalHours -  a best-effort attempt at tracking the length of time, in hours, that the Node has been operational
-            value = HexUtils.hexStringToInt(descMap.value)
+            value = getDescMapValueAsInt(descMap)
             sendHubitatEvent([name: 'totalOperationalHours', value: value,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} TotalOperationalHours is ${value} hours"])
             break
         default :
@@ -1302,27 +1320,46 @@ String getEventName(final String cluster, String evtId) {
     return (evtInt != null) ? (getEventsMapByClusterId(cluster)?.get(evtInt) ?: UNKNOWN) : UNKNOWN
 }
 
+// Filter noisy Matter *events* (evtId present) that arrive shortly after (re)subscription.
+// Some devices/controllers send a burst of events right after subscribe; these are often duplicates/stale.
+private boolean shouldFilterNoisyPostSubscribeEvent(final Map descMap, final String source = null) {
+    if (descMap?.evtId == null) {
+        return false
+    }
+
+    def lastSubscribe = state.lastTx?.subscribeTime
+    if (lastSubscribe == null) {
+        return false
+    }
+
+    long ageMs = now() - (lastSubscribe as long)
+    long uptimeSec = location.hub.uptime ?: 0L
+    // Use 30s threshold if hub just booted (uptime < 5min) OR subscription is recent (age < 60s)
+    long thresholdMs = (uptimeSec < 300 || ageMs < 60000) ? 30000 : 10000
+
+    if (settings?.logEnable) {
+        String src = (source != null) ? "${source}: " : ''
+        logDebug "${src}EVENT age=${ageMs}ms uptime=${uptimeSec}s threshold=${thresholdMs}ms"
+    }
+
+    if (ageMs >= 0 && ageMs < thresholdMs) {
+        String src = (source != null) ? "${source}: " : ''
+        logDebug "${src}FILTERED event (ep=${descMap.endpoint} evt=${descMap.evtId}) ${ageMs}ms after subscribe (hub uptime=${uptimeSec}s)"
+        return true
+    }
+
+    return false
+}
+
 
 // Method for parsing 003B Switch cluster attributes and events
 void parseSwitch(final Map descMap) {
     if (descMap.cluster != '003B') { logWarn "parseSwitch: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    
-    // Filter noisy events that arrive shortly after (re)subscription
-    if (descMap.evtId != null) {
-        def lastSubscribe = state.lastTx?.subscribeTime
-        if (lastSubscribe != null) {
-            long age = now() - (lastSubscribe as long)
-            long uptime = location.hub.uptime ?: 0L
-            // Use 30s threshold if hub just booted (uptime < 5min) OR subscription is recent (age < 60s)
-            long thresholdTime = (uptime < 300 || age < 60000) ? 30000 : 10000
-            if (settings?.logEnable) {
-                logDebug "parseSwitch: EVENT age=${age}ms uptime=${uptime}s threshold=${thresholdTime}ms"
-            }
-            if (age >= 0 && age < thresholdTime) {
-                logDebug "parseSwitch: FILTERED event (ep=${descMap.endpoint} evt=${descMap.evtId}) ${age}ms after subscribe (hub uptime=${uptime}s)"
-                return
-            }
-        }
+
+    // Filter noisy post-(re)subscription Matter events (now handled centrally too)
+    if (shouldFilterNoisyPostSubscribeEvent(descMap, 'parseSwitch')) {
+        logDebug "parseSwitch: FILTERED noisy post-subscribe event: descMap:${descMap}"
+        return
     }
     
     String attributeName = (descMap.attrId != null) ? getAttributeName(descMap) : null
@@ -1847,6 +1884,13 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
     String descriptionText = eventParams['descriptionText']
     String unit = eventParams['unit']
     logTrace "sendHubitatEvent: name:${name} value:${value} descriptionText:${descriptionText} unit:${unit}"
+
+    // Filter noisy Matter *events* (evtId present) shortly after (re)subscription.
+    // Apply centrally so it affects all clusters, not just Switch.
+    if (shouldFilterNoisyPostSubscribeEvent(descMap, 'sendHubitatEvent')) {
+        logDebug "sendHubitatEvent: FILTERED noisy post-(re)subscription event for ${getDeviceDisplayName(descMap?.endpoint)} name:${name} value:${value}"
+        return
+    }
 
     String dni = ''
     // get the dni from the descMap eddpoint
@@ -2435,39 +2479,15 @@ List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
 String subscribeCmd() {
     log.warn 'subscribeCmd() is deprecated. Use cleanSubscribeCmd() instead.'
     return null
-    /*
-    List<Map<String, String>> paths = []
-    paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
-    paths.addAll(state.subscriptions?.collect { sub ->
-        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
-    })
-    // Note: Event subscriptions are handled by getSubscribeOrRefreshCmdList() through cluster configuration
-    if (paths.isEmpty()) {
-        logWarn 'subscribeCmd(): paths is empty!'
-        return null
-    }
-    return matter.subscribe(0, 0xFFFF, paths)
-    */
 }
 
 // availabe from HE platform version [2.3.9.186]
 String cleanSubscribeCmd() {
     List<Map<String, String>> paths = []
     //paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
-    // Filter out subscriptions for disabled child devices
-    paths.addAll(state.subscriptions?.findAll { sub ->
-        Integer endpoint = sub[0] as Integer
-        String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-        ChildDeviceWrapper childDevice = getChildDevice(dni)
-        if (childDevice?.disabled == true) {
-            logDebug "cleanSubscribeCmd(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
-            return false
-        }
-        return true
-    }?.collect { sub ->
-        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
-    })
-    
+    // Build event paths first, then attribute paths (requested ordering)
+    List<Map<String, String>> eventPaths = []
+
     // Add event subscriptions for clusters that have eventSubscriptions configured
     LinkedHashMap<Integer, List<List<Integer>>> groupedSubscriptionsByCluster = state.subscriptions?.groupBy { it[1] }
     groupedSubscriptionsByCluster?.each { Integer cluster, List<List<Integer>> endpointsList ->
@@ -2484,11 +2504,28 @@ String cleanSubscribeCmd() {
                     return  // continue to next endpoint
                 }
                 eventIds.each { Integer eventId ->
-                    paths.add(matter.eventPath(endpoint, cluster, eventId))
+                    eventPaths.add(matter.eventPath(endpoint, cluster, eventId))
                 }
             }
         }
     }
+
+    // Filter out attribute subscriptions for disabled child devices
+    List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
+        Integer endpoint = sub[0] as Integer
+        String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+        ChildDeviceWrapper childDevice = getChildDevice(dni)
+        if (childDevice?.disabled == true) {
+            logDebug "cleanSubscribeCmd(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
+            return false
+        }
+        return true
+    }?.collect { sub ->
+        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
+    } ?: []
+
+    paths.addAll(eventPaths)
+    paths.addAll(attributePaths)
     
     if (paths.isEmpty()) {
         logWarn 'cleanSubscribeCmd(): paths is empty!'
@@ -2591,6 +2628,30 @@ void fingerprintsToSubscriptionsList() {
     state.subscriptions = []
     // do NOT subscribe to the Descriptor cluster PartsList attribute - creates problems !!!!!!!!!!!!
     //updateStateSubscriptionsList('add', 0, 0x001D, 0x0003)
+
+    // Bridge/node endpoint (00) subscriptions (not part of fingerprintXX)
+    // Subscribe to General Diagnostics attrs only if exposed in the bridge attribute list.
+    List bridgeAttrList0033 = state?.bridgeDescriptor?.get('0033_FFFB') as List
+    if (bridgeAttrList0033) {
+        List<Integer> bridgeAttrInts0033 = bridgeAttrList0033.collect { safeHexToInt(it) }
+        if (bridgeAttrInts0033.contains(0x0001)) {
+            logDebug 'fingerprintsToSubscriptionsList: adding bridge subscription endpoint 0 cluster 0x0033 attr 0x0001 (RebootCount)'
+            updateStateSubscriptionsList(addOrRemove = 'add', endpoint = 0, cluster = 0x0033, attrId = 0x0001)
+        }
+        else {
+            logDebug "fingerprintsToSubscriptionsList: bridge 0x0033 AttributeList does not contain 0x0001 (RebootCount): ${bridgeAttrInts0033}"
+        }
+        if (bridgeAttrInts0033.contains(0x0002)) {
+            logDebug 'fingerprintsToSubscriptionsList: adding bridge subscription endpoint 0 cluster 0x0033 attr 0x0002 (UpTime)'
+            updateStateSubscriptionsList(addOrRemove = 'add', endpoint = 0, cluster = 0x0033, attrId = 0x0002)
+        }
+        else {
+            logDebug "fingerprintsToSubscriptionsList: bridge 0x0033 AttributeList does not contain 0x0002 (UpTime): ${bridgeAttrInts0033}"
+        }
+    }
+    else {
+        logTrace 'fingerprintsToSubscriptionsList: bridgeDescriptor 0033_FFFB attribute list not available'
+    }
 
     // For each fingerprint in the state, check if the fingerprint has entries in the SupportedMatterClusters list. Then, add these entries to the state.subscriptions map
     Integer deviceCount = 0
@@ -2913,13 +2974,14 @@ void componentPing(DeviceWrapper dw) {
     // Initialize pending pings state if needed
     if (state.pendingPings == null) { state.pendingPings = [:] }
     
+    Long startTime = now()
     // Create unique ping ID using device number and timestamp
-    String pingId = "${deviceNumber}-${now()}"
+    String pingId = "${deviceNumber}-${startTime}"
     
     // Store ping tracking information
     state.pendingPings[pingId] = [
         deviceNumber: deviceNumber,
-        startTime: now(),
+        startTime: startTime,
         dni: dw.deviceNetworkId,
         cluster: '001D',      // Descriptor cluster (universal)
         attrId: '0000'        // DeviceTypeList attribute
@@ -3433,7 +3495,8 @@ private Integer createChildDevices() {
     logDebug 'createChildDevices(): '
     boolean result = false
     Integer deviceCount = 0
-    List<Integer> supportedClusters = SupportedMatterClusters.collect { it.key }
+    // Exclude node/bridge-only clusters from being treated as a child-device support signal.
+    List<Integer> supportedClusters = SupportedMatterClusters.collect { it.key }?.findAll { it != 0x0033 }
     logDebug "createChildDevices(): supportedClusters=${supportedClusters}"
     state.each { fingerprintName, fingerprintMap ->
         if (fingerprintName.startsWith('fingerprint')) {
