@@ -49,7 +49,8 @@
  * ver. 1.7.3  2026-01-30 kkossev   newParse=true by default; bugfixes: RGB&CT bulbs level parsing;
  * ver. 1.7.4  2026-02-06 kkossev   device ping() bugfix; filter all events (including Door Lock) after reboot/resubscribe; eventPaths are subscribed first; removed lockType and operatingMode and supportedOperatingModes attributes subscriptins; 
  *                                  added General Diagnostics (0x0033) to SupportedMatterClusters with subscriptions for RebootCount (0x0001) and UpTime (0x0002) using min 60 / max 3600 / delta 60
- * ver. 1.7.5  2026-02-11 kkossev   (dev.branch) processing the new callbackType:WriteAttributes and callbackType:SubscribeResult;
+ * ver. 1.7.5  2026-02-11 kkossev   processing the new callbackType:WriteAttributes and callbackType:SubscribeResult;
+ * ver. 1.7.6  2026-02-12 kkossev   bugfix: WindowCovering processing exceptions; 'Matter Generic Component Window Shade' getInfo() method;
  *
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
@@ -70,8 +71,8 @@
  *
  */
 
-static String version() { '1.7.5' }
-static String timeStamp() { '2026/02/11 7:18 AM' }
+static String version() { '1.7.6' }
+static String timeStamp() { '2026/02/12 12:00 PM' }
 
 
 @Field static final Boolean _DEBUG = false                    // make it FALSE for production!
@@ -267,10 +268,12 @@ metadata {
     ],
     // WindowCovering
     0x0102 : [attributes: 'WindowCoveringClusterAttributes', commands: 'WindowCoveringClusterCommands', parser: 'parseWindowCovering',
+    
               subscriptions : [[0x000A: [min: 0, max: 0xFFFF, delta: 0]],   // OperationalStatus
                                [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // TargetPositionLiftPercent100ths
-                               [0x000E: [min: 0, max: 0xFFFF, delta: 0]]]   // CurrentPositionLiftPercent100ths
-    ],
+                               [0x000E: [min: 0, max: 0xFFFF, delta: 0]]    // CurrentPositionLiftPercent100ths
+              ]
+    ],    
     // Thermostat
     0x0201 : [attributes: 'ThermostatClusterAttributes', commands: 'ThermostatClusterCommands', parser: 'parseThermostat',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // LocalTemperature +Aqara
@@ -1579,14 +1582,14 @@ void parseCarbonDioxideConcentrationMeasurement(final Map descMap) { // 040D
 void parseWindowCovering(final Map descMap) { // 0102
     if (descMap.cluster != '0102') { logWarn "parseWindowCovering: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '000B') { // TargetPositionLiftPercent100ths
-        Integer valueInt = (HexUtils.hexStringToInt(descMap.value) / 100) as int
+        Integer valueInt = (safeHexToInt(descMap.value) / 100) as int
         sendHubitatEvent([
             name: 'targetPosition',
             value: valueInt,
             descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>targetPosition</b> is reported as ${valueInt} <i>(to be re-processed in the child driver!)</i>"
         ], descMap, ignoreDuplicates = false)
     } else if (descMap.attrId == '000E') { // CurrentPositionLiftPercent100ths
-        Integer valueInt = (HexUtils.hexStringToInt(descMap.value) / 100) as int
+        Integer valueInt = (safeHexToInt(descMap.value) / 100) as int
         sendHubitatEvent([
             name: 'position',
             value: valueInt,
@@ -1600,7 +1603,13 @@ void parseWindowCovering(final Map descMap) { // 0102
         ], descMap, ignoreDuplicates = false)
     }
     else {
-        logTrace "parseWindowCovering: ${(WindowCoveringClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+        logDebug "parseWindowCovering: ${(WindowCoveringClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+        // send the unprocessed attributes to the child driver for further processing
+        sendHubitatEvent([
+            name: 'handleInChildDriver',
+            value: descMap,                 // since version 1.7.0 we are sending the full descMap to the child driver
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+        ], descMap, ignoreDuplicates = false)
     }
 }
 

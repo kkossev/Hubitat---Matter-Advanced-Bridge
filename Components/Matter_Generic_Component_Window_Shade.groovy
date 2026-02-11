@@ -22,14 +22,15 @@
  * ver. 1.2.0  2025-01-10 kkossev - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.2.1  2025-01-10 kkossev - bugfix: changed OPEN/CLOSED to Hubitat standard (100/0) for correct Dashboard display; invertPosition preference default to true
  * ver. 1.2.2  2025-01-29 kkossev - common libraries
+ * ver. 1.2.3  2026-02-11 kkossev - (dev. branch) getInfo()
  *
  *                                   TODO:
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '1.2.2'
-@Field static final String matterComponentWindowShadeStamp   = '2025/01/29 10:30 PM'
+@Field static final String matterComponentWindowShadeVersion = '1.2.3'
+@Field static final String matterComponentWindowShadeStamp   = '2026/02/11 11:59 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -64,7 +65,8 @@ metadata {
         attribute 'batReplacementDescription', 'string'
         attribute 'batQuantity', 'string'
 
-        command 'initialize', [[name: 'initialize all attributes']]
+        command   'initialize', [[name: 'initialize all attributes']]
+        command   'getInfo', [[name: 'Check the live logs and the device data for additional infoormation on this device']]
 
         if (_DEBUG) {
             command 'parseTest', [[name: 'parseTest', type: 'STRING', description: 'parseTest', defaultValue : '']]
@@ -108,6 +110,9 @@ void parse(List<Map> description) {
         else if (d?.name == 'operationalStatus') {
             processOperationalStatusBridgeEvent(d)
         }
+        else if (d.name in  ['unprocessed', 'handleInChildDriver']) {
+            handleUnprocessedMessageInChildDriver(d)
+        }
         else {
             if (d?.descriptionText && txtEnable) { log.info "${d.descriptionText}" }
             log.trace "parse: ${d}"
@@ -115,6 +120,226 @@ void parse(List<Map> description) {
         }
     }
 }
+
+void handleUnprocessedMessageInChildDriver(Map description) {
+    logDebug "handleUnprocessedMessageInChildDriver: description = ${description}"
+    Map descMap =[:]
+    try {
+        descMap = description.value as Map
+    }
+    catch (e) {
+        logWarn "handleUnprocessedMessageInChildDriver: exception ${e} while parsing description.value = ${description.value}"
+        return
+    }
+    logDebug "handleUnprocessedMessageInChildDriver: parsed descMap = ${descMap}"
+    if (descMap.cluster != '0102') { logWarn "handleUnprocessedMessageInChildDriver: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+
+    // Check if this is an event (has evtId) or an attribute (has attrId)
+    if (descMap.evtId != null) {
+        //processWindowCoveringEvent(descMap)
+        logDebug "handleUnprocessedMessageInChildDriver: TODO: received event report - evtId: ${descMap.evtId}, value: ${descMap.value}"
+        return
+    }
+    // else - process attribute report
+    processWindowCoveringAttributeReport(descMap)
+}
+
+// 5.3.3 Window Covering Cluster 0x0102 (258)
+@Field static final Map<Integer, String> WindowCoveringClusterAttributes = [
+    0x0000  : 'Type',                           // Tuya - 00
+    0x0001  : 'PhysicalClosedLimitLift',
+    0x0002  : 'PhysicalClosedLimitTilt',
+    0x0003  : 'CurrentPositionLift',            // Tuya - 00
+    0x0004  : 'CurrentPositionTilt',
+    0x0005  : 'NumberOfActuationsLift',
+    0x0006  : 'NumberOfActuationsTilt',
+    0x0007  : 'ConfigStatus',                   // Tuya - 04
+    0x0008  : 'CurrentPositionLiftPercentage',  // Tuya - 00
+    0x0009  : 'CurrentPositionTiltPercentage',
+    0x000A  : 'OperationalStatus',              // Tuya - 00
+    0x000B  : 'TargetPositionLiftPercent100ths',    // Tuya - 1170 (must be subtracted from 100 ?)
+    0x000C  : 'TargetPositionTiltPercent100ths',
+    0x000D  : 'EndProductType',                 // Tuya - 00
+    0x000E  : 'CurrentPositionLiftPercent100ths',   // Tuya - 1A2C (must be subtracted from 100 ?)
+    0x000F  : 'CurrentPositionTiltPercent100ths',
+    0x0010  : 'InstalledOpenLimitLift',         // Tuya - 00
+    0x0011  : 'InstalledClosedLimitLift',       // Tuya - FFFF
+    0x0012  : 'InstalledOpenLimitTilt',
+    0x0013  : 'InstalledClosedLimitTilt',
+    0x0014  : 'VelocityLift',
+    0x0015  : 'AccelerationTimeLift',
+    0x0016  : 'DecelerationTimeLift',
+    0x0017  : 'Mode',                           // Tuya - 00
+    0x0018  : 'IntermediateSetpointsLift',
+    0x0019  : 'IntermediateSetpointsTilt',
+    0x001A  : 'SafetyStatus'
+]
+
+@Field static final Map<Integer, String> WindowCoveringType = [
+    0x00 : 'Roller Shade',
+    0x01 : 'Motorized Drapery',
+    0x02 : 'Awning',
+    0x03 : 'Shutter',
+    0x04 : 'Tilt Blind',
+    0x05 : 'Projector Screen',
+    0x06 : 'Other'
+]
+
+@Field static final Map<Integer, String> WindowCoveringConfigStatus = [
+    0x00 : 'No Errors',
+    0x01 : 'Open Limit Error',
+    0x02 : 'Closed Limit Error',
+    0x03 : 'Open and Closed Limit Error',
+    0x04 : 'Position Feedback Error',
+    0x05 : 'Motor Error',
+    0x06 : 'Configuration Error',
+    0x07 : 'Unknown Error'
+]
+
+@Field static final Map<Integer, String> WindowCoveringOperationalStatus = [
+    0x00 : 'Stopped',
+    0x01 : 'Opening',
+    0x02 : 'Closing',
+    0x03 : 'Partially Open',
+    0x04 : 'Unknown'
+]
+
+@Field static final Map<Integer, String> WindowCoveringMode = [
+    0x00 : 'Normal',
+    0x01 : 'Inverted'
+]
+
+
+
+void processWindowCoveringAttributeReport(Map descMap) {
+    
+    String eventValue = descMap.value
+    String descriptionText = "${device.displayName} ${descMap.cluster}:${descMap.attrId} value:${eventValue}"
+    
+    // Declare variables for conditional logging
+    boolean isInfoMode = state.states?.isInfo == true
+    String prefix = isInfoMode ? "[${descMap.attrId}] " : ""
+    String message = null
+    boolean useDebugLog = false  // Flag to use logDebug instead of logInfo when isInfoMode is false
+   
+    switch (descMap.attrId) {
+        case '0000': // Type
+            String typeText = WindowCoveringType[safeHexToInt(descMap.value)] ?: "Unknown (${descMap.value})"
+            message = "${prefix}Type: ${typeText} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+        case '0003': // CurrentPositionLift
+            message = "${prefix}CurrentPositionLift: ${descMap.value}"
+            break
+        case '0004': // CurrentPositionTilt
+            message = "${prefix}CurrentPositionTilt: ${descMap.value}"
+            break
+        case '0005': // NumberOfActuationsLift
+            message = "${prefix}NumberOfActuationsLift: ${descMap.value}"
+            break
+        case '0007': // ConfigStatus
+            String configStatusText = WindowCoveringConfigStatus[safeHexToInt(descMap.value)] ?: "Unknown (${descMap.value})"
+            message = "${prefix}ConfigStatus: ${configStatusText} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+        case '0008': // CurrentPositionLiftPercentage
+            message = "${prefix}CurrentPositionLiftPercentage: ${descMap.value}%"
+            break
+        case '0009': // CurrentPositionTiltPercentage
+            message = "${prefix}CurrentPositionTiltPercentage: ${descMap.value}%"
+            break
+        case '000A': // OperationalStatus
+            String operationalStatusText = WindowCoveringOperationalStatus[safeHexToInt(descMap.value)] ?: "Unknown (${descMap.value})"
+            message = "${prefix}OperationalStatus: ${operationalStatusText} (raw:${descMap.value})"
+            break
+        case '000B': // TargetPositionLiftPercent100ths
+            message = "${prefix}TargetPositionLiftPercent100ths: ${descMap.value} (scaled:${safeToInt(descMap.value) / 100}%)"
+            break
+        case '000C': // TargetPositionTiltPercent100ths
+            message = "${prefix}TargetPositionTiltPercent100ths: ${descMap.value} (scaled:${safeToInt(descMap.value) / 100}%)"
+            break
+        case '000D': // EndProductType
+            message = "${prefix}EndProductType: ${descMap.value}"
+            break
+        case '000E': // CurrentPositionLiftPercent100ths
+            message = "${prefix}CurrentPositionLiftPercent100ths: ${descMap.value} (scaled:${safeToInt(descMap.value) / 100}%)"
+            break
+        case '0010': // InstalledOpenLimitLift
+            message = "${prefix}InstalledOpenLimitLift: ${descMap.value}"
+            break
+        case '0011': // InstalledClosedLimitLift
+            message = "${prefix}InstalledClosedLimitLift: ${descMap.value}"
+            break
+        case '0017': // Mode
+            String modeText = WindowCoveringMode[safeHexToInt(descMap.value)] ?: "Unknown (${descMap.value})"
+            message = "${prefix}Mode: ${modeText} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+
+        case 'FFFC': // FeatureMap
+            Integer featureMap = safeHexToInt(descMap.value)
+            String featuresText = decodeFeatureMap(featureMap)
+            // FeatureMapRaw is stored in fingerprintData as '0102_FFFC'
+            message = "${prefix}FeatureMap: ${featuresText} (0x${descMap.value})"
+            break
+        case 'FFFB': // AttributeList
+            // AttributeList is stored in fingerprintData, no need to store separately
+            message = "${prefix}AttributeList: ${descMap.value}"
+            useDebugLog = true
+            // device.updateDataValue('AttributeList', ...) - removed, now in fingerprintData
+            break
+        case 'FFFD': // ClusterRevision
+            Integer revision = safeHexToInt(descMap.value)
+            message = "${prefix}ClusterRevision: ${revision}"
+            break
+        case 'FFF8': // GeneratedCommandList (events supported) - stored in fingerprintData only
+            message = "${prefix}GeneratedCommandList: ${descMap.value}"
+            useDebugLog = true
+            // Data is in fingerprintData['0102_FFF8'], no duplicate storage needed
+            break
+        case 'FFF9': // AcceptedCommandList - stored in fingerprintData only
+            message = "${prefix}AcceptedCommandList: ${descMap.value}"
+            useDebugLog = true
+            // Data is in fingerprintData['0102_FFF9'], no duplicate storage needed
+            break
+
+
+
+        default:
+            message = "${prefix}Unhandled attribute ${descMap.attrId}: ${descMap.value}"
+    }
+
+    // Conditional logging after the switch
+    if (message != null) {
+        if (isInfoMode) {
+            logInfo message
+        } else {
+            if (useDebugLog) {
+                logDebug message
+            } else {
+                logInfo message
+            }
+        }
+    } 
+}
+
+String decodeFeatureMap(Integer featureMap) {
+    List<String> features = []
+    if ((featureMap & 0x00000001) != 0) { features << 'Lift' }
+    if ((featureMap & 0x00000002) != 0) { features << 'Tilt' }
+    if ((featureMap & 0x00000004) != 0) { features << 'LiftAndTilt' }
+    if ((featureMap & 0x00000008) != 0) { features << 'PositionAwareLift' }
+    if ((featureMap & 0x00000010) != 0) { features << 'PositionAwareTilt' }
+    if ((featureMap & 0x00000020) != 0) { features << 'PositionAwareLiftAndTilt' }
+    if ((featureMap & 0x00000040) != 0) { features << 'RemoteControlLift' }
+    if ((featureMap & 0x00000080) != 0) { features << 'RemoteControlTilt' }
+    if ((featureMap & 0x00000100) != 0) { features << 'RemoteControlLiftAndTilt' }
+    if ((featureMap & 0x00000200) != 0) { features << 'RemoteControlPositionAwareLift' }
+    if ((featureMap & 0x00000400) != 0) { features << 'RemoteControlPositionAwareTilt' }
+    if ((featureMap & 0x00000800) != 0) { features << 'RemoteControlPositionAwareLiftAndTilt' }
+    return features.isEmpty() ? "None (raw: ${String.format('0x%08X', featureMap)})" : features.join(', ')
+}
+
 
 int invertPositionIfNeeded(int position) {
     int value =  (settings?.invertPosition ?: false) ? (100 - position) as Integer : position
@@ -178,10 +403,12 @@ void updateWindowShadeStatus(int currentPositionPar, int targetPositionPar, Bool
     }
     else {
         if (targetPosition < currentPosition) {
-            value =  'opening'
+            //value =  'opening'
+            value =  'closing'  // changed 2026-02-11
         }
         else if (targetPosition > currentPosition) {
-            value = 'closing'
+            //value = 'closing'
+            value = 'opening'   // changed 2026-02-11
         }
         else {
             //value = 'stopping'
@@ -391,11 +618,114 @@ private void logsOff() {
     device.updateSetting('logEnable', [value: 'false', type: 'bool'] )
 }
 
-/*
-static Integer safeToInt(val, Integer defaultVal=0) {
-    return "${val}"?.isInteger() ? "${val}".toInteger() : defaultVal
+// -------------
+
+/**
+ * Get the complete fingerprint data stored in device data
+ * @return Map containing fingerprint data or null if not found
+ */
+Map getFingerprintData() {
+    String fingerprintJson = device.getDataValue('fingerprintData')
+    if (!fingerprintJson) {
+        logDebug "getFingerprintData: fingerprintData not found in device data"
+        return null
+    }
+    
+    try {
+        return new groovy.json.JsonSlurper().parseText(fingerprintJson)
+    } catch (Exception e) {
+        logWarn "getFingerprintData: failed to parse fingerprintData: ${e.message}"
+        return null
+    }
 }
-*/
+
+/**
+ * Get ServerList from fingerprint data
+ * @return List of cluster IDs as hex strings (e.g., ["03", "1D", "2F", "0102"])
+ */
+List<String> getServerList() {
+    Map fingerprint = getFingerprintData()
+    if (fingerprint == null) {
+        logDebug "getServerList: fingerprint data not available"
+        return []
+    }
+    
+    return fingerprint['ServerList'] ?: []
+}
+
+/**
+ * Check if a specific cluster is supported by this device
+ * @param clusterHex Cluster ID as hex string (e.g., "0102" for WindowCovering cluster)
+ * @return true if cluster is in ServerList
+ */
+boolean isClusterSupported(String clusterHex) {
+    List<String> serverList = getServerList()
+    return serverList.contains(clusterHex?.toUpperCase())
+}
+
+/**
+ * Get the Window Covering cluster AttributeList (0x0102_FFFB)
+ * @return List of attribute IDs as hex strings (e.g., ["00", "01", "02", ...])
+ */
+List<String> getWindowCoveringAttributeList() {
+    Map fingerprint = getFingerprintData()
+    if (fingerprint == null) {
+        logDebug "getWindowCoveringAttributeList: fingerprint data not available"
+        return []
+    }
+    
+    return fingerprint['0102_FFFB'] ?: []
+}
+
+/**
+ * Check if a specific attribute is supported by the Window Covering cluster
+ * @param attrHex Attribute ID as hex string (e.g., "00" for CurrentPositionLift)
+ * @return true if attribute is in Window Covering AttributeList
+ */
+boolean isWindowCoveringAttributeSupported(String attrHex) {
+    List<String> attrList = getWindowCoveringAttributeList()
+    return attrList.contains(attrHex?.toUpperCase())
+}
+
+
+
+// Command to get all supported WindowCovering attributes (for info/debugging)
+void getInfo() {
+    // Check if WindowCovering cluster is supported
+    if (!isClusterSupported('0102')) {
+        logWarn "getInfo: WindowCovering cluster (0x0102) is not supported by this device"
+        logInfo "getInfo: ServerList contains: ${getServerList()}"
+        return
+    }
+    logInfo "getInfo: reading all supported WindowCovering attributes: ${getWindowCoveringAttributeList()}"
+    
+    // Set state flags for info mode
+    if (state.states == null) { state.states = [:] }
+    if (state.lastTx == null) { state.lastTx = [:] }
+    state.states.isInfo = true
+    state.lastTx.infoTime = now()
+    state.states?.debugState = settings?.logEnable ?: 'false'  // save the debugState in state to restore it after collecting the info logs
+    device.updateSetting('logEnable', [value: 'false', type: 'bool'] )  // temporarily switch off debug logging to avoid log clutter while collecting info logs
+    
+    // Schedule job to turn off info mode after 10 seconds
+    runIn(10, 'clearInfoMode')
+    
+    String endpointHex = device.getDataValue('id') ?: '1'
+    Integer endpoint = HexUtils.hexStringToInt(endpointHex)
+    parent?.readAttribute(endpoint, 0x0102, -1)      // 0x0102 WindowCovering cluster - read all attributes
+    // battery info is processed in parent driver !
+    // parent?.readAttribute(endpoint, 0x002F, -1)       // 0x002F Power Source cluster - read all attributes
+}
+
+// Clear info mode flag (called by scheduled job)
+void clearInfoMode() {
+    if (state.states == null) { state.states = [:] }
+    state.states.isInfo = false
+    device.updateSetting('logEnable', [value: state.states?.debugState ?: 'false', type: 'bool'] )  // restore debug logging to the value before info mode was enabled
+    logDebug "clearInfoMode: info mode disabled"
+}
+
+
 
 @Field static final String DRIVER = 'Matter Advanced Bridge'
 @Field static final String COMPONENT = 'Matter Generic Component Window Shade'
