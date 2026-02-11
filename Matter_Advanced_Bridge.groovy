@@ -47,13 +47,14 @@
  * ver. 1.7.1  2026-01-26 kkossev   reduced debug/warn logging; Best Name auto-label for all child devices @iEnam
  * ver. 1.7.2  2026-01-29 kkossev   bugfixes: contact/water/motion/lock state parsing issue; child device pings; Patch for Zemismart M1 battery percentage reporting issue; 
  * ver. 1.7.3  2026-01-30 kkossev   newParse=true by default; bugfixes: RGB&CT bulbs level parsing;
- * ver. 1.7.4  2026-02-06 kkossev   (dev.branch) device ping() bugfix; filter all events (including Door Lock) after reboot/resubscribe; eventPaths are subscribed first; removed lockType and operatingMode and supportedOperatingModes attributes subscriptins; 
+ * ver. 1.7.4  2026-02-06 kkossev   device ping() bugfix; filter all events (including Door Lock) after reboot/resubscribe; eventPaths are subscribed first; removed lockType and operatingMode and supportedOperatingModes attributes subscriptins; 
  *                                  added General Diagnostics (0x0033) to SupportedMatterClusters with subscriptions for RebootCount (0x0001) and UpTime (0x0002) using min 60 / max 3600 / delta 60
+ * ver. 1.7.5  2026-02-11 kkossev   (dev.branch) processing the new callbackType:WriteAttributes and callbackType:SubscribeResult;
  *
- *                                   TODO: 
- *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events
+ *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
+ *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
+ *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events ? (may not ne needed anymore after callbackType:SubscribeResult processing is implemented)
  *                                   TODO: _discoverAll to call updated() or to start the periodic jobs
- *                                   TODO: callbackType:WriteAttributes : Aqara E1 thermostat : dev:53772026-01-30 00:06:08.504warnAqara M3 Matter parserFunc: exception java.lang.NumberFormatException: For input string: "null" Failed to parse description: new Parse/Map payload: [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
  *                                   TODO: thermostat component - supported modes JSON initialization duafter discovery
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
@@ -63,16 +64,14 @@
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: reset statistics on Hub reboot
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
- *                                   DONE: add cluster 040D 'CarbonDioxideConcentrationMeasurement' (v1.4.0)
- *                                   DONE: add cluster 042A 'PM2.5ConcentrationMeasurement' (v1.4.0)
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
  *                                   TODO: add cluster 0202 'Window Covering'
  *                                   TODO: check if duplicated:  updateChildFingerprintData() and copyEntireFingerprintToChild(); 
  *
  */
 
-static String version() { '1.7.4' }
-static String timeStamp() { '2026/02/06 11:54 PM' }
+static String version() { '1.7.5' }
+static String timeStamp() { '2026/02/11 7:18 AM' }
 
 
 @Field static final Boolean _DEBUG = false                    // make it FALSE for production!
@@ -403,8 +402,8 @@ private void prepareForParse() {
 }
 
 private void processParsedDescription(final Map descMap, final String description) {
-    if (descMap == null) {
-        logWarn "processParsedDescription: descMap is null description:${description}"
+    if (descMap == null || descMap?.isEmpty()) {
+        logDebug "processParsedDescription: descMap is null or empty  description: ${description}"
         return
     }
 
@@ -422,6 +421,16 @@ private void processParsedDescription(final Map descMap, final String descriptio
     // Additional debug for Matter events (especially Switch/buttons)
     if (descMap?.evtId != null && descMap?.cluster == '003B' && settings?.logEnable) {
         logDebug "parse: received Switch EVENT endpoint:${descMap.endpoint} evtId:${descMap.evtId} value:${descMap.value}"
+    }
+    // 2026-02-11  [callbackType:SubscriptionResult, subscriptionId:3617819414] 
+    if (descMap?.callbackType == 'SubscriptionResult') {
+        logDebug "parse: received SubscriptionResult callback with subscriptionId:${descMap.subscriptionId}"
+        return
+    }
+    // 2026-02-11  [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
+    if (descMap?.callbackType == 'WriteAttributes') {
+        logDebug "parse: received WriteAttributes callback for endpoint:${descMap.endpoint} cluster:${descMap.cluster} attrId:${descMap.attrId} success:${descMap.sucess}"
+        return
     }
     
     // Check for child devices ping responses before normal parsing
@@ -450,6 +459,10 @@ private void processParsedDescription(final Map descMap, final String descriptio
     }
 }
 
+void deviceTypeUpdated() {
+    log.warn "${device.displayName} driver change detected"
+
+}
 
 private boolean isNewParseEnabled() {
     return settings?.newParse == true
@@ -2131,6 +2144,7 @@ void requestAndCollectServerListAttributesList(Map data)
 void _DiscoverAll() { _DiscoverAllPatched('All') }     // patch for HE platform version 2.4.0.x 
 void _DiscoverAllPatched(String statePar/* = null*/) {
     logWarn "_DiscoverAll()"
+    updated()   // 2026-02-09
     Integer stateSt = DISCOVER_ALL_STATE_INIT
     state.stateMachines = [:]
     // ['All', 'BasicInfo', 'PartsList']]
