@@ -51,6 +51,7 @@
  *                                  added General Diagnostics (0x0033) to SupportedMatterClusters with subscriptions for RebootCount (0x0001) and UpTime (0x0002) using min 60 / max 3600 / delta 60
  * ver. 1.7.5  2026-02-11 kkossev   processing the new callbackType:WriteAttributes and callbackType:SubscribeResult;
  * ver. 1.7.6  2026-02-12 kkossev   bugfix: WindowCovering processing exceptions; 'Matter Generic Component Window Shade' getInfo() method;
+ * ver. 1.7.7  2026-02-14 kkossev   bugfix: Power/Energy processing exceptions; 'Matter Custom Component Power Energy' getInfo() method; newParse is true by default;
  *
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
@@ -71,8 +72,8 @@
  *
  */
 
-static String version() { '1.7.6' }
-static String timeStamp() { '2026/02/12 12:00 PM' }
+static String version() { '1.7.7' }
+static String timeStamp() { '2026/02/14 10:42 AM' }
 
 
 @Field static final Boolean _DEBUG = false                    // make it FALSE for production!
@@ -242,19 +243,19 @@ metadata {
     0x0090 : [attributes: 'ElectricalPowerMeasurementAttributes',  parser: 'parseElectricalPowerMeasurement',
               subscriptions : [//[0x0004: [min: 0, max: 0xFFFF, delta: 0]],   // 'Voltage',
                                //[0x0005: [min: 0, max: 0xFFFF, delta: 0]],   // 'ActiveCurrent',
-                               [0x0008: [min: 0, max: 0xFFFF, delta: 0]],   // 'ActivePower',
-                               [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // 'RMSVoltage',
-                               [0x000C: [min: 0, max: 0xFFFF, delta: 0]],   // 'RMSCurrent',
-                               [0x000E: [min: 0, max: 0xFFFF, delta: 0]],   // 'Frequency',
-                               [0x0011: [min: 0, max: 0xFFFF, delta: 0]]    // 'PowerFactor'
+                               [0x0008: [min: 0, max: 0xFFFF, delta: 100]],   // 'ActivePower', (report every 0.1W change)
+                               [0x000B: [min: 0, max: 0xFFFF, delta: 1000]],  // 'RMSVoltage', (report every 1V change)
+                               [0x000C: [min: 0, max: 0xFFFF, delta: 10]],    // 'RMSCurrent', (report every 0.01A change)
+                               [0x000E: [min: 0, max: 0xFFFF, delta: 1000]],  // 'Frequency', (report every 1Hz change)
+                               [0x0011: [min: 0, max: 0xFFFF, delta: 500]]    // 'PowerFactor' (report every 0.5 change)
               ]
     ],
     // Electrical Energy Measurement Cluster
     0x0091 : [attributes: 'ElectricalEnergyMeasurementAttributes', parser: 'parseElectricalEnergyMeasurement',
-              subscriptions : [//[0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // 'CumulativeEnergyImported',
-                            //   [0x0002: [min: 0, max: 0xFFFF, delta: 0]]    // 'CumulativeEnergyExported'
-                            // [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // 
-                            // [0x0004: [min: 0, max: 0xFFFF, delta: 0]]    // 
+              subscriptions : [[0x0001: [min: 0, max: 0xFFFF, delta: 1000]],   // 'CumulativeEnergyImported', report every 1Wh change
+                               [0x0002: [min: 0, max: 0xFFFF, delta: 1000]]    // 'CumulativeEnergyExported', report every 1Wh change
+                            // [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // (PeriodicEnergyImported)
+                            // [0x0004: [min: 0, max: 0xFFFF, delta: 0]]    // (PeriodicEnergyExported)
               ]
     ],
     // DoorLock Cluster
@@ -1532,28 +1533,23 @@ void parseAirQuality(final Map descMap) { // 005B
 
 void parseElectricalPowerMeasurement(final Map descMap) { // 0090
     if (descMap.cluster != '0090') { logWarn "parseElectricalPowerMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    logTrace "parseElectricalPowerMeasurement: <b>UNPROCESSED</b> ${(AirQualityClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
     // send the unprocessed attributes to the child driver for further processing
     sendHubitatEvent([
-        name: 'unprocessed',
-        value: descMap.toString(),
+        name: 'handleInChildDriver',
+        value: descMap,
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
 
 void parseElectricalEnergyMeasurement(final Map descMap) { // 0091
     if (descMap.cluster != '0091') { logWarn "parseElectricalEnergyMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    logTrace "parseElectricalEnergyMeasurement: <b>UNPROCESSED</b> ${(AirQualityClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
     // send the unprocessed attributes to the child driver for further processing
     sendHubitatEvent([
-        name: 'unprocessed',
-        value: descMap.toString(),
+        name: 'handleInChildDriver',
+        value: descMap,
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
-
-
-
 
 // to be used in multiple clusters !
 void parseConcentrationMeasurement(final Map descMap) { // 042A
@@ -3997,7 +3993,7 @@ void initializeVars(boolean fullInit = false) {
     if (fullInit || settings?.healthCheckMethod == null) { device.updateSetting('healthCheckMethod', [value: HealthcheckMethodOpts.defaultValue.toString(), type: 'enum']) }
     if (fullInit || settings?.healthCheckInterval == null) { device.updateSetting('healthCheckInterval', [value: HealthcheckIntervalOpts.defaultValue.toString(), type: 'enum']) }
     if (settings?.minimizeStateVariables == null) { device.updateSetting('minimizeStateVariables', [value: MINIMIZE_STATE_VARIABLES_DEFAULT, type: 'bool']) }
-    if (settings?.newParse == null) { device.updateSetting('newParse', [value: false, type: 'bool']) }
+    if (fullInit || settings?.newParse == null) { device.updateSetting('newParse', [value: true, type: 'bool']) }
     if (settings?.cleanSubscribeMinInterval == null) { device.updateSetting('cleanSubscribeMinInterval', [value: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, type: 'number']) }
     if (settings?.cleanSubscribeMaxInterval == null) { device.updateSetting('cleanSubscribeMaxInterval', [value: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, type: 'number']) }
     ensureNewParseFlag()
