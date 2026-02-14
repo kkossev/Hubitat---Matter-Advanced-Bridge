@@ -30,14 +30,14 @@ library(
   * ver. 1.2.0  2024-10-11 kkossev  - added testParse()
   * ver. 1.3.0  2025-06-28 Claude Sonnet 4  - added custom decodeTLVToHex() and decodeTLV()
   * ver. 1.3.1  2026-01-06 GPT-5.2 - added discoveryTimeoutScale
-  * ver. 1.3.2  2026-01-15 GPT-5.2 - Minimal fix: make decodeTLVContainer() handle nested containers
+  * ver. 1.3.2  2026-01-26 GPT-5.2 - Minimal fix: make decodeTLVContainer() handle nested containers; reduced warning level logging
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterUtilitiesLibVersion = '1.3.2'
-@Field static final String matterUtilitiesLibStamp   = '2026/01/17 1:30 PM'
+@Field static final String matterUtilitiesLibStamp   = '2026/01/26 2:45 PM'
 
 metadata {
     // no capabilities
@@ -251,7 +251,7 @@ void minimizeStateVariables(List<String> parameters) {
     stateKeys.each { stateKey ->
         if (stateKey.startsWith('fingerprint')) {
             state.remove(stateKey)
-            logWarn "minimizeStateVariables(): removed stateKey=${stateKey}"
+            logDebug "minimizeStateVariables(): removed stateKey=${stateKey}"
         }
     }
     state.remove('tmp')

@@ -1,4 +1,3 @@
-/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
  *  'Matter Generic Component Motion Sensor' - component driver for Matter Advanced Bridge
  *
@@ -16,21 +15,20 @@
  *
  * ver. 1.0.0  2024-03-16 kkossev  - first release
  * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib
+ * ver. 1.1.1  2025-01-29 kkossev  - common libraries
  *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentSwitchVersion = '1.1.0'
-@Field static final String matterComponentSwitchStamp   = '2025/01/10 2:30 PM'
+@Field static final String matterComponentSwitchVersion = '1.1.1'
+@Field static final String matterComponentSwitchStamp   = '2025/01/29 10:32 PM'
+
 metadata {
     definition(name: 'Matter Generic Component Switch', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Switch.groovy') {
         capability 'Actuator'
         capability 'Switch'             // Commands:[off, on, refresh]
         capability 'Refresh'
-        //capability 'Health Check'       // Commands:[ping]
-
-        //attribute 'healthStatus', 'enum', ['unknown', 'offline', 'online']
     }
 }
 
@@ -50,7 +48,6 @@ preferences {
     }
 }
 
-/* groovylint-disable-next-line UnusedMethodParameter */
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
@@ -129,5 +126,5 @@ String getState(String stateName) {
 }
 
 // --------- common matter libraries included below --------
-
+#include kkossev.matterCommonLib
 #include kkossev.matterHealthStatusLib

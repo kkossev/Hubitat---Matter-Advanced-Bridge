@@ -1,4 +1,3 @@
-/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
   *  'Matter Generic Component Button' - component driver for Matter Advanced Bridge
   *
@@ -17,14 +16,16 @@
   * ver. 1.0.0  2026-01-07 kkossev + GPT-5.2 : inital release
   * ver. 1.0.1  2026-01-10 kkossev - adding ping() and RTT
   * ver. 1.0.2  2026-01-11 kkossev + Claude Sonnet 4.5 - added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
+  * ver. 1.0.3  2026-01-25 kkossev + + GPT-5.2 : newParse=true fixes (evtId as Integer)
+  * ver. 1.0.4  2026-01-29 kkossev  - common libraries
   *
 */
 
 import groovy.transform.Field
 import groovy.json.JsonSlurper
 
-@Field static final String matterComponentButtonVersion = '1.0.2'
-@Field static final String matterComponentButtonStamp   = '2026/01/11 7:58 PM'
+@Field static final String matterComponentButtonVersion = '1.0.4'
+@Field static final String matterComponentButtonStamp   = '2026/01/29 10:35 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -53,12 +54,11 @@ preferences {
     }
 }
 
-/* groovylint-disable-next-line UnusedMethodParameter */
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
 void parse(List<Map> description) {
-    if (logEnable) { log.debug "${device.displayName} ${description}" }
+    logDebug "${description}"
 
     description.each { d ->
         switch (d.name) {
@@ -73,7 +73,7 @@ void parse(List<Map> description) {
                 break
 
             default:
-                if (d.descriptionText && txtEnable) { log.info "${d.descriptionText}" }
+                if (d.descriptionText) { logInfo "${d.descriptionText}" }
                 sendEvent(d)
                 break
         }
@@ -82,7 +82,7 @@ void parse(List<Map> description) {
 
 // Handle unprocessed Matter cluster data forwarded from parent bridge
 private void handleUnprocessed(final Map d) {
-    if (logEnable) { log.debug "${device.displayName} handleUnprocessed: ${d.value}" }
+    logDebug "handleUnprocessed: ${d.value}"
     
     // Parse the descMap from JSON string
     Map descMap = parseDescMapJson(d.value)
@@ -103,7 +103,7 @@ private void handleUnprocessed(final Map d) {
         }
     }
     else {
-        if (logEnable) { log.debug "${device.displayName} unprocessed cluster ${descMap.cluster} not supported" }
+        logDebug "unprocessed cluster ${descMap.cluster} not supported"
     }
 }
 
@@ -126,120 +126,143 @@ private Map parseDescMapJson(String jsonStr) {
 
 // Handle Switch cluster events
 private void handleSwitchEvent(Map descMap) {
-    String evtId = descMap.evtId ?: (descMap.evtInt ? HexUtils.integerToHexString(descMap.evtInt as Integer, 1) : null)
-    
-    // Get the event values from descMap.values if available
+    Object evtIdRaw = (descMap.evtId != null) ? descMap.evtId : descMap.evtInt
+    Integer evtIdInt = (evtIdRaw instanceof Number) ? ((Number)evtIdRaw).intValue() : safeHexToInt(evtIdRaw?.toString(), null)
+    String evtIdStr = (evtIdRaw != null) ? evtIdRaw.toString() : 'null'
+
+    // Build a consistent payload map across newParse/oldParse.
     Map payload = extractEventPayload(descMap)
-    String payloadJson = (payload && !payload.isEmpty()) ? groovy.json.JsonOutput.toJson(payload) : null
-    
+
     // Map Matter Switch events to handler methods
-    Map eventData = [name: 'unknown', value: payloadJson ?: descMap.value, descriptionText: "${device.displayName} event ${evtId}"]
-    
-    switch (evtId) {
-        case '0001':
-        case '1':
+    Map eventData = [name: 'unknown', value: payload ?: descMap.value, descriptionText: "${device.displayName} event ${evtIdStr}"]
+
+    switch (evtIdInt) {
+        case 1:
             eventData.name = 'initialPress'
             eventData.descriptionText = "${device.displayName} initialPress"
             handleInitialPressEvent(eventData)
             break
-        case '0002':
-        case '2':
+        case 2:
             eventData.name = 'longPress'
             eventData.descriptionText = "${device.displayName} longPress"
             handleHeldEvent(eventData)
             break
-        case '0003':
-        case '3':
+        case 3:
             eventData.name = 'shortRelease'
             eventData.descriptionText = "${device.displayName} shortRelease"
             handleShortReleaseEvent(eventData)
             break
-        case '0004':
-        case '4':
+        case 4:
             eventData.name = 'longRelease'
             eventData.descriptionText = "${device.displayName} longRelease"
             handleLongReleaseEvent(eventData)
             break
-        case '0005':
-        case '5':
-            if (logEnable) { log.debug "${device.displayName} multiPressOngoing event processed" }
+        case 5:
+            logDebug 'multiPressOngoing event processed'
             break
-        case '0006':
-        case '6':
+        case 6:
             eventData.name = 'multiPressComplete'
             eventData.descriptionText = "${device.displayName} multiPressComplete"
             handleMultiPressComplete(eventData)
             break
         default:
-            if (logEnable) { log.debug "${device.displayName} unhandled Switch event ${evtId}" }
+            logDebug "unhandled Switch event evtId=${evtIdStr} (normalized=${evtIdInt})"
             break
     }
 }
 
-// Extract event payload from descMap.values
+// Extract event payload from descMap.values (oldParse) or descMap.value (newParse)
 private Map extractEventPayload(Map descMap) {
     Map payload = [:]
-    
-    // Try to extract from descMap.values if it exists (now properly parsed as Map from JSON)
-    if (descMap.values != null) {
-        try {
-            // JSON always uses string keys, so check for "0" and "1"
-            def valuesMap = descMap.values
-            
-            // Extract position (tag 0) - JSON keys are strings
-            def tag0 = valuesMap['0']
-            if (tag0 != null) {
-                def position = (tag0 instanceof Map) ? tag0['value'] : tag0
-                if (position != null) {
-                    Integer pos = safeToInt(position)
-                    if (pos != null) { payload.position = pos }
-                }
-            }
-            
-            // Extract pressCount (tag 1) if present - JSON keys are strings
-            def tag1 = valuesMap['1']
-            if (tag1 != null) {
-                def pressCount = (tag1 instanceof Map) ? tag1['value'] : tag1
-                if (pressCount != null) {
-                    Integer pc = safeToInt(pressCount)
-                    if (pc != null) { payload.pressCount = pc }
-                }
-            }
-        } catch (Exception e) {
-            if (logEnable) { log.debug "${device.displayName} extractEventPayload error: ${e.message}" }
-        }
+
+    Map valuesMap = null
+    if (descMap.values instanceof Map) {
+        valuesMap = (Map)descMap.values
     }
-    
+    else if (descMap.value instanceof Map) {
+        valuesMap = (Map)descMap.value
+    }
+
+    if (valuesMap == null) { return payload }
+
+    try {
+        def findTagValue = { Map m, String tag ->
+            if (m == null) { return null }
+            if (m.containsKey(tag)) { return m[tag] }
+            // Defensive: some Hubitat map implementations can throw or behave oddly
+            // when accessed with non-string keys; fall back to scanning keys.
+            for (def entry in m.entrySet()) {
+                if (entry?.key != null && entry.key.toString() == tag) {
+                    return entry.value
+                }
+            }
+            return null
+        }
+
+        // oldParse: valuesMap['0'] -> [type:7, value:1]
+        // newParse: valuesMap['0'] -> 1
+        def tag0 = findTagValue(valuesMap, '0')
+        if (tag0 != null) {
+            def position = (tag0 instanceof Map) ? ((Map)tag0)['value'] : tag0
+            Integer pos = safeToInt(position)
+            if (pos != null) { payload.position = pos }
+        }
+
+        def tag1 = findTagValue(valuesMap, '1')
+        if (tag1 != null) {
+            def pressCount = (tag1 instanceof Map) ? ((Map)tag1)['value'] : tag1
+            Integer pc = safeToInt(pressCount)
+            if (pc != null) { payload.pressCount = pc }
+        }
+    } catch (Exception e) {
+        logDebug "extractEventPayload error: ${e}"
+    }
+
     return payload
 }
 
 // Handle Switch cluster attributes
 private void handleSwitchAttribute(Map descMap) {
-    String attrId = descMap.attrId ?: (descMap.attrInt ? HexUtils.integerToHexString(descMap.attrInt as Integer, 1) : null)
+    Object attrIdRaw = (descMap.attrId != null) ? descMap.attrId : descMap.attrInt
+    Integer attrIdInt = null
+    String attrIdStr = null
+
+    if (descMap.attrInt != null) {
+        // newParse=true often provides attrInt as a Number (Long/Integer)
+        attrIdInt = safeToInt(descMap.attrInt, null)
+        attrIdStr = (attrIdInt != null) ? HexUtils.integerToHexString(attrIdInt as Integer, 2) : null
+    }
+    else {
+        // oldParse provides attrId as a hex string (e.g. '0001')
+        attrIdStr = (descMap.attrId != null) ? descMap.attrId.toString() : null
+        attrIdInt = safeHexToInt(attrIdStr, null)
+    }
+
+    // Fallback: if we have only a string and it wasn't parsed above
+    if (attrIdInt == null && attrIdStr != null) {
+        attrIdInt = safeHexToInt(attrIdStr, null)
+    }
+
     String value = descMap.value
-    
-    Map attrData = [name: 'unknown', value: value, descriptionText: "${device.displayName} attribute ${attrId} = ${value}"]
-    
-    switch (attrId) {
-        case '0000':
-        case '0':
+    Map attrData = [name: 'unknown', value: value, descriptionText: "${device.displayName} attribute ${attrIdStr ?: attrIdRaw} = ${value}"]
+
+    switch (attrIdInt) {
+        case 0:
             attrData.name = 'numberOfPositions'
             attrData.descriptionText = "${device.displayName} numberOfPositions is ${value}"
             handleNumberOfPositions(attrData)
             break
-        case '0001':
-        case '1':
+        case 1:
             attrData.name = 'currentPosition'
             attrData.descriptionText = "${device.displayName} currentPosition is ${value}"
             handleCurrentPosition(attrData)
             break
-        case '0002':
-        case '2':
+        case 2:
             device.updateDataValue('multiPressMax', value.toString())
-            if (txtEnable) { log.info "${device.displayName} multiPressMax is ${value}" }
+            logDebug "multiPressMax is ${value}"
             break
         default:
-            if (logEnable) { log.debug "${device.displayName} unhandled Switch attribute ${attrId}" }
+            logDebug "unhandled Switch attribute attrId=${attrIdStr ?: attrIdRaw} (normalized=${attrIdInt})"
             break
     }
 }
@@ -250,7 +273,7 @@ private void handleSwitchAttribute(Map descMap) {
 // - long press should produce 'held' then 'released' (no extra 'pushed')
 // We therefore emit 'pushed' based on multiPressComplete pressCount==1.
 private void handleInitialPressEvent(final Map d) {
-    if (logEnable) { log.debug "${device.displayName} initialPress event processed" }
+    logDebug 'initialPress event processed'
 }
 
 private void handleHeldEvent(final Map d) {
@@ -268,7 +291,7 @@ private void handleHeldEvent(final Map d) {
 // For Hubitat, a normal 'pushed' action does not have a corresponding 'released'.
 // Process the event but do not emit the capability event.
 private void handleShortReleaseEvent(final Map d) {
-    if (logEnable) { log.debug "${device.displayName} shortRelease event processed" }
+    logDebug 'shortRelease event processed'
     
     // Check if user configured to generate 'pushed' on shortRelease instead of multiPressComplete
     if (settings?.generatePushedOn == 'shortRelease') {
@@ -278,7 +301,7 @@ private void handleShortReleaseEvent(final Map d) {
         Integer buttonNumber = (pos != null) ? toButtonNumber(pos, buttons) : 1
         
         sendButtonEvent('pushed', buttonNumber)
-        if (logEnable) { log.debug "${device.displayName} generated 'pushed' event on shortRelease (user preference)" }
+        logDebug "generated 'pushed' event on shortRelease (user preference)"
     }
 }
 
@@ -291,7 +314,7 @@ private void handleLongReleaseEvent(final Map d) {
 
     Integer lastHeldButton = (state.lastHeldButton instanceof Number) ? (state.lastHeldButton as Number).intValue() : null
     if (lastHeldButton == null || lastHeldButton != buttonNumber) {
-        if (logEnable) { log.debug "${device.displayName} ignored longRelease for button ${buttonNumber} (not held)" }
+        logDebug "ignored longRelease for button ${buttonNumber} (not held)"
         return
     }
 
@@ -303,26 +326,26 @@ private void handleLongReleaseEvent(final Map d) {
 private void handleNumberOfPositions(final Map d) {
     Integer positions = safeToInt(d.value)
     if (positions == null || positions < 1) {
-        if (logEnable) { log.debug "${device.displayName} ignored numberOfPositions value '${d.value}'" }
+        logDebug "ignored numberOfPositions value '${d.value}'"
         return
     }
     // Store the Matter device's total numberOfPositions for reference
     device.updateDataValue('numberOfPositions', d.value.toString())
     // Each child device represents a single button position, so numberOfButtons is always 1
     sendEvent(name: 'numberOfButtons', value: 1, isStateChange: true)
-    if (txtEnable) { log.info "${device.displayName} numberOfButtons is 1 (Matter device has ${positions} positions)" }
+    logInfo "numberOfButtons is 1 (Matter device has ${positions} positions)"
 }
 
 private void handleCurrentPosition(final Map d) {
     // Process currentPosition for debugging but don't create an attribute
     // This is useful for troubleshooting but doesn't clutter Current States
-    if (logEnable) { log.debug "${device.displayName} currentPosition changed to ${d.value}" }
+    logDebug "currentPosition changed to ${d.value}"
 }
 
 private void handleMultiPressComplete(final Map d) {
     // Skip if user configured to generate pushed on shortRelease instead
     if (settings?.generatePushedOn == 'shortRelease') {
-        if (logEnable) { log.debug "${device.displayName} ignored multiPressComplete (using shortRelease preference)" }
+        logDebug 'ignored multiPressComplete (using shortRelease preference)'
         return
     }
     
@@ -331,7 +354,7 @@ private void handleMultiPressComplete(final Map d) {
     Integer pressCount = (payload?.pressCount != null) ? safeToInt(payload.pressCount) : null
 
     if (pressCount == null) {
-        if (logEnable) { log.debug "${device.displayName} multiPressComplete missing pressCount (value='${d.value}')" }
+        logDebug "multiPressComplete missing pressCount (value='${d.value}')"
         return
     }
     Integer buttons = safeToInt(device.currentValue('numberOfButtons'))
@@ -340,7 +363,7 @@ private void handleMultiPressComplete(final Map d) {
     // If we just had a longPress/longRelease sequence, do not derive pushed/doubleTapped from multiPressComplete.
     Long untilMs = (state.justHeldUntilMs instanceof Number) ? (state.justHeldUntilMs as Number).longValue() : null
     if (untilMs != null && now() <= untilMs) {
-        if (logEnable) { log.debug "${device.displayName} ignored multiPressComplete pressCount=${pressCount} (recent hold)" }
+        logDebug "ignored multiPressComplete pressCount=${pressCount} (recent hold)"
         return
     }
 
@@ -354,7 +377,7 @@ private void handleMultiPressComplete(final Map d) {
         return
     }
 
-    if (logEnable) { log.debug "${device.displayName} ignored multiPressComplete pressCount=${pressCount}" }
+    logDebug "ignored multiPressComplete pressCount=${pressCount}"
 }
 
 private Integer toButtonNumber(final Integer pos, final Integer numberOfButtons) {
@@ -371,7 +394,7 @@ private Integer toButtonNumber(final Integer pos, final Integer numberOfButtons)
 
 private void sendButtonEvent(final String action, final Integer buttonNumber, final String eventType = 'physical') {
     if (buttonNumber == null || buttonNumber < 1) {
-        if (logEnable) { log.debug "${device.displayName} ignored ${action} event for invalid buttonNumber=${buttonNumber}" }
+        logDebug "ignored ${action} event for invalid buttonNumber=${buttonNumber}"
         return
     }
 
@@ -379,11 +402,16 @@ private void sendButtonEvent(final String action, final Integer buttonNumber, fi
     if (eventType == 'digital') { desc += ' [digital]' }
     else if (eventType == 'physical') { desc += ' [physical]' }
     sendEvent(name: action, value: buttonNumber, descriptionText: desc, isStateChange: true, type: eventType)
-    if (txtEnable) { log.info desc }
+    logInfo desc
 }
 
 private Map decodePayload(final Object rawValue) {
     if (rawValue == null) { return [:] }
+
+    if (rawValue instanceof Map) {
+        return (Map)rawValue
+    }
+
     String s = rawValue.toString().trim()
     if (!s) { return [:] }
 
@@ -405,38 +433,6 @@ private Map decodePayload(final Object rawValue) {
     return [:]
 }
 
-// safeToInt: defined in matterHealthStatusLib.groovy
-/*
-private Integer safeToInt(final Object value) {
-    if (value == null) { return null }
-    if (value instanceof Number) { return (value as Number).intValue() }
-
-    String s = value.toString().trim()
-    if (!s) { return null }
-
-    try {
-        if (s.startsWith('0x') || s.startsWith('0X')) {
-            return Integer.parseInt(s.substring(2), 16)
-        }
-        if (s ==~ /^[0-9]+$/) {
-            return Integer.parseInt(s, 10)
-        }
-        if (s ==~ /^[0-9a-fA-F]+$/) {
-            return Integer.parseInt(s, 16)
-        }
-    } catch (Exception ignored) {
-        return null
-    }
-
-    return null
-}
-*/
-/*
-// Component command to ping the device
-void ping() {
-    parent?.componentPing(device)
-}
-*/
 
 // Called when the device is first created
 void installed() {
@@ -445,17 +441,16 @@ void installed() {
 
 // Called when the settings are updated
 void updated() {
-    log.info "${device.displayName} driver configuration updated"
+    logInfo 'driver configuration updated'
     if (device.currentValue('numberOfButtons') == null) {
         sendEvent(name: 'numberOfButtons', value: 1, isStateChange: true)
     }
+    logDebug "settings: ${settings}"
     if (logEnable) {
-        log.debug settings
-        runIn(86400, 'logsOff')
+        runIn(14400, 'logsOff')
     }
 }
 
-/* groovylint-disable-next-line UnusedPrivateMethod */
 private void logsOff() {
     log.warn "debug logging disabled for ${device.displayName}"
     device.updateSetting('logEnable', [value: 'false', type: 'bool'])
@@ -491,4 +486,5 @@ void doubleTap(BigDecimal buttonNumber) {
 
 // --------- common matter libraries included below --------
 
+#include kkossev.matterCommonLib
 #include kkossev.matterHealthStatusLib

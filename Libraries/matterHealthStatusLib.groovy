@@ -1,4 +1,3 @@
-/* groovylint-disable CompileStatic, DuplicateNumberLiteral, DuplicateStringLiteral, LineLength */
 library(
     base: 'driver',
     author: 'Krassimir Kossev',
@@ -7,7 +6,7 @@ library(
     name: 'matterHealthStatusLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterHealthStatusLib.groovy',
-    version: '1.0.0',
+    version: '1.0.1',
     documentationLink: ''
 )
 /*
@@ -29,28 +28,23 @@ library(
   *                                  - ping command and RTT attribute
   *                                  - parseRttEvent() method for child drivers
   *                                  - foundation for health monitoring features
+  * ver. 1.0.1  2025-01-14 kkossev - use matterCommonLib
+  * 
+  *                                 TODO: add delta in the rtt
 */
 
 import groovy.transform.Field
 
-@Field static final String matterHealthStatusLibVersion = '1.0.0'
-@Field static final String matterHealthStatusLibStamp   = '2025/01/10 2:02 PM'
+@Field static final String matterHealthStatusLibVersion = '1.0.1'
+@Field static final String matterHealthStatusLibStamp   = '2025/01/24 9:22 AM'
 @Field static final int ROLLING_AVERAGE_N = 10
 
 metadata {
     command 'ping'
-    
     attribute 'rtt', 'NUMBER'  // Round-trip time in milliseconds
-    
-    // Future enhancements:
-    // capability 'HealthCheck'
-    // attribute 'healthStatus', 'ENUM', ['online', 'offline', 'unknown']
 }
 
 preferences {
-    // Future enhancements:
-    // input 'pingInterval', 'number', title: 'Auto-ping interval (minutes)', defaultValue: 0
-    // input 'rttTimeout', 'number', title: 'Ping timeout (seconds)', defaultValue: 10
 }
 
 /**
@@ -109,22 +103,11 @@ boolean parseRttEvent(Map d) {
     return true
 }
 
-/**
- * Calculate rolling average
- * @param avg Current average
- * @param newSample New sample value
- * @return Updated rolling average
- */
 private double approxRollingAverage(double avg, double newSample) {
     if (avg == null || avg == 0) { return newSample }
     return (avg * (ROLLING_AVERAGE_N - 1) + newSample) / ROLLING_AVERAGE_N
 }
 
-/**
- * Format hub uptime for display
- * Credits: @thebearmay
- * @return Formatted uptime string (e.g., "1d, 7h, 8m, 13s")
- */
 private String formatUptime() {
     try {
         Long ut = location.hub.uptime.toLong()
@@ -138,31 +121,3 @@ private String formatUptime() {
     }
 }
 
-/**
- * Safe conversion to Integer with default value
- */
-private Integer safeToInt(val, Integer defaultVal=0) {
-    if (val == null) { return defaultVal }
-    if (val instanceof Integer) { return val }
-    if (val instanceof String) {
-        try { return val.toInteger() }
-        catch (Exception e) { return defaultVal }
-    }
-    try { return val as Integer }
-    catch (Exception e) { return defaultVal }
-}
-
-/**
- * Safe conversion to Double with default value
- */
-private Double safeToDouble(val, Double defaultVal=0.0) {
-    if (val == null) { return defaultVal }
-    if (val instanceof Double) { return val }
-    if (val instanceof Integer) { return val.toDouble() }
-    if (val instanceof String) {
-        try { return val.toDouble() }
-        catch (Exception e) { return defaultVal }
-    }
-    try { return val as Double }
-    catch (Exception e) { return defaultVal }
-}

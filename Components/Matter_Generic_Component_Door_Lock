@@ -1,5 +1,4 @@
-/* groovylint-disable BitwiseOperatorInConditional, CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
-/*
+ /*
   *  'Matter Generic Component Door Lock' - component driver for Matter Advanced Bridge
   *
   *  https://community.hubitat.com/t/dynamic-capabilities-commands-and-attributes-for-drivers/98342
@@ -19,11 +18,17 @@
   * ver. 1.1.1  2024-07-23 kkossev - added switch capability (for Apple Home integration workaround)
   * ver. 1.1.2  2024-08-12 kkossev - fixed importURL
   * ver. 1.2.0  2025-01-10 kkossev + Calude Sonnet 4.5 : Matter events handling rework; Door Lock working! :) added ping command and RTT attribute; removed switch capability
-  * ver. 1.3.0  2025-01-14 kkossev - (dev. branch) moved component methods from parent to component driver; major refactoring 
+  * ver. 1.3.0  2025-01-14 kkossev - moved component methods from parent to component driver; major refactoring 
+  * ver. 1.3.1  2025-01-22 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements (clearUser seems to be working!)
+  * ver. 1.3.2  2025-01-25 kkossev + GPT-4.1 : newParse: true decoding; use matterCommonLib; 
+  *                                  capability 'LockCodes' is commented out temporarily: (lock codes still not working)
+  * ver. 1.3.3  2025-02-06 kkossev   (dev. branch) added events 'locking', 'unlocking' for better UI feedback; experimenting ...
   * 
-  *                                  TODO: add driver version to the state variables 
-  *                                  TODO: initialize lock with 'unknown' attributes when the device is created
+  *                                  TODO: 
   *                                  TODO: filter duplicated events
+  *                                  TODO: fingerprintData "AcceptedCommandList is empty !!!
+  *                                  TODO: add driver version to the state variables
+  *                                  TODO: initialize lock with 'unknown' attributes when the device is created
   *                                  TODO: add [physical] [digital] event type to events and logs
   *                                  TODO: analyze https://github.com/SmartThingsCommunity/SmartThingsEdgeDrivers/tree/main/drivers/SmartThings/matter-lock 
   *                                  TODO: analyze https://matter-survey.org/cluster/0x0101
@@ -37,28 +42,26 @@ import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
-@Field static final String matterComponentLockVersion = '1.3.0'
-@Field static final String matterComponentLockStamp   = '2025/01/15 12:55 PM'
+@Field static final String matterComponentLockVersion = '1.3.3'
+@Field static final String matterComponentLockStamp   = '2025/02/06 9:27 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false              // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false      // disable on production
 
-// Matter Door Lock Feature Map bits (from Matter specification 5.2.4)
+// Matter Door Lock Feature Map bits (from Matter specification 1.3)
 @Field static final Integer FEATURE_PIN_CREDENTIAL = 0x0001          // Bit 0: PIN credential support
 @Field static final Integer FEATURE_RFID_CREDENTIAL = 0x0002         // Bit 1: RFID credential support
 @Field static final Integer FEATURE_FINGER_CREDENTIALS = 0x0004      // Bit 2: Fingerprint credential support
 @Field static final Integer FEATURE_LOGGING = 0x0008                 // Bit 3: Logging support
 @Field static final Integer FEATURE_WEEK_DAY_SCHEDULES = 0x0010      // Bit 4: Week day access schedules
-@Field static final Integer FEATURE_YEAR_DAY_SCHEDULES = 0x0020      // Bit 5: Year day access schedules
-@Field static final Integer FEATURE_HOLIDAY_SCHEDULES = 0x0040       // Bit 6: Holiday schedules
-@Field static final Integer FEATURE_USER_MANAGEMENT = 0x0400         // Bit 10: User management
-@Field static final Integer FEATURE_NOTIFICATION = 0x0800            // Bit 11: Notification support
-@Field static final Integer FEATURE_DOOR_POSITION_SENSOR = 0x1000    // Bit 12: Door position sensor
-@Field static final Integer FEATURE_FACE_CREDENTIALS = 0x2000        // Bit 13: Face recognition credentials
-@Field static final Integer FEATURE_CREDENTIAL_RULES = 0x4000        // Bit 14: Credential over the air
-@Field static final Integer FEATURE_UNBOLT = 0x8000                  // Bit 15: Unbolt support
-@Field static final Integer FEATURE_ALIRO_PROVISIONING = 0x10000     // Bit 16: Aliro provisioning
-@Field static final Integer FEATURE_ALIRO_BLE_UWB = 0x20000          // Bit 17: Aliro BLE UWB
+@Field static final Integer FEATURE_DOOR_POSITION_SENSOR = 0x0020    // Bit 5: Door position sensor
+@Field static final Integer FEATURE_FACE_CREDENTIALS = 0x0040        // Bit 6: Face recognition credentials
+@Field static final Integer FEATURE_COTA = 0x0080                    // Bit 7: Credential Over The Air (COTA)
+@Field static final Integer FEATURE_USER_MANAGEMENT = 0x0100         // Bit 8: User management
+@Field static final Integer FEATURE_NOTIFICATION = 0x0200            // Bit 9: Notification support
+@Field static final Integer FEATURE_YEAR_DAY_SCHEDULES = 0x0400      // Bit 10: Year day access schedules
+@Field static final Integer FEATURE_HOLIDAY_SCHEDULES = 0x0800       // Bit 11: Holiday schedules
+@Field static final Integer FEATURE_UNBOLT = 0x1000                  // Bit 12: Unbolt support
 
 metadata {
     definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Daniel Segall', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Door_Lock') {
@@ -66,12 +69,13 @@ metadata {
         capability 'Actuator'
         capability 'Battery'
         capability 'Lock'       // lock - ENUM ["locked", "unlocked with timeout", "unlocked", "unknown"]
-        capability 'LockCodes'  // lockCodes, codeChanged, codeLength, maxCodes | setCode(pos,pin,name), deleteCode(pos), getCodes(), setCodeLength(len)
+        //capability 'LockCodes'  // lockCodes, codeChanged, codeLength, maxCodes | setCode(pos,pin,name), deleteCode(pos), getCodes(), setCodeLength(len)
         capability 'Refresh'
 
         command    'identify', [[name: 'Identify the lock device']]
         command    'getInfo', [[name: 'Check the live logs and the device data for additional infoormation on this device']]
-        command    'unlockWithPIN', [[name: 'pin*', type: 'STRING', description: 'unlock with PIN (not available on all locks)']]
+        /*
+        //command    'unlockWithPIN', [[name: 'pin*', type: 'STRING', description: 'unlock with PIN (not available on all locks)']]
         command    'unboltDoor', [[name: 'Unbolt door (not available on all locks)']]
         
         // LockCodes custom commands with dynamic feature support indication
@@ -80,8 +84,9 @@ metadata {
                                [name: 'name', type: 'STRING', description: "User name (optional)<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
         command    'deleteCode', [[name: 'codePosition*', type: 'NUMBER', description: "Code slot to delete<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
         command    'getCodes', [[name: "Retrieve all PIN codes<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
-
+        */
         // TODO - move these to state variables or device data ?
+        attribute 'lock', 'ENUM', ["locked", "unlocked with timeout", "unlocked", "unknown", "locking", "unlocking"]  // added 'locking' and 'unlocking' for better UI feedback during lock/unlock operations
         attribute 'lockType', 'ENUM', ['deadbolt', 'magnetic', 'other', 'mortise', 'rim', 'latchbolt', 'cylindricalLock', 'tubularLock', 'interconnectedLock', 'deadLatch', 'doorFurniture', 'eurocylinder']
         attribute 'actuatorEnabled', 'ENUM', ['enabled', 'disabled']
         attribute 'operatingMode', 'ENUM', ['Normal', 'Vacation', 'Privacy', 'NoRemoteLockUnlock', 'Passage']
@@ -103,9 +108,16 @@ metadata {
             command 'getCredentialStatus', [[name:'pinIndex*', type: 'STRING', description: 'PIN Index (1-255)', defaultValue: '1']]
             command 'getUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
             command 'clearUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
-            command 'readFeatureMap'    // TODO - move to the main driver 
-            command 'readAttributeList' // Read and display 0101_FFFB AttributeList
-            command 'testLock', [[name: 'testLock', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
+            command 'setUser', [[name: 'codePosition*', type: 'NUMBER', description: 'Code slot (1-based)'],
+                                           [name: 'pinCode*', type: 'STRING', description: 'PIN code (4-8 digits)'],
+                                           [name: 'name', type: 'STRING', description: "User name (optional)<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
+            command 'clearCredential', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type (0:ProgrammingPIN,1:PIN,2:RFID,3:Fingerprint,4:FingerVein,5:Face)', defaultValue: '1'],
+                                     [name:'credentialIndex', type: 'NUMBER', description: 'Credential Index (0 to clear all)', defaultValue: '9']]
+            //(BigDecimal credentialIndexPar, String pinCode, BigDecimal userIndexPar = null) 
+            command  'setCredentialPIN' , [[name:'credentialIndex*', type: 'NUMBER', description: 'Credential Index (1-255)', defaultValue: '1'],
+                                           [name:'pinCode*', type: 'STRING', description: 'PIN code (4-8 digits)', defaultValue: '1234'],
+                                           [name:'userIndex', type: 'NUMBER', description: 'User Index (1-65534)', defaultValue: '1']]
+            command 'testInvoke', [[name: 'testInvoke', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
         }
     }
 }
@@ -134,7 +146,6 @@ preferences {
 
 import groovy.transform.CompileStatic
 
-/* groovylint-disable-next-line UnusedMethodParameter */
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
@@ -147,15 +158,15 @@ void parse(List<Map> parsedEvents) {
                 sendEvent(d)
             }
             else {
-                logDebug ": ignored lock event '${d.value}' (no change)"
+                logDebug "parse: ${parsedEvents} : ignored lock event '${d.value}' (no change)"
             }
         }
         else if (d.name == 'rtt') {
             // Delegate to health status library
             parseRttEvent(d)
         }
-        else if (d.name == 'unprocessed') {
-            processUnprocessed(d)
+        else if (d.name in  ['unprocessed', 'handleInChildDriver']) {
+            handleUnprocessedMessageInChildDriver(d)
         }
         else {
             if (d.descriptionText) { logInfo "${d.descriptionText}" }
@@ -164,30 +175,774 @@ void parse(List<Map> parsedEvents) {
     }
 }
 
+void handleUnprocessedMessageInChildDriver(Map description) {
+    //logDebug "handleUnprocessedMessageInChildDriver: description = ${description}"
+    Map descMap =[:]
+    try {
+        descMap = description.value as Map
+    }
+    catch (e) {
+        logWarn "handleUnprocessedMessageInChildDriver: exception ${e} while parsing description.value = ${description.value}"
+        return
+    }
+    logDebug "handleUnprocessedMessageInChildDriver: parsed descMap = ${descMap}"
+    if (descMap.cluster != '0101') { logWarn "handleUnprocessedMessageInChildDriver: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+
+    // Check if this is an event (has evtId) or an attribute (has attrId)
+    if (descMap.evtId != null) {
+        processDoorLockEvent(descMap)
+        return
+    }
+    // else - process attribute report
+    processDoorLockAttributeReport(descMap)
+}
+
+void processDoorLockAttributeReport(Map descMap) {
+    
+    String eventValue = descMap.value
+    String descriptionText = "${device.displayName} ${descMap.cluster}:${descMap.attrId} value:${eventValue}"
+    
+    // Declare variables for conditional logging
+    boolean isInfoMode = state.states?.isInfo == true
+    String prefix = isInfoMode ? "[${descMap.attrId}] " : ""
+    String message = null
+    boolean useDebugLog = false  // Flag to use logDebug instead of logInfo when isInfoMode is false
+    
+    switch (descMap.attrId) {
+        case '0000': // LockState
+            // LockState is typically handled by parent driver
+            // But log it here for debugging if it arrives
+            String lockStateText = DoorLockClusterLockState[safeHexToInt(descMap.value)] ?: "Unknown (${descMap.value})"
+            message = "${prefix}LockState: ${lockStateText} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+        case '0001': // LockType
+            eventValue= DooorLockClusterLockType[safeHexToInt(descMap.value)]
+            descriptionText = "${device.displayName} lockType: ${eventValue} (raw:${descMap.value})"
+            sendEvent(name: 'lockType', value: eventValue, descriptionText: descriptionText)
+            message = "${prefix}lockType: ${eventValue} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+        case '0002': // ActuatorEnabled
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            descriptionText = "${device.displayName} ActuatorEnabled: ${eventValue} (raw:${descMap.value})"
+            sendEvent(name: 'actuatorEnabled', value: eventValue, descriptionText: descriptionText)
+            message = "${prefix}ActuatorEnabled: ${eventValue} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+        case '0003': // DoorState
+            Integer doorStateValue = safeHexToInt(descMap.value)
+            eventValue = DoorLockClusterDoorState[doorStateValue] ?: "Unknown/OutOfSpec"
+            if (doorStateValue > 0x05) {
+                message = "${prefix}DoorState: ${eventValue} (raw:0x${descMap.value} - value out of spec 0x00-0x05)"
+            } else {
+                descriptionText = "${device.displayName} DoorState: ${eventValue} (raw:${descMap.value})"
+                //sendEvent(name: 'doorState', value: eventValue, descriptionText: descriptionText)
+                message = "${prefix}DoorState: ${eventValue} (raw:${descMap.value})"
+            }
+            useDebugLog = true
+            break
+        case '0004': // DoorOpenEvents
+            Integer doorOpenEvents = safeHexToInt(descMap.value)
+            message = "${prefix}DoorOpenEvents: ${doorOpenEvents}"
+            break
+        case '0005': // DoorClosedEvents
+            Integer doorClosedEvents = safeHexToInt(descMap.value)
+            message = "${prefix}DoorClosedEvents: ${doorClosedEvents}"
+            break
+        case '0006': // OpenPeriod
+            Integer openPeriod = safeHexToInt(descMap.value)
+            message = "${prefix}OpenPeriod: ${openPeriod} minutes"
+            break
+        case '0010': // NumberOfLogRecordsSupported
+            message = processNumericAttribute('NumberOfLogRecordsSupported', descMap)
+            break
+        case '0011': // NumberOfTotalUsersSupported
+            message = processNumericAttribute('NumberOfTotalUsersSupported', descMap)
+            break
+        case '0012': // NumberOfPINUsersSupported
+            message = processNumericAttribute('NumberOfPINUsersSupported', descMap)
+            break
+        case '0013': // NumberOfRFIDUsersSupported
+            message = processNumericAttribute('NumberOfRFIDUsersSupported', descMap)
+            break
+        case '0014': // NumberOfWeekDaySchedulesSupportedPerUser
+            message = processNumericAttribute('NumberOfWeekDaySchedulesSupportedPerUser', descMap)
+            break
+        case '0015': // NumberOfYearDaySchedulesSupportedPerUser
+            message = processNumericAttribute('NumberOfYearDaySchedulesSupportedPerUser', descMap)
+            break
+        case '0016': // NumberOfHolidaySchedulesSupported
+            message = processNumericAttribute('NumberOfHolidaySchedulesSupported', descMap)
+            break
+        case '0017': // MaxPINCodeLength
+            Integer maxPinLength = safeHexToInt(descMap.value)
+            descriptionText = "${device.displayName} maximum PIN code length is ${maxPinLength}"
+            sendEvent(name: 'codeLength', value: maxPinLength, type: 'physical', descriptionText: descriptionText)
+            message = "${prefix}MaxPINCodeLength: ${maxPinLength}"
+            break
+        case '0018': // MinPINCodeLength
+            Integer minPinLength = safeHexToInt(descMap.value)
+            message = "${prefix}MinPINCodeLength: ${minPinLength}"
+            break
+        case '0019': // MaxRFIDCodeLength
+            message = processNumericAttribute('MaxRFIDCodeLength', descMap)
+            break
+        case '001A': // MinRFIDCodeLength
+            message = processNumericAttribute('MinRFIDCodeLength', descMap)
+            break
+        case '001B': // CredentialRulesSupport
+            Integer credRules = safeHexToInt(descMap.value)
+            String credRulesText = decodeCredentialRules(credRules)
+            message = "${prefix}CredentialRulesSupport: ${credRulesText} (0x${descMap.value})"
+            break
+        case '001C': // NumberOfCredentialsSupportedPerUser
+            message = processNumericAttribute('NumberOfCredentialsSupportedPerUser', descMap)
+            break
+        case '0020': // EnableLogging
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            message = "${prefix}EnableLogging: ${eventValue} (raw:${descMap.value})"
+            break
+        case '0021': // Language
+            String language = descMap.value instanceof List ? descMap.value.join('') : descMap.value
+            message = "${prefix}Language: ${language}"
+            break
+        case '0022': // LEDSettings
+            Integer ledSettings = safeHexToInt(descMap.value)
+            message = "${prefix}LEDSettings: 0x${descMap.value}"
+            break
+        case '0023': // AutoRelockTime
+            Integer autoRelockTime = safeHexToInt(descMap.value)
+            message = "${prefix}AutoRelockTime: ${autoRelockTime} seconds"
+            break
+        case '0024': // SoundVolume
+            Integer soundVolume = safeHexToInt(descMap.value)
+            message = "${prefix}SoundVolume: ${soundVolume}"
+            break
+        case '0025' : // OperatingMode
+            // OperatingMode: 00 (raw:00)
+            eventValue = DoorLockClusterOperatingModeEnum[safeHexToInt(descMap.value)]
+            descriptionText = "${device.displayName} OperatingMode: ${eventValue} (raw:${descMap.value})"
+            sendEvent(name: 'operatingMode', value: eventValue, descriptionText: descriptionText)
+            message = "${prefix}OperatingMode: ${eventValue} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+        case '0026' : // SupportedOperatingModes
+            // SupportedOperatingModes: FFF6 (raw:FFF6)
+            Integer intValue = safeHexToInt(descMap.value)
+            List<String> supportedModes = []
+            // Iterate through each bit position and check if the corresponding bit in eventValue is set to 0
+            DoorLockClusterSupportedOperatingModes.each { bitPosition, modeName ->
+                if ((intValue & (1 << bitPosition)) == 0) {/* ...existing code... */}
+            }
+            String supportedModesString = supportedModes.join(', ')
+            descriptionText = "${device.displayName} SupportedOperatingModes: ${supportedModesString} (raw:${descMap.value})"
+            sendEvent(name: 'supportedOperatingModes', value: supportedModesString, descriptionText: descriptionText)
+            message = "${prefix}SupportedOperatingModes: ${supportedModesString} (raw:${descMap.value})"
+            useDebugLog = true
+            break
+        case '0027': // DefaultConfigurationRegister
+            message = "${prefix}DefaultConfigurationRegister: 0x${descMap.value}"
+            break
+        case '0028': // EnableLocalProgramming
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            message = "${prefix}EnableLocalProgramming: ${eventValue} (raw:${descMap.value})"
+            break
+        case '0029': // EnableOneTouchLocking
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            message = "${prefix}EnableOneTouchLocking: ${eventValue} (raw:${descMap.value})"
+            break
+        case '002A': // EnableInsideStatusLED
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            message = "${prefix}EnableInsideStatusLED: ${eventValue} (raw:${descMap.value})"
+            break
+        case '002B': // EnablePrivacyModeButton
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            message = "${prefix}EnablePrivacyModeButton: ${eventValue} (raw:${descMap.value})"
+            break
+        case '002C': // LocalProgrammingFeatures
+            message = "${prefix}LocalProgrammingFeatures: 0x${descMap.value}"
+            break
+        case '0030': // WrongCodeEntryLimit
+            Integer wrongCodeLimit = safeHexToInt(descMap.value)
+            message = "${prefix}WrongCodeEntryLimit: ${wrongCodeLimit}"
+            break
+        case '0031': // UserCodeTemporaryDisableTime
+            Integer disableTime = safeHexToInt(descMap.value)
+            message = "${prefix}UserCodeTemporaryDisableTime: ${disableTime} seconds"
+            break
+        case '0032': // SendPINOverTheAir
+            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
+            message = "${prefix}SendPINoverTheAir: ${eventValue} (raw:${descMap.value})"
+            break
+        case '0033': // RequirePINforRemoteOperation
+            eventValue = descMap.value == '01' ? 'required' : 'not required'
+            message = "${prefix}RequirePINforRemoteOperation: ${eventValue} (raw:${descMap.value})"
+            break
+        case '0034': // SecurityLevel (Deprecated)
+            Integer securityLevel = safeHexToInt(descMap.value)
+            String securityLevelName = ['Unspecified', 'Low', 'Medium', 'High'][securityLevel] ?: "Unknown(${securityLevel})"
+            message = "${prefix}SecurityLevel: ${securityLevelName} (deprecated, raw:${descMap.value})"
+            break
+        case '0035': // ExpiringUserTimeout
+            Integer expiringUserTimeout = safeHexToInt(descMap.value)
+            message = "${prefix}ExpiringUserTimeout: ${expiringUserTimeout} minutes"
+            break
+        case '0042': // RemoteOperationEventMask
+            message = processEventMaskAttribute('0042', 'RemoteOperationEventMask', descMap, this.&decodeRemoteOperationEventMask)
+            useDebugLog = true
+            break
+        case '0043': // ManualOperationEventMask
+            message = processEventMaskAttribute('0043', 'ManualOperationEventMask', descMap, this.&decodeManualOperationEventMask)
+            useDebugLog = true
+            break
+        case '0044': // RFIDOperationEventMask
+            message = processEventMaskAttribute('0044', 'RFIDOperationEventMask', descMap, this.&decodeRFIDOperationEventMask)
+            useDebugLog = true
+            break
+        case '0045': // KeypadProgrammingEventMask
+            message = processEventMaskAttribute('0045', 'KeypadProgrammingEventMask', descMap, this.&decodeKeypadProgrammingEventMask)
+            // NOTE: Nuki disables PINCleared (0x08) and PINChanged (0x10) events
+            // This means PIN deletion/modification events won't be received automatically
+            useDebugLog = true
+            break
+        case '0046': // RemoteProgrammingEventMask
+            message = processEventMaskAttribute('0046', 'RemoteProgrammingEventMask', descMap, this.&decodeRemoteProgrammingEventMask)
+            useDebugLog = true
+            break
+        case '0047': // RFIDProgrammingEventMask
+            message = processEventMaskAttribute('0047', 'RFIDProgrammingEventMask', descMap, this.&decodeRFIDProgrammingEventMask)
+            useDebugLog = true
+            break
+        case '0080': // Nuki non-standard attribute (spec=0x40 AlarmMask)
+        case '0081': // Nuki non-standard attribute (spec=0x41 KeypadOperationEventMask)
+        case '0082': // Nuki non-standard attribute (spec=0x42 RemoteOperationEventMask)
+        case '0083': // Nuki non-standard attribute (spec=0x43 ManualOperationEventMask)
+        case '0087': // Nuki non-standard attribute (spec=0x44 RFIDOperationEventMask)
+        case '0088': // Nuki non-standard attribute (spec=0x45 KeypadProgrammingEventMask)
+            message = "${prefix} UNKNOWN Nuki non-standard attribute 0x${descMap.attrId}: ${descMap.value}"
+            break
+        case 'FFFC': // FeatureMap
+            Integer featureMap = safeHexToInt(descMap.value)
+            String featuresText = decodeFeatureMap(featureMap)
+            // FeatureMapRaw is stored in fingerprintData as '0101_FFFC'
+            message = "${prefix}FeatureMap: ${featuresText} (0x${descMap.value})"
+            break
+        case 'FFFB': // AttributeList
+            // AttributeList is stored in fingerprintData, no need to store separately
+            message = "${prefix}AttributeList: ${descMap.value}"
+            useDebugLog = true
+            // device.updateDataValue('AttributeList', ...) - removed, now in fingerprintData
+            break
+        case 'FFFD': // ClusterRevision
+            Integer revision = safeHexToInt(descMap.value)
+            message = "${prefix}ClusterRevision: ${revision}"
+            break
+        case 'FFF8': // GeneratedCommandList (events supported) - stored in fingerprintData only
+            message = "${prefix}GeneratedCommandList: ${descMap.value}"
+            useDebugLog = true
+            // Data is in fingerprintData['0101_FFF8'], no duplicate storage needed
+            break
+        case 'FFF9': // AcceptedCommandList - stored in fingerprintData only
+            message = "${prefix}AcceptedCommandList: ${descMap.value}"
+            useDebugLog = true
+            // Data is in fingerprintData['0101_FFF9'], no duplicate storage needed
+            break
+        default:
+            // Check for command responses
+            if (descMap.cmdId == '25' || descMap.value?.contains('credentialExists')) {
+                processGetCredentialStatusResponse(descMap)
+            } else if (descMap.cmdId == '28' || descMap.value?.contains('userName')) {
+                processGetUserResponse(descMap)
+            } else {
+                logWarn "handleUnprocessedMessageInChildDriver: unexpected attrId:${descMap.attrId}"
+            }
+            break
+    }
+    
+    // Conditional logging after the switch
+    if (message != null) {
+        if (isInfoMode) {
+            logInfo message
+        } else {
+            if (useDebugLog) {
+                logDebug message
+            } else {
+                logInfo message
+            }
+        }
+    }
+}
+
+
+
+
+
 void identify() {
-    logDebug "identifying ..."
+    List<String> serverList = getFingerprintData()?.get('ServerList') ?: []
+    if (!serverList.contains('0003')) {
+        logWarn "Identify command not supported: Cluster 0003 not present in ServerList"
+        return
+    }
+    logInfo "identifying ..."
     parent?.componentIdentify(device)
 }
 
-// Command to lock device
+// 5.2.10.1. LockDoor Command (0x00)
+// This command causes the lock device to lock the door. This command includes an optional code for the lock. The door lock MAY require a PIN depending on the value of the RequirePINForRemoteOperation attribute.
 void lock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    
+    sendEvent(name: 'lock', value: 'locking', descriptionText: "${device.displayName} is locking...", type: 'digital')
+    logInfo "locking..."
     parent?.componentLog(device, 'debug', 'locking...')
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, 2000)
     parent?.sendToDevice(cmd)
 }
 
-// Command to unlock device
+// 5.2.10.2. UnlockDoor Command (0x01)
+// This command causes the lock device to unlock the door. This command includes an optional code for the lock. The door lock MAY require a code depending on the value of the RequirePINForRemoteOperation attribute.
 void unlock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    
+    sendEvent(name: 'lock', value: 'unlocking', descriptionText: "${device.displayName} is unlocking...", type: 'digital')
+    logInfo "unlocking..."
     parent?.componentLog(device, 'debug', 'unlocking...')
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000)
     parent?.sendToDevice(cmd)
 }
+
+// 5.2.10.3. UnlockWithTimeout Command (0x02) - TODO: implemented it later if needed
+
+// Hubitat wrap for setUser
+void setCode(codePosition, pinCode, name = null) {
+    setUser(codePosition, pinCode, name)
+}   
+
+
+// 5.2.10.42 SetCredential Command (0x22)
+// Implemented for PIN only (credentialType = 1)
+//
+// Usage examples:
+//   setCredentialPIN(1, "1234")           // set PIN in credential slot 1 (userIndex null)
+//   setCredentialPIN(1, "1234", 1)        // set PIN in credential slot 1 and associate to userIndex 1
+//
+// Notes:
+// - credentialIndex is usually 1..NumberOfPINUsersSupported (often 1..10 for U200)
+// - userIndex is often the same as credentialIndex for many locks (but not always)
+// - operationType = 0 (Add)
+void setCredentialPIN(BigDecimal credentialIndexPar, String pinCode, BigDecimal userIndexPar = null) {
+    if (!supportsLockCodes()) {
+        logWarn "setCredentialPIN: This lock <b>does not</b> support PIN/User management (FeatureMap indicates no PIN/User support)"
+        sendEvent(name: 'codeChanged', value: "${credentialIndexPar} failed", descriptionText: "Lock does not support PIN/User management", isStateChange: true)
+        return
+    }
+
+    if (credentialIndexPar == null) {
+        logWarn "setCredentialPIN: credential index is required"
+        return
+    }
+    Integer credentialIndex = credentialIndexPar.intValue()
+    if (credentialIndex < 1 || credentialIndex > 255) {
+        logWarn "setCredentialPIN: credential index must be 1..255, got '${credentialIndex}'"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Invalid credential index ${credentialIndex}", isStateChange: true)
+        return
+    }
+
+    if (!pinCode) {
+        logWarn "setCredentialPIN: pinCode is required"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Missing pinCode", isStateChange: true)
+        return
+    }
+
+    // Basic sanity (you can relax this if your lock supports other lengths)
+    if (pinCode.size() < 4 || pinCode.size() > 8) {
+        logWarn "setCredentialPIN: pinCode length must be 4..8 digits, got ${pinCode.size()}"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Invalid PIN length", isStateChange: true)
+        return
+    }
+
+    Integer userIndex = (userIndexPar != null) ? userIndexPar.intValue() : null
+    if (userIndex != null && (userIndex < 1 || userIndex > 65534)) {
+        logWarn "setCredentialPIN: userIndex must be 1..65534 (or null), got '${userIndex}'"
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "Invalid userIndex ${userIndex}", isStateChange: true)
+        return
+    }
+
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) {
+        sendEvent(name: 'codeChanged', value: "${credentialIndex} failed", descriptionText: "deviceNumber is null", isStateChange: true)
+        return
+    }
+
+    // ---- Build TLV ----
+    // operationType enum8 (tag 0): Add=0
+    String opTypeHex = "00" // Add
+
+    // credential struct (tag 1)
+    //   tag0: credentialType enum8 = 1 (PIN)
+    //   tag1: credentialIndex uint16 LE
+    String credTypeHex = "01"
+    String credIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(credentialIndex, 2))  // 1 -> 0100
+
+    // credentialData octet string (tag 2): bytes of PIN ASCII/UTF-8
+    byte[] pinBytes = pinCode.getBytes('UTF-8')
+    int pinLen = pinBytes.length
+    String pinHex = pinBytes.collect { String.format('%02X', it) }.join()
+
+    // Encode credentialData as ByteString1/2 (octet string), context tag 2
+    // Context(1-byte) control for ByteString1 is 0x30, for ByteString2 is 0x31 (matches your UTF8 0x2C/0x2D logic)
+    String credentialDataTlv
+    if (pinLen <= 0xFF) {
+        credentialDataTlv = "30" + "02" + HexUtils.integerToHexString(pinLen, 1) + pinHex
+    } else {
+        String lenHexLE = zigbee.swapOctets(HexUtils.integerToHexString(pinLen, 2))
+        credentialDataTlv = "31" + "02" + lenHexLE + pinHex
+    }
+
+    // userIndex nullable uint16 (tag 3)
+    String userIndexTlv
+    if (userIndex == null) {
+        // NULL: control 0x34 (context + null), tag 3
+        userIndexTlv = "34" + "03"
+    } else {
+        String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
+        // uint16: control 0x25 (context + uint16), tag 3
+        userIndexTlv = "25" + "03" + userIndexHexLE
+    }
+
+    // userStatus nullable enum8 (tag 4) - keep NULL for now (HA sends None)
+    String userStatusTlv = "34" + "04"
+
+    // userType nullable enum8 (tag 5) - keep NULL for now
+    String userTypeTlv = "34" + "05"
+
+    // Credential struct field (tag 1): control 0x35 (context + struct), tag 1
+    // Follow the same working pattern as clearCredential(): NO extra inner "15" here.
+    String credentialStructField =
+            "35" + "01" +
+                "24" + "00" + credTypeHex +
+                "25" + "01" + credIndexHexLE +
+            "18"
+
+    // Full command struct
+    String tlv =
+            "15" +
+                "24" + "00" + opTypeHex +   // tag0 operationType
+                credentialStructField +      // tag1 credential struct
+                credentialDataTlv +          // tag2 credentialData (octet string)
+                userIndexTlv +               // tag3 userIndex (nullable)
+                userStatusTlv +              // tag4 userStatus (nullable)
+                userTypeTlv +                // tag5 userType (nullable)
+            "18"
+
+    // Use Hubitat invoke envelope (timed invoke)
+    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x0022, 2000) + " {${tlv}}"
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x0022, 9000) + " {${tlv}}"
+
+    logDebug "setCredentialPIN: credIndex=${credentialIndex}, userIndex=${userIndex}, pinLen=${pinLen}, credIndexHexLE=${credIndexHexLE}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "setting PIN credential slot ${credentialIndex}..." + (userIndex != null ? " (user ${userIndex})" : ""))
+    parent?.sendToDevice(cmd)
+
+    // Optimistic event (until we parse SetCredentialResponse 0x23)
+    sendEvent(name: 'codeChanged', value: "${credentialIndex} set", descriptionText: "SetCredential sent for slot ${credentialIndex}", isStateChange: true)
+}
+
+
+// NOT WORKING! :( )
+// 5.2.10.34. SetUser Command (0x1A)
+void setUser(codePosition, pinCode, name = null) {
+    if (!supportsLockCodes()) {
+        logWarn "setCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "Lock <b>does not</b> support PIN codes", isStateChange: true)
+        return
+    }
+    
+    if (!codePosition) {
+        logWarn 'setUser: user index is required'
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: 'setUser: missing user index', isStateChange: true)
+        return
+    }
+
+    Integer userIndex
+    try {
+        userIndex = (codePosition as BigDecimal)?.intValue()
+    } catch (Exception ignored) {
+        userIndex = null
+    }
+    if (userIndex == null || userIndex < 1 || userIndex > 255) {
+        logWarn "setUser: user index must be 1-255, got '${codePosition}'"
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "setUser: invalid user index '${codePosition}'", isStateChange: true)
+        return
+    }
+
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) {
+        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: 'setUser: deviceNumber is null', isStateChange: true)
+        return
+    }
+
+    
+    // ---- Build TLV payload ----
+    // 0: userIndex (uint16)
+    // 1: userName (string, nullable on some implementations)
+    // 2: userUniqueID (nullable uint32) -> we send NULL
+    // 3: userStatus (enum8)
+    // 4: userType (enum8)
+    // 5: credentialRule (enum8)
+
+    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
+
+    int userStatus = 0x01      // OccupiedEnabled (common)
+    int userType = 0x00        // UnrestrictedUser (common)
+    int credentialRule = 0x00  // Single (common)
+
+    String userStatusHex = HexUtils.integerToHexString(userStatus, 1)
+    String userTypeHex = HexUtils.integerToHexString(userType, 1)
+    String credentialRuleHex = HexUtils.integerToHexString(credentialRule, 1)
+
+    // userName:
+    // If no name provided -> send NULL (more compatible than empty string on some locks)
+    String userNameTlv
+    if (name == null || name.toString().trim().isEmpty()) {
+        // NULL: control 0x34, tag 1
+        userNameTlv = "34" + "01"
+    } else {
+        String userName = name.toString()
+        byte[] userNameBytes = userName.getBytes('UTF-8')
+        int userNameLen = userNameBytes.length
+        String userNameHex = userNameBytes.collect { String.format('%02X', it) }.join()
+
+        if (userNameLen <= 0xFF) {
+            // UTF81: control 0x2C, tag 1, 1-byte length
+            userNameTlv = "2C" + "01" + HexUtils.integerToHexString(userNameLen, 1) + userNameHex
+        } else {
+            // UTF82: control 0x2D, tag 1, 2-byte length (LE)
+            String lenHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userNameLen, 2))
+            userNameTlv = "2D" + "01" + lenHexLE + userNameHex
+        }
+    }
+
+    // userUniqueID: NULL (tag 2)
+    // String userUniqueIdTlv = "34" + "02"
+// userUniqueID: uint32 (tag 2) -> use userIndex as value
+String userUniqueIdHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 4))
+// control 0x26 = context-specific + uint32
+String userUniqueIdTlv = "26" + "02" + userUniqueIdHexLE    
+
+    // Build command struct
+    String tlv =
+            "15" +
+              "25" + "00" + userIndexHexLE +   // tag 0 uint16
+              userNameTlv +                    // tag 1 string or NULL
+              userUniqueIdTlv +                // tag 2 NULL
+              "24" + "03" + userStatusHex +    // tag 3 enum8
+              "24" + "04" + userTypeHex +      // tag 4 enum8
+              "24" + "05" + credentialRuleHex +// tag 5 enum8
+            "18"
+
+    // IMPORTANT: use matter.invoke() to build the Hubitat envelope correctly
+    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x001A, 2000) + " {${tlv}}"
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001A) + " {${tlv}}"
+
+    logDebug "setUser: index=${userIndex}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "setting user ${userIndex}..." + (name ? " (${name})" : ""))
+    parent?.sendToDevice(cmd)
+
+    sendEvent(name: 'codeChanged', value: "${codePosition} set", descriptionText: "setUser sent for user ${userIndex}", isStateChange: true)
+
+}
+
+
+// TODO
+// 5.2.10.35. GetUser Command (0x1B)
+// Retrieve user.
+void getUser(String userIndex) {
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn "getUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
+        return
+    }
+    
+    if (!userIndex) { logWarn "getUser: User index is required" ; return }
+
+    Integer index = userIndex as Integer
+    // TODO: use device data "Number Of Total Users Supported" to validate index ! ( U200 supports up to 10 users )
+    if (index < 1 || index > 10) {
+        logWarn "getUser: User index must be 1-10, got '${userIndex}'"
+        return
+    }
+    
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+    
+
+    // cmdFields: ID:0, Name:UserIndex, Type:uint16, Constraint: 1 to NumberOfTotalUsersSupported, Conformance:Mandatory
+    // An InvokeResponse command SHALL be sent with an appropriate error (e.g. FAILURE, INVALID COMMAND, etc.) as needed otherwise the GetUserResponse Command SHALL be sent implying a status of SUCCESS
+    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    List<Map<String, String>> cmdFields = []
+    cmdFields.add(matter.cmdField(DataType.UINT16, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
+
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, 9000,cmdFields)
+    logDebug "getUser: cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "querying user information for index ${index}...")
+    parent?.sendToDevice(cmd)
+}
+
+// 5.2.10.37. ClearUser Command (0x1D) - WORKING ! :) 
+// Clears a user or all Users. 
+// // cmdFields: ID:0, Name:UserIndex, Type:uint16, Constraint: 1 to NumberOfTotalUsersSupported, Default:0xFFFE, Conformance:Mandatory
+void clearUser(String userIndex) {
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn "clearUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
+        return
+    }
+    
+    if (!userIndex) {
+        logWarn "clearUser: User index is required"
+        return
+    }
+    // TODO: use device data "Number Of Total Users Supported" to validate index ! ( U200 supports up to 10 users )
+    Integer index = userIndex as Integer
+    if (index < 1 || index > 10) {
+        logWarn "clearUser: User index must be 1-10, got '${userIndex}'"
+        return
+    }
+    
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+    
+    parent?.componentLog(device, 'debug', "clearing user at index ${index}...")
+    logDebug "clearUser: clearing user at index ${index}"
+    List<Map<String, String>> cmdFields = []
+    cmdFields.add(matter.cmdField(DataType.UINT16, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001D, 2000, cmdFields)
+
+    parent?.sendToDevice(cmd)
+    // clearUser is working, for existing users it returns a response in an event : 
+    //       descMap = [callbackType:Event, endpointInt:1, clusterInt:257, evtId:4, timestamp:946765068557, priority:1, data:[4:STRUCT:[6:UINT:8, 3:UINT:8, 0:UINT:2, 1:UINT:1, 4:UINT:3, 5:UINT:112233, 2:UINT:7]], value:[6:8, 3:8, 0:2, 1:1, 4:3, 5:112233, 2:7], cluster:0101, endpoint:01]
+    // :) 
+}
+
+
+
+// 5.2.10.44. ClearCredential Command (0x26)
+// Clears a single credential, all credentials of one type, or all credentials of all types.
+// Usage:
+//   clearCredential()                  // Clear all credentials of all types
+//   clearCredential(type)              // Clear all credentials of one type (type: CredentialTypeEnum)
+//   clearCredential(type, index)       // Clear a single credential (type: CredentialTypeEnum, index: credential index)
+//
+// CredentialTypeEnum: 1=PIN, 2=RFID, 3=Fingerprint, 4=Face, etc. (ProgrammingPIN not allowed)
+// For all credentials of a type: index = 0xFFFE
+// For all credentials of all types: type = null, index = null
+// For a single credential: type = credential type, index = credential index
+//
+// cmdFields: ID:0, Name:Credential, Type:CredentialStruct, Quality:desc, Conformance:Mandatory
+void clearCredential(BigDecimal credentialTypePar = null, BigDecimal credentialIndexPar = null) {
+    Integer credentialType = credentialTypePar != null ? credentialTypePar.intValue() : null
+    Integer credentialIndex = credentialIndexPar != null ? credentialIndexPar.intValue() : null
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+
+    if (credentialType == null && credentialIndex == null) {
+        // Clear all credentials of all types (Credential field SHALL be null)
+        logInfo 'clearCredential: clearing all credentials of all types'
+        String cmd = matter.invoke(deviceNumber, 0x0101, 0x26)
+        parent?.sendToDevice(cmd)
+        return
+    }
+
+    if (credentialType == 0) {
+        logWarn 'clearCredential: ProgrammingPIN cannot be cleared.'
+        return
+    }
+
+
+
+    int index = (credentialIndex != null) ? credentialIndex : 1
+
+    String typeHex  = HexUtils.integerToHexString(credentialType, 1)             // e.g. "01"
+    String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))  // e.g. "0900"
+
+    // Build TLV dynamically
+    String tlv =
+            "15" +            // start outer struct
+            "35" + "00" +     // context tag 0, STRUCTURE (CredentialStruct)
+            "24" + "00" + typeHex +     // tag 0: uint8 credentialType
+            "25" + "01" + indexHex +    // tag 1: uint16 credentialIndex (LE)
+            "18" +            // end inner struct
+            "18"              // end outer struct
+
+
+/*
+int index = (credentialIndex != null) ? credentialIndex : 1
+
+String typeHex  = HexUtils.integerToHexString(credentialType, 1)             // "01"
+String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))  // "0100" LE
+
+String f0 = matter.cmdFieldStr(0x00, 0x04, typeHex)
+String f1 = matter.cmdFieldStr(0x01, 0x05, indexHex)
+
+log.warn "f0=${f0} f1=${f1}"
+
+// f0/f1 produced by cmdFieldStr
+String innerRaw = "${f0}${f1}"
+String innerTlv = matter.cmdFields(innerRaw)   // returns "15...18"
+
+log.warn "innerTlv=${innerTlv}"
+
+String tlv =
+    "15" +            // start outer struct
+    "35" + "00" +     // context tag 0, STRUCTURE (CredentialStruct)
+    innerTlv +        // already 15..18
+    "18"              // end outer struct
+*/
+
+String cmd = "he invoke 0x01 0x0101 0x0026 0x07D0 {1518} {${tlv}}"
+//String cmd = matter.invoke(0x01, 0x0101, 0x0026, 0x07D0, tlv)
+
+logDebug "clearCredential: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
+parent?.sendToDevice(cmd)
+
+
+}
+
+@Field static final Map<Integer, String> CredentialTypeEnum = [
+    0: 'ProgrammingPIN', // Programming PIN code credential type (O)
+    1: 'PIN',            // PIN code credential type (PIN)
+    2: 'RFID',           // RFID identifier credential type (RID)
+    3: 'Fingerprint',    // Fingerprint identifier credential type (FGP)
+    4: 'FingerVein',     // Finger vein identifier credential type (FGP)
+    5: 'Face'            // Face identifier credential type (FACE)
+]
+
+@Field static final Map<Integer, String> DataOperationTypeEnum = [
+    0: 'Add',    // Data is being added or was added (M)
+    1: 'Clear',  // Data is being cleared or was cleared (M)
+    2: 'Modify'  // Data is being modified or was modified (M)
+]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Command to unbolt door (for locks with separate bolt mechanism)
 void unboltDoor() {
@@ -200,43 +955,11 @@ void unboltDoor() {
     parent?.sendToDevice(cmd)
 }
 
-//Command to unlock device with PIN
-void unlockWithPIN(String pin) {
-    if (!pin) {
-        logWarn "unlockWithPIN: PIN is required"
-        return
-    }
-    /* TODO: validate PIN format and length, depending on lock capabilities and the driver settings
-    if (!(pin ==~ /^\d{6}$/)) {
-        logWarn "unlockWithPIN: PIN must be exactly 6 digits, got '${pin}'"
-        return
-    }
-    */
-    
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "unlocking with PIN...")
-    
-    // Build PINCode field manually as TLV octet string
-    String pinHex = asciiToHex(pin)
-    String pinLength = HexUtils.integerToHexString(pinHex.length() / 2, 1)
-    
-    // Build TLV structure: context tag 0, octet string type (0x0C), length, data
-    String cmdPayload = '15'  // Structure start
-    cmdPayload += '0C00' + pinLength + pinHex  // Context tag 0, OCTET_STRING1, length, PIN bytes
-    cmdPayload += '18'  // Structure end
-    
-    // TODO - not tested yet!
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000) + " {${cmdPayload}}"
-    logDebug "unlockWithPIN: sending command with payload: ${cmdPayload}"
-    parent?.sendToDevice(cmd)
-}
 
 // Command to query PIN credential status
 void getCredentialStatus(String pinIndex) {
     if (!supportsLockCodes()) {
-        logWarn "getCredentialStatus: This lock does not support PIN credential management (FeatureMap indicates no PIN/User support)"
+        logWarn "getCredentialStatus: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
         return
     }
     
@@ -254,7 +977,7 @@ void getCredentialStatus(String pinIndex) {
     if (deviceNumber == null) return
     
     parent?.componentLog(device, 'debug', "querying PIN credential status for index ${index}...")
-    
+/*    
     // Build GetCredentialStatus command (0x24)
     // Command has single field: credential structure {credentialType: enum8, credentialIndex: uint16}
     // Build TLV manually since we need nested structure
@@ -276,72 +999,42 @@ void getCredentialStatus(String pinIndex) {
     
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x24) + " {${cmdPayload}}"
     parent?.sendToDevice(cmd)
+
+*/
+
+    // Build TLV using the SAME pattern as clearCredential() (known-good)
+    // Outer struct:
+    //   tag 0: CredentialStruct (struct)
+    //        tag 0: credentialType (uint8/enum8)
+    //        tag 1: credentialIndex (uint16 LE)
+
+    int credentialType = 1  // PIN
+
+    String typeHex    = HexUtils.integerToHexString(credentialType, 1)                 // 01
+    String indexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))       // 3 -> 0300
+
+    // IMPORTANT: follow the SAME encoding pattern as clearCredential()
+    // outer struct:
+    //   tag0: CredentialStruct (struct)
+    //      tag0: type (uint8/enum8)
+    //      tag1: index (uint16 LE)
+    String tlv =
+            "15" +
+              "35" + "00" +
+                "24" + "00" + typeHex +
+                "25" + "01" + indexHexLE +
+              "18" +
+            "18"
+
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x0024, 2000) + " {${tlv}}"
+
+    logDebug "getCredentialStatus: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "querying credential status: type=${credentialType}, index=${index}...")
+    parent?.sendToDevice(cmd)
+
 }
 
-// Command to get user information
-void getUser(String userIndex) {
-    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
-        logWarn "getUser: This lock does not support User management (FeatureMap indicates no User support)"
-        return
-    }
-    
-    if (!userIndex) {
-        logWarn "getUser: User index is required"
-        return
-    }
-    Integer index = userIndex as Integer
-    if (index < 1 || index > 65534) {
-        logWarn "getUser: User index must be 1-65534, got '${userIndex}'"
-        return
-    }
-    
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "querying user information for index ${index}...")
-    
-    // Build GetUser command (0x1B)
-    // Command has single field: UserIndex (UINT16)
-    List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
-    
-    //String cmd = matter.invoke(deviceNumber, 0x0101, 0x1B, cmdFields)
-    String cmd ="he invoke 0x01 0x0101 0x001B 0x0001 {1518}"
-    logDebug "getUser: sending command: ${cmd}"
-    parent?.sendToDevice(cmd)
-}
 
-// Command to clear/delete a user
-void clearUser(String userIndex) {
-    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
-        logWarn "clearUser: This lock does not support User management (FeatureMap indicates no User support)"
-        return
-    }
-    
-    if (!userIndex) {
-        logWarn "clearUser: User index is required"
-        return
-    }
-    Integer index = userIndex as Integer
-    if (index < 1 || index > 65534) {
-        logWarn "clearUser: User index must be 1-65534, got '${userIndex}'"
-        return
-    }
-    
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "clearing user at index ${index}...")
-    
-    // Build ClearUser command (0x1D)
-    // Command has single field: UserIndex (UINT16)
-    List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
-    
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x1D, cmdFields)
-    logDebug "clearUser: sending command: ${cmd}"
-    parent?.sendToDevice(cmd)
-}
 
 // Helper function to check if setCodeLength is supported by this lock
 Boolean isSetCodeLengthEnabled() {
@@ -414,7 +1107,7 @@ String isCodeAllowed() {
     } else {
         Map fingerprint = getFingerprintData()
         String featureMapHex = fingerprint?.get('0101_FFFC') ?: '??'
-        return "Your device ${device?.displayName} does NOT SUPPORT PIN code management (FeatureMap=0x${featureMapHex})"
+        return "Your device ${device?.displayName} <b>does NOT</b> support PIN code management (FeatureMap=0x${featureMapHex})"
     }
 }
 
@@ -422,30 +1115,8 @@ String isCodeAllowed() {
 // Note: These methods are part of the LockCodes capability which is always declared
 // However, not all Matter locks support PIN management. Each method checks feature support.
 
-/**
- * Set a PIN code for a user (LockCodes capability)
- * @param codePosition Position/slot number (1-based)
- * @param pinCode PIN code (4-8 digits typically)
- * @param name Optional user name
- */
-void setCode(codePosition, pinCode, name = null) {
-    if (!supportsLockCodes()) {
-        logWarn "setCode: This lock does not support PIN credential management (FeatureMap indicates no PIN/User support)"
-        sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "Lock does not support PIN codes", isStateChange: true)
-        return
-    }
-    
-    logInfo "setCode: position=${codePosition}, PIN=${pinCode ? '****' : 'null'}, name=${name}"
-    
-    // TODO: Implement SetCredential command (0x22) with proper TLV encoding
-    // This requires:
-    // 1. Check if user exists at this position (GetUser 0x1B)
-    // 2. If not, create user (SetUser 0x1A)
-    // 3. Set credential (SetCredential 0x22)
-    
-    logWarn "setCode: Not yet implemented - requires Matter User and Credential management"
-    sendEvent(name: 'codeChanged', value: "${codePosition} failed", descriptionText: "setCode not yet implemented", isStateChange: true)
-}
+
+
 
 /**
  * Delete a PIN code (LockCodes capability)
@@ -453,7 +1124,7 @@ void setCode(codePosition, pinCode, name = null) {
  */
 void deleteCode(codePosition) {
     if (!supportsLockCodes()) {
-        logWarn "deleteCode: This lock does not support PIN credential management (FeatureMap indicates no PIN/User support)"
+        logWarn "deleteCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
         return
     }
     
@@ -472,8 +1143,8 @@ void deleteCode(codePosition) {
  */
 void getCodes() {
     if (!supportsLockCodes()) {
-        logWarn "getCodes: This lock does not support PIN credential management (FeatureMap indicates no PIN/User support)"
-        sendEvent(name: 'lockCodes', value: '{}', descriptionText: "Lock does not support PIN codes")
+        logWarn "getCodes: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
+        sendEvent(name: 'lockCodes', value: '{}', descriptionText: "Lock <b>does not</b> support PIN codes")
         return
     }
     
@@ -520,72 +1191,21 @@ void readFeatureMap() {
     parent?.readAttribute([endpoint, cluster, attribute])
 }
 
-// Read AttributeList (0xFFFB) to see what attributes are supported
-// This reads the raw attribute list from the lock and logs it for debugging
-void readAttributeList() {
-    logInfo "=== Reading AttributeList (0xFFFB) ==="
-    
-    // Check fingerprint data
-    Map fingerprint = getFingerprintData()
-    if (fingerprint) {
-        List attrList = fingerprint['0101_FFFB']
-        if (attrList) {
-            logInfo "Fingerprint Data '0101_FFFB': ${attrList}"
-        } else {
-            logWarn "Fingerprint Data '0101_FFFB' not found in fingerprint"
-        }
-        
-        // Also show all available cluster data
-        logInfo "Available fingerprint keys: ${fingerprint.keySet()}"
-    } else {
-        logWarn "Fingerprint data not available in device data"
-    }
-    
-    // Request fresh read from lock
-    parent?.componentLog(device, 'debug', 'requesting AttributeList from lock...')
-    String endpoint = device.getDataValue('id') ?: '1'
-    String cluster = '257'  // 0x0101 Door Lock cluster
-    String attribute = '65531'  // 0xFFFB AttributeList
-    parent?.readAttribute([endpoint, cluster, attribute])
-    
-    logInfo "=== Expected per Matter spec: 0x40-0x45 for event masks ==="
-    logInfo "=== If lock reports 0x80-0x88, this is non-standard ==="
-    
-    // Test: Read both standard and Nuki-reported attribute ranges
-    logInfo "=== Testing: Reading spec-compliant event mask attributes (0x40-0x45) ==="
-    parent?.readAttribute([endpoint, cluster, '64'])    // 0x40 AlarmMask (spec)
-    parent?.readAttribute([endpoint, cluster, '65'])    // 0x41 KeypadOperationEventMask (spec)
-    parent?.readAttribute([endpoint, cluster, '66'])    // 0x42 RemoteOperationEventMask (spec)
-    parent?.readAttribute([endpoint, cluster, '67'])    // 0x43 ManualOperationEventMask (spec)
-    parent?.readAttribute([endpoint, cluster, '68'])    // 0x44 RFIDOperationEventMask (spec)
-    parent?.readAttribute([endpoint, cluster, '69'])    // 0x45 KeypadProgrammingEventMask (spec)
-    
-    logInfo "=== Testing: Reading Nuki-reported attributes (0x80-0x88) ==="
-    parent?.readAttribute([endpoint, cluster, '128'])   // 0x80 (Nuki reports)
-    parent?.readAttribute([endpoint, cluster, '129'])   // 0x81 (Nuki reports)
-    parent?.readAttribute([endpoint, cluster, '130'])   // 0x82 (Nuki reports)
-    parent?.readAttribute([endpoint, cluster, '131'])   // 0x83 (Nuki reports)
-    parent?.readAttribute([endpoint, cluster, '135'])   // 0x87 (Nuki reports)
-    parent?.readAttribute([endpoint, cluster, '136'])   // 0x88 (Nuki reports)
-    
-    logInfo "=== Check logs to see which attributes return valid data ==="
-}
 
 // Helper method to generate info string with feature support status
 String generateInfoString() {
     Map fingerprint = getFingerprintData()
     String featureMapHex = fingerprint?.get('0101_FFFC') ?: '??'
     String featureInfo = supportsLockCodes() ? 
-        "Your lock ${device.displayName} SUPPORTS PIN codes/users management" : 
-        "Your lock ${device.displayName} does NOT support PIN codes/users management (FeatureMap=0x${featureMapHex})"
+        "Your lock ${device.displayName} supports PIN codes/users management" : 
+        "Your lock ${device.displayName} <b>does NOT</b> support PIN codes/users management (FeatureMap=0x${featureMapHex})"
     return "${featureInfo}"
 }
 
 // Called when the device is first created
 void installed() {
     log.info "${device.displayName} driver installed"
-    state.info = generateInfoString()
-    log.info "${device.displayName} ${state.info}"
+    runIn(2, 'updated')  // delay to allow settings to be saved
 }
 
 // Called when the device is removed
@@ -616,18 +1236,13 @@ void clearOldStateVariables() {
     }
 }
 
-/* groovylint-disable-next-line UnusedPrivateMethod */
 private void logsOff() {
     log.warn "debug logging disabled for ${device.displayName} "
     device.updateSetting('logEnable', [value: 'false', type: 'bool'] )
 }
 
-void logInfo(msg)  { if (settings.txtEnable)   { log.info  "${device.displayName} " + msg } }
-void logDebug(msg) { if (settings.logEnable)   { log.debug "${device.displayName} " + msg } }
-void logTrace(msg) { if (settings.logEnable)   { log.trace "${device.displayName} " + msg } }
-void logWarn(msg)  { if (settings.logEnable)   { log.warn  "${device.displayName} " + msg } }
-
 void refresh() {
+    logInfo "refreshing device state and attributes..."
     clearOldStateVariables()
     parent?.componentRefresh(this.device)
 }
@@ -725,19 +1340,6 @@ List<String> getDoorLockAcceptedCommandList() {
 }
 
 /**
- * Get GeneratedCommandList for Door Lock cluster from fingerprint data
- * @return List of command IDs in hex (e.g., ['04', '05', ...])
- */
-List<String> getDoorLockGeneratedCommandList() {
-    Map fingerprint = getFingerprintData()
-    if (!fingerprint) {
-        logDebug "getDoorLockGeneratedCommandList: fingerprint data not available"
-        return []
-    }
-    return fingerprint.get('0101_FFF8') ?: []
-}
-
-/**
  * Check if a specific Door Lock command is supported
  * @param commandHex The command ID in hex (e.g., '00', '01', etc.)
  * @return true if command is in the AcceptedCommandList
@@ -758,9 +1360,6 @@ String processEventMaskAttribute(String attrId, String attrName, Map descMap, Cl
     Integer mask = safeParseHex(maskValue)
     String decoded = decoder(mask)
     
-    device.updateDataValue(attrName, "0x${rawValue}")
-    device.updateDataValue("${attrName}_Decoded", decoded)
-    
     if (rawValue?.length() > 4) { 
         logWarn "${attrName}: value truncated from 0x${rawValue}" 
     }
@@ -771,11 +1370,10 @@ String processEventMaskAttribute(String attrId, String attrName, Map descMap, Cl
     return "${prefix}${attrName}: 0x${maskValue} - Enabled: ${decoded}"
 }
 
-// Helper function to process numeric attributes (reduces code duplication)
+// Helper function to process numeric attributes in handleUnprocessedMessageInChildDriver method
 // Returns the message to be logged (caller handles logging)
 String processNumericAttribute(String attrName, Map descMap) {
-    Integer value = Integer.parseInt(descMap.value, 16)
-    device.updateDataValue(attrName, value.toString())
+    Integer value = safeHexToInt(descMap.value)
     
     // Build and return message (prefix will be added by caller)
     boolean isInfoMode = state.states?.isInfo == true
@@ -783,268 +1381,7 @@ String processNumericAttribute(String attrName, Map descMap) {
     return "${prefix}${attrName}: ${value}"
 }
 
-// Custom parsing for description strings with array values
-// NOTE: This workaround may not be needed once complex structure parsing is fixed generally
-Map patchParseDescriptionMap(String inputString) {
-    Map<String, Object> resultMap = [:]
-    
-    // Remove outer brackets only
-    String cleaned = inputString.replaceAll('^\\[', '').replaceAll('\\]$', '')
-    
-    // Split by ", " but preserve array values
-    List<String> parts = []
-    int bracketDepth = 0
-    StringBuilder current = new StringBuilder()
-    
-    for (int i = 0; i < cleaned.length(); i++) {
-        char c = cleaned.charAt(i)
-        if (c == '[') {
-            bracketDepth++
-            current.append(c)
-        } else if (c == ']') {
-            bracketDepth--
-            current.append(c)
-        } else if (c == ',' && bracketDepth == 0 && i + 1 < cleaned.length() && cleaned.charAt(i + 1) == ' ') {
-            parts.add(current.toString())
-            current = new StringBuilder()
-            i++ // skip the space after comma
-        } else {
-            current.append(c)
-        }
-    }
-    if (current.length() > 0) {
-        parts.add(current.toString())
-    }
-    
-    // Now parse each key:value pair
-    parts.each { pair ->
-        String[] kvParts = pair.split(':', 2)
-        if (kvParts.size() == 2) {
-            String key = kvParts[0].trim()
-            String value = kvParts[1].trim()
-            // Check if value is an array
-            if (value.startsWith('[') && value.endsWith(']')) {
-                // Parse array value
-                String arrayContent = value.substring(1, value.length() - 1)
-                resultMap[key] = arrayContent.split(',\\s*').collect { it.trim() }
-            } else {
-                resultMap[key] = value
-            }
-        }
-    }
-    
-    return resultMap
-}
 
-
-void processUnprocessed(Map description) {
-    //logDebug "processing unprocessed: ${description}"
-
-    String inputString = description.value
-    logTrace "inputString: ${inputString}"
-    
-    // Parse the input string to handle array values like value:[09, 1800]
-    Map descMap = patchParseDescriptionMap(inputString)
-    logDebug "descMap: ${descMap}"
-    
-    //
-    if (descMap.cluster != '0101') { logWarn "processUnprocessed: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    
-    // Check if this is an event (has evtId) or an attribute (has attrId)
-    if (descMap.evtId != null) {
-        processDoorLockEvent(description)
-        return
-    }
-    
-    String eventValue = descMap.value
-    String descriptionText = "${device.displayName} ${descMap.cluster}:${descMap.attrId} value:${eventValue}"
-    
-    // Declare variables for conditional logging
-    boolean isInfoMode = state.states?.isInfo == true
-    String prefix = isInfoMode ? "[${descMap.attrId}] " : ""
-    String message = null
-    boolean useDebugLog = false  // Flag to use logDebug instead of logInfo when isInfoMode is false
-    
-    switch (descMap.attrId) {
-        case '0000': // LockState
-            // LockState is typically handled by parent driver
-            // But log it here for debugging if it arrives
-            String lockStateText = DoorLockClusterLockState[Integer.parseInt(descMap.value, 16)] ?: "Unknown (${descMap.value})"
-            message = "${prefix}LockState: ${lockStateText} (raw:${descMap.value})"
-            useDebugLog = true
-            break
-        case '0001': // LockType
-            eventValue= DooorLockClusterLockType[Integer.parseInt(descMap.value, 16)]
-            descriptionText = "${device.displayName} lockType: ${eventValue} (raw:${descMap.value})"
-            sendEvent(name: 'lockType', value: eventValue, descriptionText: descriptionText)
-            message = "${prefix}lockType: ${eventValue} (raw:${descMap.value})"
-            useDebugLog = true
-            break
-        case '0002': // ActuatorEnabled
-            eventValue = descMap.value == '01' ? 'enabled' : 'disabled'
-            descriptionText = "${device.displayName} ActuatorEnabled: ${eventValue} (raw:${descMap.value})"
-            sendEvent(name: 'actuatorEnabled', value: eventValue, descriptionText: descriptionText)
-            message = "${prefix}ActuatorEnabled: ${eventValue} (raw:${descMap.value})"
-            useDebugLog = true
-            break
-        case '0003': // DoorState
-            Integer doorStateValue = Integer.parseInt(descMap.value, 16)
-            eventValue = DoorLockClusterDoorState[doorStateValue] ?: "Unknown/OutOfSpec"
-            if (doorStateValue > 0x05) {
-                message = "${prefix}DoorState: ${eventValue} (raw:0x${descMap.value} - value out of spec 0x00-0x05)"
-            } else {
-                descriptionText = "${device.displayName} DoorState: ${eventValue} (raw:${descMap.value})"
-                //sendEvent(name: 'doorState', value: eventValue, descriptionText: descriptionText)
-                message = "${prefix}DoorState: ${eventValue} (raw:${descMap.value})"
-            }
-            useDebugLog = true
-            break
-        case '0011': // NumberOfTotalUsersSupported
-            message = processNumericAttribute('NumberOfTotalUsersSupported', descMap)
-            break
-        case '0012': // NumberOfPINUsersSupported
-            message = processNumericAttribute('NumberOfPINUsersSupported', descMap)
-            break
-        case '0013': // NumberOfRFIDUsersSupported
-            message = processNumericAttribute('NumberOfRFIDUsersSupported', descMap)
-            break
-        case '0014': // NumberOfWeekDaySchedulesSupportedPerUser
-            message = processNumericAttribute('NumberOfWeekDaySchedulesSupportedPerUser', descMap)
-            break
-        case '0015': // NumberOfYearDaySchedulesSupportedPerUser
-            message = processNumericAttribute('NumberOfYearDaySchedulesSupportedPerUser', descMap)
-            break
-        case '0017': // MaxPINCodeLength
-            Integer maxPinLength = Integer.parseInt(descMap.value, 16)
-            descriptionText = "${device.displayName} maximum PIN code length is ${maxPinLength}"
-            sendEvent(name: 'codeLength', value: maxPinLength, type: 'physical', descriptionText: descriptionText)
-            message = "${prefix}MaxPINCodeLength: ${maxPinLength}"
-            break
-        case '0018': // MinPINCodeLength
-            Integer minPinLength = Integer.parseInt(descMap.value, 16)
-            device.updateDataValue('MinPINCodeLength', minPinLength.toString())
-            message = "${prefix}MinPINCodeLength: ${minPinLength}"
-            break
-        case '001B': // CredentialRulesSupport
-            Integer credRules = Integer.parseInt(descMap.value, 16)
-            String credRulesText = decodeCredentialRules(credRules)
-            device.updateDataValue('CredentialRulesSupport', credRulesText)
-            device.updateDataValue('CredentialRulesSupportRaw', "0x${descMap.value}")
-            message = "${prefix}CredentialRulesSupport: ${credRulesText} (0x${descMap.value})"
-            break
-        case '001C': // NumberOfCredentialsSupportedPerUser
-            message = processNumericAttribute('NumberOfCredentialsSupportedPerUser', descMap)
-            break
-        case '0025' : // OperatingMode
-            // OperatingMode: 00 (raw:00)
-            eventValue = DoorLockClusterOperatingModeEnum[Integer.parseInt(descMap.value, 16)]
-            descriptionText = "${device.displayName} OperatingMode: ${eventValue} (raw:${descMap.value})"
-            sendEvent(name: 'operatingMode', value: eventValue, descriptionText: descriptionText)
-            message = "${prefix}OperatingMode: ${eventValue} (raw:${descMap.value})"
-            useDebugLog = true
-            break
-        case '0026' : // SupportedOperatingModes
-            // SupportedOperatingModes: FFF6 (raw:FFF6)
-            Integer intValue = Integer.parseInt(descMap.value, 16)
-            List<String> supportedModes = []
-            // Iterate through each bit position and check if the corresponding bit in eventValue is set to 0
-            DoorLockClusterSupportedOperatingModes.each { bitPosition, modeName ->
-                if ((intValue & (1 << bitPosition)) == 0) {
-                    supportedModes.add(modeName)
-                }
-            }
-            String supportedModesString = supportedModes.join(', ')
-            descriptionText = "${device.displayName} SupportedOperatingModes: ${supportedModesString} (raw:${descMap.value})"
-            sendEvent(name: 'supportedOperatingModes', value: supportedModesString, descriptionText: descriptionText)
-            message = "${prefix}SupportedOperatingModes: ${supportedModesString} (raw:${descMap.value})"
-            useDebugLog = true
-            break
-        case '0040': // AlarmMask
-            message = processEventMaskAttribute('0040', 'AlarmMask', descMap, this.&decodeAlarmMask)
-            useDebugLog = true
-            break
-        case '0041': // KeypadOperationEventMask
-            message = processEventMaskAttribute('0041', 'KeypadOperationEventMask', descMap, this.&decodeKeypadOperationEventMask)
-            useDebugLog = true
-            break
-        case '0042': // RemoteOperationEventMask
-            message = processEventMaskAttribute('0042', 'RemoteOperationEventMask', descMap, this.&decodeRemoteOperationEventMask)
-            useDebugLog = true
-            break
-        case '0043': // ManualOperationEventMask
-            message = processEventMaskAttribute('0043', 'ManualOperationEventMask', descMap, this.&decodeManualOperationEventMask)
-            useDebugLog = true
-            break
-        case '0044': // RFIDOperationEventMask
-            message = processEventMaskAttribute('0044', 'RFIDOperationEventMask', descMap, this.&decodeRFIDOperationEventMask)
-            useDebugLog = true
-            break
-        case '0045': // KeypadProgrammingEventMask
-            message = processEventMaskAttribute('0045', 'KeypadProgrammingEventMask', descMap, this.&decodeKeypadProgrammingEventMask)
-            // NOTE: Nuki disables PINCleared (0x08) and PINChanged (0x10) events
-            // This means PIN deletion/modification events won't be received automatically
-            useDebugLog = true
-            break
-        case '0080': // Nuki non-standard attribute (spec=0x40 AlarmMask)
-        case '0081': // Nuki non-standard attribute (spec=0x41 KeypadOperationEventMask)
-        case '0082': // Nuki non-standard attribute (spec=0x42 RemoteOperationEventMask)
-        case '0083': // Nuki non-standard attribute (spec=0x43 ManualOperationEventMask)
-        case '0087': // Nuki non-standard attribute (spec=0x44 RFIDOperationEventMask)
-        case '0088': // Nuki non-standard attribute (spec=0x45 KeypadProgrammingEventMask)
-            message = "${prefix} UNKNOWN Nuki non-standard attribute 0x${descMap.attrId}: ${descMap.value}"
-            break
-        case 'FFFC': // FeatureMap
-            Integer featureMap = Integer.parseInt(descMap.value, 16)
-            String featuresText = decodeFeatureMap(featureMap)
-            device.updateDataValue('FeatureMapDecoded', featuresText)
-            // FeatureMapRaw is stored in fingerprintData as '0101_FFFC'
-            message = "${prefix}FeatureMap: ${featuresText} (0x${descMap.value})"
-            break
-        case 'FFFB': // AttributeList
-            // AttributeList is stored in fingerprintData, no need to store separately
-            message = "${prefix}AttributeList: ${descMap.value}"
-            useDebugLog = true
-            // device.updateDataValue('AttributeList', ...) - removed, now in fingerprintData
-            break
-        case 'FFFD': // ClusterRevision
-            Integer revision = Integer.parseInt(descMap.value, 16)
-            device.updateDataValue('ClusterRevision', revision.toString())
-            message = "${prefix}ClusterRevision: ${revision}"
-            break
-        case 'FFF8': // GeneratedCommandList (events supported) - stored in fingerprintData only
-            message = "${prefix}GeneratedCommandList: ${descMap.value}"
-            useDebugLog = true
-            // Data is in fingerprintData['0101_FFF8'], no duplicate storage needed
-            break
-        case 'FFF9': // AcceptedCommandList - stored in fingerprintData only
-            message = "${prefix}AcceptedCommandList: ${descMap.value}"
-            useDebugLog = true
-            // Data is in fingerprintData['0101_FFF9'], no duplicate storage needed
-            break
-        default:
-            // Check for command responses
-            if (descMap.cmdId == '25' || descMap.value?.contains('credentialExists')) {
-                processGetCredentialStatusResponse(descMap)
-            } else if (descMap.cmdId == '28' || descMap.value?.contains('userName')) {
-                processGetUserResponse(descMap)
-            } else {
-                logWarn "processUnprocessed: unexpected attrId:${descMap.attrId}"
-            }
-    }
-    
-    // Conditional logging after the switch
-    if (message != null) {
-        if (isInfoMode) {
-            logInfo message
-        } else {
-            if (useDebugLog) {
-                logDebug message
-            } else {
-                logInfo message
-            }
-        }
-    }
-}
 
 void processGetCredentialStatusResponse(Map descMap) {
     logDebug "processGetCredentialStatusResponse: descMap=${descMap}"
@@ -1068,174 +1405,174 @@ void processGetUserResponse(Map descMap) {
     // Expected structure: {userIndex: uint16, userName: string, userStatus: enum8, userType: enum8, ...}
 }
 
-void processDoorLockEvent(Map description) {
-    // Parse the event data from the description value
-    String inputString = description.value
-    
-    // Extract evtId directly using regex
-    def evtIdMatch = inputString =~ /evtId:(\w+)/
-    if (!evtIdMatch) {
-        logWarn "processDoorLockEvent: could not find evtId in ${inputString}"
-        return
-    }
-    String evtId = evtIdMatch[0][1]
+// 5.2.11. Events 
+void processDoorLockEvent(Map eventMap) {
+    def evtId = safeToInt(eventMap.evtId)
     logDebug "processDoorLockEvent: evtId=${evtId}"
     
     switch (evtId) {
-        case '0000': // DoorLockAlarm (0x00)
-            processDoorLockAlarmEvent(description)
+        case 0x00: // DoorLockAlarm (0x00)
+            processDoorLockAlarmEvent(eventMap)
             break
-        case '0001': // DoorStateChange (0x01)
-            processDoorStateChangeEvent(description)
+        case 0x01: // DoorStateChange (0x01)
+            processDoorStateChangeEvent(eventMap)
             break
-        case '0002': // LockOperation (0x02)
-            processLockOperationEvent(description)
+        case 0x02: // LockOperation (0x02)
+            processLockOperationEvent(eventMap)
             break
-        case '0003': // LockOperationError (0x03)
-            processLockOperationErrorEvent(description)
+        case 0x03: // LockOperationError (0x03)
+            processLockOperationErrorEvent(eventMap)
             break
-        case '0004': // LockUserChange (0x04)
-            processLockUserChangeEvent(description)
+        case 0x04: // LockUserChange (0x04)
+            processLockUserChangeEvent(eventMap)
             break
         default:
             logWarn "processDoorLockEvent: unknown evtId=${evtId}"
     }
 }
 
-void processDoorLockAlarmEvent(Map description) {
+void processDoorLockAlarmEvent(Map eventMap) {
     // Event fields: alarmCode
-    Map values = parseEventValues(description)
-    Integer alarmCode = values[0]?.value ? Integer.parseInt(values[0].value, 16) : null
-    
+    Map values = eventMap.value instanceof Map ? eventMap.value : [:]
+    Integer alarmCode = values[0] != null && values[0] != 'null' ? safeToInt(values[0]) : null
+
     String alarmText = DoorLockClusterAlarmCode[alarmCode] ?: "Unknown (${alarmCode})"
     String descriptionText = "${device.displayName} ALARM: ${alarmText}"
-    
+
     logWarn "${descriptionText}"
     sendEvent(name: 'lockAlarm', value: alarmText, descriptionText: descriptionText, isStateChange: true)
 }
 
-void processDoorStateChangeEvent(Map description) {
+void processDoorStateChangeEvent(Map eventMap) {
     // Event fields: doorState
-    Map values = parseEventValues(description)
-    Integer doorState = values[0]?.value ? Integer.parseInt(values[0].value, 16) : null
-    
+    Map values = eventMap.value instanceof Map ? eventMap.value : [:]
+    Integer doorState = values[0] != null && values[0] != 'null' ? safeToInt(values[0]) : null
+
     String doorStateText = DoorLockClusterDoorState[doorState] ?: "Unknown (${doorState})"
     String descriptionText = "${device.displayName} door is ${doorStateText}"
-    
+
     logInfo "${descriptionText}"
     sendEvent(name: 'doorState', value: doorStateText, descriptionText: descriptionText)
 }
 
-void processLockOperationEvent(Map description) {
+// 5.2.11.3. LockOperation Event #2
+// The door lock server sends out a LockUserChange event when a lock user, schedule, or credential change has occurred.
+void processLockOperationEvent(Map eventMap) {
     // Event fields: lockOperationType, operationSource, userIndex, fabricIndex, sourceNode, credentials
-    Map values = parseEventValues(description)
-    
-    Integer lockOpType = values[0]?.value ? Integer.parseInt(values[0].value, 16) : null
-    Integer opSource = values[1]?.value ? Integer.parseInt(values[1].value, 16) : null
-    Integer userIndex = values[2]?.value != 'null' ? Integer.parseInt(values[2].value, 16) : null
-    
+    // eventMap = [callbackType:Event, endpointInt:1, clusterInt:257, evtId:2, timestamp:37455661, priority:2, 
+    //           data:[2:STRUCT:[
+    //              3:NULL:null,        // FabricIndex
+    //              0:UINT:1,           // LockOperationType 
+    //              1:UINT:7,           // OperationSource
+    //              2:NULL:null,        // UserIndex
+    //              5:NULL:null,        // Credentials
+    //              4:NULL:null]],      // SourceNode
+    //           value:[3:null, 0:1, 1:7, 2:null, 5:null, 4:null], 
+    //           cluster:0101, endpoint:01]
+    Map values = eventMap.value instanceof Map ? eventMap.value : [:]
+    logDebug "processLockOperationEvent: parsed values=${values}"
+
+    Integer lockOpType = values[0] != null && values[0] != 'null' ? safeToInt(values[0]) : null
+    Integer opSource = values[1] != null && values[1] != 'null' ? safeToInt(values[1]) : null
+    Integer userIndex = values[2] != null && values[2] != 'null' ? safeToInt(values[2]) : null
+    logDebug "processLockOperationEvent: lockOpType=${lockOpType}, opSource=${opSource}, userIndex=${userIndex}"
+
     String operation = DoorLockClusterLockOperationType[lockOpType] ?: "Unknown (${lockOpType})"
     String source = DoorLockClusterOperationSource[opSource] ?: "Unknown (${opSource})"
-    
-    String descriptionText = "${operation} by ${source}"
-    if (userIndex != null) {
-        descriptionText += " (User ${userIndex})"
-    }
-    
-    logDebug "${descriptionText}"
+
+    String descriptionText = "${operation} by ${source}" + (userIndex != null ? " (User ${userIndex})" : "")
+
+    // Optimized lock state mapping
+    Map lockStateMap = [0: 'locked', 1: 'unlocked']
+    String lockState = lockStateMap.get(lockOpType, 'unknown')
+    String lockDesc = "${device.displayName} is ${lockState} (${descriptionText})"
+    sendEvent(name: 'lock', value: lockState, descriptionText: lockDesc, isStateChange: true)
+
+    logInfo descriptionText
     sendEvent(name: 'lastLockOperation', value: operation, descriptionText: descriptionText, isStateChange: true)
     sendEvent(name: 'lastOperationSource', value: source, descriptionText: descriptionText, isStateChange: true)
 }
 
-void processLockOperationErrorEvent(Map description) {
+// LockOperationError (0x03)
+void processLockOperationErrorEvent(Map eventMap) {
     // Event fields: lockOperationType, operationSource, operationError, userIndex, fabricIndex, sourceNode, credentials
-    logDebug "processLockOperationErrorEvent: description=${description}"
-    Map values = parseEventValues(description)
+    logDebug "processLockOperationErrorEvent: description=${eventMap}"
+    Map values = eventMap.value instanceof Map ? eventMap.value : [:]
     logDebug "processLockOperationErrorEvent: parsed values=${values}"
-    
-    Integer lockOpType = values[0]?.value ? Integer.parseInt(values[0].value, 16) : null
-    Integer opSource = values[1]?.value ? Integer.parseInt(values[1].value, 16) : null
-    Integer opError = values[2]?.value ? Integer.parseInt(values[2].value, 16) : null
-    Integer userIndex = values[3]?.value != 'null' ? Integer.parseInt(values[3].value, 16) : null
-    
+
+    Integer lockOpType = values[0] != null && values[0] != 'null' ? safeToInt(values[0]) : null
+    Integer opSource = values[1] != null && values[1] != 'null' ? safeToInt(values[1]) : null
+    Integer opError = values[2] != null && values[2] != 'null' ? safeToInt(values[2]) : null
+    Integer userIndex = values[3] != null && values[3] != 'null' ? safeToInt(values[3]) : null
+
     String operation = DoorLockClusterLockOperationType[lockOpType] ?: "Unknown (${lockOpType})"
     String source = DoorLockClusterOperationSource[opSource] ?: "Unknown (${opSource})"
     String error = DoorLockClusterOperationError[opError] ?: "Unknown (${opError})"
-    
+
     String descriptionText = "${device.displayName} ${operation} FAILED: ${error} (source: ${source}"
     if (userIndex != null) {
         descriptionText += ", User ${userIndex}"
     }
     descriptionText += ")"
-    
+
     logWarn "*** ${descriptionText} ***"
     sendEvent(name: 'lastLockOperationError', value: error, descriptionText: descriptionText, isStateChange: true)
 }
 
+// LockUserChange (0x04) event
 void processLockUserChangeEvent(Map description) {
     // Event fields: lockDataType, dataOperationType, operationSource, userIndex, fabricIndex, sourceNode, dataIndex
-    Map values = parseEventValues(description)
-    
-    Integer lockDataType = values[0]?.value ? Integer.parseInt(values[0].value, 16) : null
-    Integer dataOpType = values[1]?.value ? Integer.parseInt(values[1].value, 16) : null
-    Integer opSource = values[2]?.value ? Integer.parseInt(values[2].value, 16) : null
-    Integer userIndex = values[3]?.value != 'null' ? Integer.parseInt(values[3].value, 16) : null
-    
+    // descMap = [callbackType:Event, endpointInt:1, clusterInt:257, evtId:4, timestamp:946743149680, priority:1, 
+    // data:[4:STRUCT:[
+    //       0:UINT:6,          // LockDataType -> LockDataTypeEnum
+    //       1:UINT:0,          // DataOperationType -> DataOperationTypeEnum
+    //       2:UINT:7,          // OperationSource -> OperationSourceEnum (Unspecified, Keypad, Remote)
+    //       3:UINT:7,          // UserIndex uint16
+    //       4:UINT:1,          // FabricIndex fabric-idx
+    //       5:UINT:791750490,  // SourceNode node-id
+    //       6:UINT:6           // DataIndex uint16
+    // ]]
+    // value:[6:6, 3:7, 0:6, 1:0, 4:1, 5:791750490, 2:7], 
+    // cluster:0101, endpoint:01]
+    //
+    Map values = description.value instanceof Map ? description.value : [:]
+
+    Integer lockDataType = values[0] != null && values[0] != 'null' ? safeToInt(values[0]) : null
+    Integer dataOpType = values[1] != null && values[1] != 'null' ? safeToInt(values[1]) : null
+    Integer opSource = values[2] != null && values[2] != 'null' ? safeToInt(values[2]) : null
+    Integer userIndex = values[3] != null && values[3] != 'null' ? safeToInt(values[3]) : null
+    Integer fabricIndex = values[4] != null && values[4] != 'null' ? safeToInt(values[4]) : null
+    Integer sourceNode = values[5] != null && values[5] != 'null' ? safeToInt(values[5]) : null
+    Integer dataIndex = values[6] != null && values[6] != 'null' ? safeToInt(values[6]) : null
+
+
     String dataType = DoorLockClusterLockDataType[lockDataType] ?: "Unknown (${lockDataType})"
     String operation = DoorLockClusterDataOperationType[dataOpType] ?: "Unknown (${dataOpType})"
     String source = DoorLockClusterOperationSource[opSource] ?: "Unknown (${opSource})"
-    
+    String fabricText = fabricIndex != null ? "Fabric ${fabricIndex}" : "Unknown Fabric"
+    String sourceNodeText = sourceNode != null ? "Node ${sourceNode}" : "Unknown Node"
+    String dataIndexText = dataIndex != null ? "Data Index ${dataIndex}" : "Unknown Data Index"
+
     String descriptionText = "${device.displayName} ${dataType} ${operation}"
     if (userIndex != null) {
         descriptionText += " for User ${userIndex}"
     }
+    if (dataIndex != null) {
+        descriptionText += ", (${dataIndexText})"
+    }
+    if (fabricIndex != null) {
+        descriptionText += ", (${fabricText})"
+    }
+    if (sourceNode != null) {
+        descriptionText += ", (${sourceNodeText})"
+    }
     descriptionText += " (source: ${source})"
-    
+
     logInfo "${descriptionText}"
     sendEvent(name: 'lastUserChange', value: "${operation} ${dataType}", descriptionText: descriptionText, isStateChange: true)
 }
 
-Map parseEventValues(Map description) {
-    // Extract the values from the description.value string
-    // Format: values:[0:[type:04, isContextSpecific:true, value:00], 1:[type:04, value:07], ...]
-    String valueString = description.value
-    
-    // Find the start of the values section
-    int valuesStart = valueString.indexOf('values:[')
-    if (valuesStart == -1) {
-        logWarn "parseEventValues: could not find 'values:[' in ${valueString}"
-        return [:]
-    }
-    
-    // Extract everything after 'values:[' - we'll parse the indexed values directly
-    String valuesSection = valueString.substring(valuesStart + 7) // Skip 'values:'
-    logDebug "parseEventValues: parsing from: ${valuesSection.take(200)}..."
-    
-    // Parse each indexed value: 0:[...], 1:[...], etc.
-    Map values = [:]
-    try {
-        // Match patterns like: 0:[type:04, isContextSpecific:true, value:00]
-        // Using non-greedy match for the content between brackets
-        def indexMatch = valuesSection =~ /(\d+):\[([^\]]+)\]/
-        indexMatch.each { match ->
-            Integer index = match[1] as Integer
-            String content = match[2]
-            
-            // Extract the value field from content
-            def valueMatch = content =~ /value:([\w]+|null)/
-            if (valueMatch) {
-                String value = valueMatch[0][1]
-                values[index] = [value: value]
-            }
-        }
-    } catch (Exception e) {
-        logWarn "parseEventValues error: ${e.message}"
-    }
-    
-    logDebug "parseEventValues result: ${values}"
-    return values
-}
-
+// Command to get all supported Door Lock attributes (for info/debugging)
 void getInfo() {
     // Check if Door Lock cluster is supported
     if (!isClusterSupported('0101')) {
@@ -1333,6 +1670,53 @@ void clearInfoMode() {
     0xFFFC  : 'FeatureMap',                                         // FeatureMap, R V, M
     0xFFFD  : 'ClusterRevision'                                     // uint16, R V, M
 ]
+
+// Aqara U200 : [FFF9] AcceptedCommandList: [0000, 0001, 0003, 001A, 001B, 001D, 0022, 0024, 0026]
+// Aqara U200 : [FFF8] GeneratedCommandList: [001C, 0023, 0025]
+
+@Field static final Map<Integer, String> DoorLockClusterCommands = [
+    // Command ID : Name (per Matter 5.2.10)
+    0x00    : 'LockDoor',                    // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:M
+    0x01    : 'UnlockDoor',                  // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:M
+    0x02    : 'Toggle',                      // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:X
+    0x03    : 'UnlockWithTimeout',           // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:O
+    0x04    : 'GetLogRecord',                // Direction:client ⇒ server; Response:GetLogRecordResponse; Access:M; Conformance:LOG
+    0x05    : 'SetPINCode',                  // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & PIN
+    0x06    : 'GetPINCode',                  // Direction:client ⇒ server; Response:GetPINCodeResponse; Access:A; Conformance:!USR & PIN
+    0x07    : 'ClearPINCode',                // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & PIN
+    0x08    : 'ClearAllPINCodes',            // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & PIN
+    0x09    : 'SetUserStatus',               // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x0A    : 'GetUserStatus',               // Direction:client ⇒ server; Response:GetUserStatusResponse; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x0B    : 'SetWeekDaySchedule',          // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:WDSCH
+    0x0C    : 'GetWeekDaySchedule',          // Direction:client ⇒ server; Response:GetWeekDayScheduleResponse; Access:A; Conformance:WDSCH
+    0x0D    : 'ClearWeekDaySchedule',        // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:WDSCH
+    0x0E    : 'SetYearDaySchedule',          // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:YDSCH
+    0x0F    : 'GetYearDaySchedule',          // Direction:client ⇒ server; Response:GetYearDayScheduleResponse; Access:A; Conformance:YDSCH
+    0x10    : 'ClearYearDaySchedule',        // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:YDSCH
+    0x11    : 'SetHolidaySchedule',          // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:HDSCH
+    0x12    : 'GetHolidaySchedule',          // Direction:client ⇒ server; Response:GetHolidayScheduleResponse; Access:A; Conformance:HDSCH
+    0x13    : 'ClearHolidaySchedule',        // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:HDSCH
+    0x14    : 'SetUserType',                 // Direction:client ⇒ server; Response:Yes; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x15    : 'GetUserType',                 // Direction:client ⇒ server; Response:GetUserTypeResponse; Access:A; Conformance:!USR & (PIN | RID | FGP)
+    0x16    : 'SetRFIDCode',                 // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & RID
+    0x17    : 'GetRFIDCode',                 // Direction:client ⇒ server; Response:GetRFIDCodeResponse; Access:A; Conformance:!USR & RID
+    0x18    : 'ClearRFIDCode',               // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & RID
+    0x19    : 'ClearAllRFIDCodes',           // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:!USR & RID
+    0x1A    : 'SetUser',                     // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:USR
+    0x1B    : 'GetUser',                     // Direction:client ⇒ server; Response:GetUserResponse; Access:A; Conformance:USR
+    0x1C    : 'GetUserResponse',             // Direction:client ⇐ server; Response:No; Access:N; Conformance:USR
+    0x1D    : 'ClearUser',                   // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:USR
+    0x20    : 'OperatingEventNotification',  // Direction:client ⇐ server; Response:No; Access:N; Conformance:[NOT]
+    0x21    : 'ProgrammingEventNotification',// Direction:client ⇐ server; Response:No; Access:N; Conformance:[NOT]
+    0x22    : 'SetCredential',               // Direction:client ⇒ server; Response:SetCredentialResponse; Access:A T; Conformance:USR
+    0x23    : 'SetCredentialResponse',       // Direction:client ⇐ server; Response:No; Access:N; Conformance:USR
+    0x24    : 'GetCredentialStatus',         // Direction:client ⇒ server; Response:GetCredentialStatusResponse; Access:A; Conformance:USR
+    0x25    : 'GetCredentialStatusResponse', // Direction:client ⇐ server; Response:No; Access:N; Conformance:USR
+    0x26    : 'ClearCredential',             // Direction:client ⇒ server; Response:Yes; Access:A T; Conformance:USR
+    0x27    : 'UnboltDoor'                   // Direction:client ⇒ server; Response:Yes; Access:O T; Conformance:UBOLT
+]
+
+
 
 // 5.2.6.2. LockState Attribute (0x0000)
 @Field static final Map<Integer, String> DoorLockClusterLockState = [
@@ -1453,15 +1837,6 @@ Boolean Value Summary
     0x02    : 'Modify'
 ]
 
-// Helper method to safely parse hex string to Integer
-Integer safeParseHex(String hexValue) {
-    try {
-        return Integer.parseInt(hexValue, 16)
-    } catch (NumberFormatException e) {
-        logWarn "safeParseHex: failed to parse '${hexValue}', returning 0"
-        return 0
-    }
-}
 
 // Helper method to decode CredentialRulesSupport bitmap
 String decodeCredentialRules(Integer rules) {
@@ -1472,36 +1847,26 @@ String decodeCredentialRules(Integer rules) {
     return supported.isEmpty() ? 'None' : supported.join(', ')
 }
 
-// Helper method to decode FeatureMap bitmap
-// Bit 0 (0x0001): PIN Credential
-// Bit 1 (0x0002): RFID Credential
-// Bit 2 (0x0004): Finger Credential (Fingerprint/vein)
-// Bit 3 (0x0008): Logging
-// Bit 4 (0x0010): Week Day Access Schedules
-// Bit 5 (0x0020): Door Position Sensor
-// Bit 6 (0x0040): Face Credential
-// Bit 7 (0x0080): Credential Over The Air Access (COTA)
-// Bit 8 (0x0100): User Management
-// Bit 9 (0x0200): Notification
-// Bit 10 (0x0400): Year Day Access Schedules
-// Bit 11 (0x0800): Holiday Schedules
-// Bit 12 (0x1000): Unbolt
+
+// 5.2.4. Features This cluster SHALL support the FeatureMap bitmap attribute as defined below.
 String decodeFeatureMap(Integer featureMap) {
     if (featureMap == 0) { return 'None (Mandatory features only)' }
     List<String> features = []
-    if (featureMap & 0x0001) { features.add('PIN') }
-    if (featureMap & 0x0002) { features.add('RFID') }
-    if (featureMap & 0x0004) { features.add('Fingerprint') }
-    if (featureMap & 0x0008) { features.add('Logging') }
-    if (featureMap & 0x0010) { features.add('WeekDaySchedules') }
-    if (featureMap & 0x0020) { features.add('DoorPositionSensor') }
-    if (featureMap & 0x0040) { features.add('FaceCredential') }
-    if (featureMap & 0x0080) { features.add('COTA') }
-    if (featureMap & 0x0100) { features.add('UserManagement') }
-    if (featureMap & 0x0200) { features.add('Notification') }
-    if (featureMap & 0x0400) { features.add('YearDaySchedules') }
-    if (featureMap & 0x0800) { features.add('HolidaySchedules') }
-    if (featureMap & 0x1000) { features.add('Unbolt') }
+    
+    if (featureMap & 0x0001) { features.add('PIN') }                     // Bit 0   PIN - Lock supports PIN credentials (via keypad, or over-the-air)
+    if (featureMap & 0x0002) { features.add('RFID') }                    // Bit 1   RID - Lock supports RFID credentials
+    if (featureMap & 0x0004) { features.add('Fingerprint') }             // Bit 2   FGP - Lock supports finger related credentials (fingerprint, finger vein)
+    if (featureMap & 0x0008) { features.add('Logging') }                 // Bit 3   LOG
+    if (featureMap & 0x0010) { features.add('WeekDaySchedules') }        // Bit 4   WDSCH
+    if (featureMap & 0x0020) { features.add('DoorPositionSensor') }      // Bit 5   DPS
+    if (featureMap & 0x0040) { features.add('FaceCredential') }          // Bit 6   FACE
+    if (featureMap & 0x0080) { features.add('COTA') }                    // Bit 7   COTA - CredentialOverTheAirAccess - PIN codes overtheair supported for lock/unlock operations
+    if (featureMap & 0x0100) { features.add('UserManagement') }          // Bit 8   USR - [ PIN | RID | FGP |FACE ] - Lock supports the user commands and database
+    if (featureMap & 0x0200) { features.add('Notification') }            // Bit 9   NOT
+    if (featureMap & 0x0400) { features.add('YearDaySchedules') }        // Bit 10  YDSCH
+    if (featureMap & 0x0800) { features.add('HolidaySchedules') }        // Bit 11  HDSCH
+    if (featureMap & 0x1000) { features.add('Unbolt') }                  // Bit 12  UBOLT - Unbolting - Lock supports unbolting
+    
     return features.join(', ')
 }
 
@@ -1637,27 +2002,51 @@ String decodeAlarmMask(Integer mask) {
     return enabled.isEmpty() ? 'None' : enabled.join(', ')
 }
 
-// ============ Lock Command Helper Methods ============
-
-/**
- * Get the device number (endpoint) from device data
- * @return device number as Integer or null if invalid
- */
-private Integer getDeviceNumber() {
-    String id = device.getDataValue('id')
-    if (!id) {
-        logWarn "Device ID not found in data values"
-        return null
-    }
-    
-    Integer deviceNumber = HexUtils.hexStringToInt(id)
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) {
-        logWarn "Invalid device number: ${deviceNumber} (from id: ${id})"
-        return null
-    }
-    
-    return deviceNumber
+// RemoteProgrammingEventMask (0x0046) decoder - per Matter specification
+// Bit 0 (0x01): Unknown
+// Bit 1 (0x02): ProgrammingPINChanged
+// Bit 2 (0x04): PINAdded
+// Bit 3 (0x08): PINCleared
+// Bit 4 (0x10): PINChanged
+// Bit 5 (0x20): PINCodeDuplicate
+// Bit 6 (0x40): Reserved
+// Bit 7 (0x80): Reserved
+String decodeRemoteProgrammingEventMask(Integer mask) {
+    List<String> enabled = []
+    if (mask & 0x01) { enabled.add('Unknown') }
+    if (mask & 0x02) { enabled.add('ProgrammingPINChanged') }
+    if (mask & 0x04) { enabled.add('PINAdded') }
+    if (mask & 0x08) { enabled.add('PINCleared') }
+    if (mask & 0x10) { enabled.add('PINChanged') }
+    if (mask & 0x20) { enabled.add('PINCodeDuplicate') }
+    if (mask & 0x40) { enabled.add('Reserved(0x40)') }
+    if (mask & 0x80) { enabled.add('Reserved(0x80)') }
+    return enabled.isEmpty() ? 'None' : enabled.join(', ')
 }
+
+// RFIDProgrammingEventMask (0x0047) decoder - per Matter specification
+// Bit 0 (0x01): Unknown
+// Bit 1 (0x02): RFIDCodeAdded
+// Bit 2 (0x04): RFIDCodeCleared
+// Bit 3 (0x08): RFIDCodeDuplicate
+// Bit 4 (0x10): RFIDCodeInvalid
+// Bit 5 (0x20): RFIDCodeChanged
+// Bit 6 (0x40): Reserved
+// Bit 7 (0x80): Reserved
+String decodeRFIDProgrammingEventMask(Integer mask) {
+    List<String> enabled = []
+    if (mask & 0x01) { enabled.add('Unknown') }
+    if (mask & 0x02) { enabled.add('RFIDCodeAdded') }
+    if (mask & 0x04) { enabled.add('RFIDCodeCleared') }
+    if (mask & 0x08) { enabled.add('RFIDCodeDuplicate') }
+    if (mask & 0x10) { enabled.add('RFIDCodeInvalid') }
+    if (mask & 0x20) { enabled.add('RFIDCodeChanged') }
+    if (mask & 0x40) { enabled.add('Reserved(0x40)') }
+    if (mask & 0x80) { enabled.add('Reserved(0x80)') }
+    return enabled.isEmpty() ? 'None' : enabled.join(', ')
+}
+
+// ============ Lock Command Helper Methods ============
 
 /**
  * Convert ASCII PIN string to hex bytes
@@ -1686,6 +2075,28 @@ String fmtHelpInfo(String str) {
 		"<div style='text-align: center; position: absolute; top: 46px; right: 60px; padding: 0px;'><ul class='nav'><li>${topLink}</ul></li></div>"
 }
 
+
+// Helper method to safely parse hex string to Integer
+Integer safeParseHex(String hexValue) {
+    try {
+        return Integer.parseInt(hexValue, 16)
+    } catch (NumberFormatException e) {
+        logWarn "safeParseHex: failed to parse '${hexValue}', returning 0"
+        return 0
+    }
+}
+
+
+def testInvoke(params) {
+    // 0x01 0x0101 0x0000 0x07D0 {1518}
+    logDebug "testInvoke called with params: ${params}"
+    String cmd = "he invoke ${params}"
+    log.warn "testInvoke: sending command: ${cmd}"
+    parent?.sendToDevice(cmd)    
+
+}
+
 // --------- common matter libraries included below --------
 
+#include kkossev.matterCommonLib
 #include kkossev.matterHealthStatusLib
