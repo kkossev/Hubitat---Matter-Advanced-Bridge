@@ -27,7 +27,7 @@ import groovy.transform.Field
 import groovy.json.JsonSlurper
 
 @Field static final String matterComponentButtonVersion = '1.1.0'
-@Field static final String matterComponentButtonStamp   = '2026/02/21 12:44 PM'
+@Field static final String matterComponentButtonStamp   = '2026/02/21 7:27 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -160,7 +160,7 @@ private void handleSwitchEvent(Map descMap) {
             //
             // Workaround: If featureMap is missing, assume 0x1F (all common features) instead of 0x00
             // This prevents duplicate events on devices that send MultiPressComplete but have missing/incorrect featureMap
-            Integer featureMap = matter.convertHexToInt(device.getDataValue('featureMap') ?: '1F')
+            Integer featureMap = getFeatureMap() ?: 0x1F
             Integer buttonNumber = toButtonNumber(safeToInt(descMap.value[0]), safeToInt(device.currentValue('numberOfButtons')))
             
             // If device supports MultiPress, wait for MultiPressComplete event instead (design choice for better functionality)
@@ -214,6 +214,14 @@ private void handleSwitchEvent(Map descMap) {
             // [callbackType:Event, endpointInt:62, clusterInt:59, evtId:6, timestamp:1771500329745, timestampType:1, priority:1, eventSerial:2228462, 
             // data:[6:STRUCT:[0:UINT:1, 1:UINT:1]], value:[0:1, 1:1], 
             // cluster:003B, endpoint:3E]
+            
+            // Verify device supports MSM before processing MultiPressComplete events
+            Integer featureMapMulti = getFeatureMap()
+            if ((featureMapMulti & 0x10) == 0) { // MSM (MomentarySwitchMultiPress) NOT supported
+                logDebug "multiPressComplete event ignored - device does not declare MSM support in FeatureMap (0x${Integer.toHexString(featureMapMulti)}) but is sending MultiPressComplete events (device firmware bug)"
+                return
+            }
+            
             Integer PreviousPosition = safeToInt(descMap.value[0])
             Integer TotalNumberOfPressesCounted = safeToInt(descMap.value[1])
             logDebug "multiPressComplete event processed, PreviousPosition=${PreviousPosition}, TotalNumberOfPressesCounted=${TotalNumberOfPressesCounted}"
@@ -439,6 +447,19 @@ void getInfo() {
     Integer endpoint = HexUtils.hexStringToInt(endpointHex)
     parent?.readAttribute(endpoint, 0x003B, -1)      // 0x003B Switch cluster - read all attributes
 }
+
+Integer getFeatureMap() {
+    Map fingerprint = getFingerprintData()
+    if (fingerprint == null) {
+        logDebug "getFeatureMap: fingerprint data not available"
+        return 0
+    }
+    //Integer featureMap = matter.convertHexToInt(fingerprint['003B_FFFC'] ?: '00')
+    Integer featureMap = safeToInt(fingerprint['003B_FFFC'] ?: '1F')  // Workaround: If featureMap is missing, assume 0x1F (all common features) instead of 0x00
+    logDebug "getFeatureMap: ${featureMap} raw value=${fingerprint['003B_FFFC']}"
+    return featureMap
+}
+
 
 // Clear info mode flag (called by scheduled job)
 void clearInfoMode() {

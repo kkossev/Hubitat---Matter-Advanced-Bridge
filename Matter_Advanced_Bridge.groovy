@@ -76,7 +76,7 @@
  */
 
 static String version() { '1.8.0' }
-static String timeStamp() { '2026/02/21 12:22 PM' }
+static String timeStamp() { '2026/02/21 7:28 PM' }
 
 
 @Field static final Boolean _DEBUG = false                     // make it FALSE for production!
@@ -85,7 +85,7 @@ static String timeStamp() { '2026/02/21 12:22 PM' }
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
-@Field static final Boolean DO_NOT_TRACE_FFFX = true         // make it  TRUE for production! (don't trace the FFFx global attributes)
+@Field static final Boolean DO_NOT_TRACE_FFFX = false        // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
 @Field static final Integer REFRESH_TIMER = 6000             // refresh time in miliseconds
@@ -900,7 +900,7 @@ void gatherAttributesValuesInfo(final Map descMap) {
         logTrace "gatherAttributesValuesInfo: <b>isInfo:${state.states['isInfo']}</b> state.states['cluster'] = ${state.states['cluster']} "
         if (state.states['cluster'] == descMap.cluster) {
             if (descMap.value != null && descMap.value != '') {
-                tmpStr = "[${descMap.attrId}] ${attrName}"
+                tmpStr = "[${descMap.cluster}_${descMap.attrId}] ${attrName}"
                 if (state.tmp?.contains(tmpStr)) {
                     logDebug "gatherAttributesValuesInfo: tmpStr:${tmpStr} is already in the state.tmp"
                     return
