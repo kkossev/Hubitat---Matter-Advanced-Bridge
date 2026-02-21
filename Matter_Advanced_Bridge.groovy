@@ -54,7 +54,9 @@
  * ver. 1.7.7  2026-02-14 kkossev   bugfix: Power/Energy processing exceptions; 'Matter Custom Component Power Energy' getInfo() method; newParse is true by default;
  * ver. 1.8.0  2026-02-21 kkossev   (dev. branch) - enforcing newParse:true; removing old custom parse code; Button driver improvements; added PressureMeasurement cluster 0x0403 support with 'Generic Component Pressure Sensor'
  *
+ *                                   TODO: featureMap is missing after inital discovery !!! 
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
+ *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
  *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
  *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events ? (may not ne needed anymore after callbackType:SubscribeResult processing is implemented)
  *                                   TODO: _discoverAll to call updated() or to start the periodic jobs
@@ -74,7 +76,7 @@
  */
 
 static String version() { '1.8.0' }
-static String timeStamp() { '2026/02/21 10:08 AM' }
+static String timeStamp() { '2026/02/21 12:22 PM' }
 
 
 @Field static final Boolean _DEBUG = false                     // make it FALSE for production!
@@ -2011,6 +2013,7 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
         // event intended to be sent to the parent device, but the dni is null ..
         if (state['states']['isDiscovery'] != true) { // do not log this event if the discovery is in progress
             logWarn "sendHubitatEvent: <b>cannot send </b> for parsing to the child device: dw:${dw} dni:${dni} name:${name} value:${value} descriptionText:${descriptionText}"
+            if (logEnable) { log.warn "$device.displayName: Child device with dni:${dni} not found! Run discovery to create the child device." }
         }
     }
 }

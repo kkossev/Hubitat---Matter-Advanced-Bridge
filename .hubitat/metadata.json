@@ -4,7 +4,7 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1662
+      "version": 1665
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
@@ -40,7 +40,7 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Switch.groovy",
       "id": 2768,
       "codeType": "driver",
-      "version": 28
+      "version": 29
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Window_Shade.groovy",
@@ -76,13 +76,13 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom_Component_Signal.groovy",
       "codeType": "driver",
       "id": 3947,
-      "version": 18
+      "version": 19
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Button.groovy",
       "codeType": "driver",
       "id": 4764,
-      "version": 70
+      "version": 78
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterHealthStatusLib.groovy",
@@ -95,6 +95,12 @@
       "codeType": "library",
       "id": 200,
       "version": 13
+    },
+    {
+      "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_SwitchBot_Button.groovy",
+      "id": 3431,
+      "codeType": "driver",
+      "version": 8
     }
   ]
 }

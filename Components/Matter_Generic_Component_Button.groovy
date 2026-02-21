@@ -27,7 +27,7 @@ import groovy.transform.Field
 import groovy.json.JsonSlurper
 
 @Field static final String matterComponentButtonVersion = '1.1.0'
-@Field static final String matterComponentButtonStamp   = '2026/02/21 9:30 AM'
+@Field static final String matterComponentButtonStamp   = '2026/02/21 12:44 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -149,29 +149,40 @@ private void handleSwitchEvent(Map descMap) {
             // data: ID:0 name: NewPosition type:uint8 Constraint: 0 to NumberOfPositions-1 Conformance: M
             // This field SHALL indicate the previous value of the CurrentPosition attribute, i.e. just prior to release.
             //
-            // [callbackType:Event, endpointInt:1, clusterInt:59, evtId:3, timestamp:222905792, timestampType:0, priority:1, eventSerial:458839, data:[3:STRUCT:[0:UINT:1]], value:[0:1], cluster:003B, endpoint:01]
-            /*
-            eventData.name = 'shortRelease'
-            eventData.descriptionText = "${device.displayName} shortRelease"
-            //handleShortReleaseEvent(eventData)
-            */
-            Integer featureMap = matter.convertHexToInt(device.getDataValue('featureMap'))
+            // Implementation note: When MSM (MultiPress) is supported, both ShortRelease and MultiPressComplete events are sent.
+            // We prefer MultiPressComplete for generating 'pushed' events because:
+            // 1. It accurately distinguishes single vs double vs triple presses
+            // 2. It enables proper double-tap detection for Hubitat
+            // 3. MultiPressComplete is the definitive end-of-sequence event (count=1 for single press)
+            // ShortRelease provides immediate response but cannot distinguish press counts.
+            //
+            // [callbackType:Event, endpointInt:1, clusterInt:59, evtId:3, timestamp:354372976, timestampType:0, priority:1, eventSerial:458925, data:[3:STRUCT:[0:UINT:1]], value:[0:1], cluster:003B, endpoint:01]
+            //
+            // Workaround: If featureMap is missing, assume 0x1F (all common features) instead of 0x00
+            // This prevents duplicate events on devices that send MultiPressComplete but have missing/incorrect featureMap
+            Integer featureMap = matter.convertHexToInt(device.getDataValue('featureMap') ?: '1F')
             Integer buttonNumber = toButtonNumber(safeToInt(descMap.value[0]), safeToInt(device.currentValue('numberOfButtons')))
-            if ((featureMap & 0x08) != 0) { // MomentarySwitchLongPress (MSL) supported, so shortRelease is only generated for non-long presses
+            
+            // If device supports MultiPress, wait for MultiPressComplete event instead (design choice for better functionality)
+            if ((featureMap & 0x10) != 0) { // MSM (MomentarySwitchMultiPress) supported
+                logDebug "shortRelease event ignored (MSM supported, waiting for MultiPressComplete to determine single vs multi-press)"
+                return
+            }
+            
+            // If device supports LongPress, check if this was a long press (per Matter spec)
+            if ((featureMap & 0x08) != 0) { // MSL (MomentarySwitchLongPress) supported
                 if (state.lastEvent == 'longPress') {
-                    logDebug "ignored shortRelease event (previous longPress and MSL supported)"
+                    logDebug "shortRelease event ignored (previous event was longPress with MSL supported)"
                     return
                 }
-                logDebug "shortRelease event <i>accepted</i> (MSL supported, so this is a non-long press, and the last event != longPress -> we send a pushed event in Hubitat for shortRelease)"
+                logDebug "shortRelease event accepted (MSL supported, non-long press -> generate pushed)"
                 sendButtonEvent('pushed', buttonNumber)
                 return
             }
-            else { // MSL not supported, so all releases generate shortRelease
-                logDebug "shortRelease event processed (MSL not supported, so this could be a long press as well. However, we do not send released events for short presses in Hubitat)"
-                return
-                sendButtonEvent('released', buttonNumber)
-            }
-            //state.lastEvent = 'shortRelease'
+            
+            // Device doesn't support MSM or MSL - generate pushed on ShortRelease
+            logDebug "shortRelease event accepted (no MSM/MSL support -> generate pushed)"
+            sendButtonEvent('pushed', buttonNumber)
             break
         case 0x0004:    // LongRelease Event (Conformance: M)
             // This event SHALL be generated, when the momentary switch has been released (after debouncing) and after having been pressed for a long time, 
@@ -215,7 +226,7 @@ private void handleSwitchEvent(Map descMap) {
                 sendButtonEvent('doubleTapped', toButtonNumber(PreviousPosition, safeToInt(device.currentValue('numberOfButtons'))))
             }
             else {
-                logDebug "Button ${toButtonNumber(PreviousPosition, safeToInt(device.currentValue('numberOfButtons')))} was pressed ${TotalNumberOfPressesCounted} times (multiPressComplete with count=${TotalNumberOfPressesCounted})"
+                logInfo "Button ${toButtonNumber(PreviousPosition, safeToInt(device.currentValue('numberOfButtons')))} was pressed ${TotalNumberOfPressesCounted} times (multiPressComplete with count=${TotalNumberOfPressesCounted})"
             }
             state.lastEvent = 'multiPressComplete'
             break
@@ -361,6 +372,7 @@ private void sendButtonEvent(final String action, final Integer buttonNumber, fi
     else if (eventType == 'physical') { desc += ' [physical]' }
     sendEvent(name: action, value: buttonNumber, descriptionText: desc, isStateChange: true, type: eventType)
     logInfo desc
+    parent?.logInfo "${desc}"
 }
 
 // Called when the device is first created
