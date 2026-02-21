@@ -52,6 +52,7 @@
  * ver. 1.7.5  2026-02-11 kkossev   processing the new callbackType:WriteAttributes and callbackType:SubscribeResult;
  * ver. 1.7.6  2026-02-12 kkossev   bugfix: WindowCovering processing exceptions; 'Matter Generic Component Window Shade' getInfo() method;
  * ver. 1.7.7  2026-02-14 kkossev   bugfix: Power/Energy processing exceptions; 'Matter Custom Component Power Energy' getInfo() method; newParse is true by default;
+ * ver. 1.8.0  2026-02-21 kkossev   (dev. branch) - enforcing newParse:true; removing old custom parse code; Button driver improvements; added PressureMeasurement cluster 0x0403 support with 'Generic Component Pressure Sensor'
  *
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
@@ -72,15 +73,15 @@
  *
  */
 
-static String version() { '1.7.7' }
-static String timeStamp() { '2026/02/14 10:42 AM' }
+static String version() { '1.8.0' }
+static String timeStamp() { '2026/02/21 10:08 AM' }
 
 
-@Field static final Boolean _DEBUG = false                    // make it FALSE for production!
+@Field static final Boolean _DEBUG = false                     // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
-@Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Matter_Advanced_Bridge.groovy'
+@Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = true         // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
@@ -126,7 +127,7 @@ metadata {
         attribute 'nodeLabel', 'string'
         attribute 'softwareVersionString', 'string'
         attribute 'rebootCount', 'number'
-        attribute 'upTime', 'number'
+        attribute 'upTime', 'string'
         attribute 'totalOperationalHours', 'number'
         attribute 'deviceCount', 'number'
         attribute 'endpointsCount', 'number'
@@ -306,6 +307,10 @@ metadata {
     0x0402 : [attributes: 'TemperatureMeasurementClusterAttributes', parser: 'parseTemperatureMeasurement',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
+    // PressureMeasurement Cluster
+    0x0403 : [attributes: 'PressureMeasurementClusterAttributes', parser: 'parsePressureMeasurement',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+    ],
     // HumidityMeasurement Cluster
     0x0405 : [attributes: 'RelativeHumidityMeasurementClusterAttributes', parser: 'parseHumidityMeasurement',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
@@ -343,6 +348,7 @@ metadata {
     0x0300 : 'parseColorControl',
     0x0400 : 'parseIlluminanceMeasurement',
     0x0402 : 'parseTemperatureMeasurement',
+    0x0403 : 'parsePressureMeasurement',
     0x0405 : 'parseHumidityMeasurement',
     0x0406 : 'parseOccupancySensing',
     0x040D : 'parseCarbonDioxideConcentrationMeasurement',
@@ -350,10 +356,10 @@ metadata {
 ]
 
 // Json Parsing Cache
-@Field static final Map<String, Map> jsonCache = new ConcurrentHashMap<>()
+//@Field static final Map<String, Map> jsonCache = new ConcurrentHashMap<>()
 
 // Track for dimming operations
-@Field static final Map<String, Integer> levelChanges = new ConcurrentHashMap<>()
+//@Field static final Map<String, Integer> levelChanges = new ConcurrentHashMap<>()
 
 // Json Parser
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
@@ -392,7 +398,7 @@ void parse(Map msg) {
         return
     }
     Map pacthedNewParseMap = [:]
-    //log.trace "parse(Map) called with msg: ${msg}"
+    logTrace "parse(Map) called with msg: ${msg}"
     pacthedNewParseMap = newParseCompatibilityPatch(msg)
     prepareForParse()
     processParsedDescription(pacthedNewParseMap, "new Parse/Map payload: ${pacthedNewParseMap}")
@@ -405,6 +411,7 @@ private void prepareForParse() {
     setHealthStatusOnline()
 }
 
+// TODO! old pares description text parsing code should be removed after the new parse(Map) is fully tested and stable! (and newParse=true is enforced by default)
 private void processParsedDescription(final Map descMap, final String description) {
     if (descMap == null || descMap?.isEmpty()) {
         logDebug "processParsedDescription: descMap is null or empty  description: ${description}"
@@ -420,11 +427,12 @@ private void processParsedDescription(final Map descMap, final String descriptio
     }
 
     if (!(((descMap.attrId in ['FFF8', 'FFF9', 'FFFA', 'FFFC', 'FFFD', '00FE']) && DO_NOT_TRACE_FFFX) || state['states']['isDiscovery'] == true)) {
-        logDebug "parse: descMap:${descMap}  description:${description}"
+        //logDebug "parse: descMap:${descMap}  description:${description}"
+        logDebug "parse: descMap:${descMap}"
     }
     // Additional debug for Matter events (especially Switch/buttons)
     if (descMap?.evtId != null && descMap?.cluster == '003B' && settings?.logEnable) {
-        logDebug "parse: received Switch EVENT endpoint:${descMap.endpoint} evtId:${descMap.evtId} value:${descMap.value}"
+        logDebug "parse: received Switch EVENT endpoint:${descMap.endpoint} <b>evtId:${descMap.evtId}</b> value:${descMap.value}"
     }
     // 2026-02-11  [callbackType:SubscriptionResult, subscriptionId:3617819414] 
     if (descMap?.callbackType == 'SubscriptionResult') {
@@ -534,6 +542,8 @@ void checkChildDevicePingResponse(final Map descMap) {
     }
 }
 
+
+// OBSOLETE - to be removed ! TODO ! 
 Map myParseDescriptionAsMap(description) {
     Map descMap
     try {
@@ -564,7 +574,8 @@ Map myParseDescriptionAsMap(description) {
                     // For AttributeList (FFFB) and other list attributes, try to decode TLV data
                     if (/*result.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && */result.value?.length() > 4) {
                         try {
-                            List<String> decodedAttrs = decodeTLVToHex(result.value)
+                            
+                            List<String> decodedAttrs = decodeTLVToHex(result.value)    // TODO !!!!!!
                             if (decodedAttrs.size() > 0) {
                                 result.value = decodedAttrs
                                 logTrace "myParseDescriptionAsMap: decoded TLV for ${result.attrId}: ${decodedAttrs}"
@@ -595,7 +606,8 @@ Map myParseDescriptionAsMap(description) {
         if (descMap.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && descMap.value instanceof String && descMap.value.length() > 4) {
             //logTrace "myParseDescriptionAsMap: (newParse=false) attempting TLV decoding for ${descMap.attrId}"
             try {
-                List<String> decodedAttrs = decodeTLVToHex(descMap.value)
+                // TODO !!!!!!
+                List<String> decodedAttrs = decodeTLVToHex(descMap.value)   // TODO !!!!!!
                 if (decodedAttrs.size() > 0) {
                     descMap.value = decodedAttrs
                     logTrace "myParseDescriptionAsMap: decoded TLV for normal parsing ${descMap.attrId}: ${decodedAttrs}"
@@ -615,13 +627,13 @@ Map myParseDescriptionAsMap(description) {
     }
     // handle the case when parse returns null value: descMap:[endpoint:00, cluster:001D, attrId:0003, encoding:16, value:null, clusterInt:29, attrInt:3] description:read attr - endpoint: 00, cluster: 001D, attrId: 0003, encoding: 16, value: 0401042E0429042A042B042C042D042F0439043A041104120413043004310432040304040405040A040B040C04330434043504360437043818
     // -> call the custome TLV decoder
-    if (/*descMap.value == null && descMap.attrId == '0003' && */descMap.cluster == '001D') {
-        // descMap.value = JvmDescMap.decodedValue.toString()
+    if (descMap.cluster == '001D') {
          String descriptionValue = description.split('value:')[1].trim()
         //log.warn "myParseDescriptionAsMap: descMap.value is null, trying to decode it: ${descMap} descriptionValue=${descriptionValue}"
         try {
             //log.trace "myParseDescriptionAsMap: descriptionValue=${descriptionValue} for Parts List (attr 0003)"
-            List<String> decodedAttrs = decodeTLVToHex(descriptionValue)
+            // TODO !!!!!!
+            List<String> decodedAttrs = decodeTLVToHex(descriptionValue)   // TODO !!!!!!
             logTrace "myParseDescriptionAsMap: decoded TLV for Parts List (attr 0003): descriptionValue=${descriptionValue},   decodedAttrs=${decodedAttrs}"
             if (decodedAttrs.size() > 0) {
                 descMap.value = decodedAttrs
@@ -633,23 +645,31 @@ Map myParseDescriptionAsMap(description) {
     }
 
     return descMap
-}
+} // myParseDescriptionAsMap
 
+
+// This method applies compatibility patches to the descMap when newParse is enabled, to handle differences in parsing between the old and new methods, especially for Events and Reports. It ensures that cluster, endpoint, and attrId are consistently available in both hex string and integer formats, 
+// and also handles TLV decoding for list attributes. TODO - check whether this is still neccessary!
 Map newParseCompatibilityPatch(final Map descMap) {
     Map patchedMap = descMap.clone()
-    //log.trace "newParseCompatibilityPatch: descMap before patch:${descMap} settings.newParse:${settings.newParse} patchedMap before patch:${patchedMap}"
     if (settings.newParse != true) {
         return patchedMap
     }
-
+    if (descMap?.callbackType == 'SubscriptionResult') {
+        return patchedMap   // no mods for SubscriptionResult messages
+    }
+    if (descMap?.callbackType == 'WriteAttributes') {
+        return patchedMap   // no mods for WriteAttributes messages
+    }
     // patches for both Reports and Events
+    // Ensure cluster is available in both hex string and integer formats
     if (patchedMap.cluster == null && patchedMap.clusterInt != null) {
         patchedMap.cluster = HexUtils.integerToHexString(patchedMap.clusterInt as Integer, 2)
     }
     if (patchedMap.cluster?.length() > 4) {
         patchedMap.cluster = patchedMap.cluster[-4..-1]
     }
-
+    // Ensure endpoint is available in both hex string and integer formats
     if (patchedMap.endpoint == null && patchedMap.endpointInt != null) {
         patchedMap.endpoint = HexUtils.integerToHexString(patchedMap.endpointInt as Integer, 1)
     }
@@ -661,14 +681,14 @@ Map newParseCompatibilityPatch(final Map descMap) {
     // descMap:[callbackType:Event, endpointInt:1, clusterInt:257, evtId:2, timestamp:29456912, priority:2, data:[2:STRUCT:[3:NULL:null, 0:UINT:1, 1:UINT:0, 2:NULL:null, 5:NULL:null, 4:NULL:null]], value:[3:null, 0:1, 1:0, 2:null, 5:null, 4:null], cluster:0101, endpoint:01]
     if (descMap.callbackType == 'Event') {
         logTrace "newParseCompatibilityPatch: <b>Event</b> descMap before patch:${descMap}"
-        // TODO ....
+        // no additional patches needed for Events at this time 
         return patchedMap
     }
 
     // callbackType:Report
     // descMap:[callbackType:Report, endpointInt:1, clusterInt:257, attrInt:0, data:[0:UINT:2], value:2, attrId:0000, cluster:0101, endpoint:01]
     // descMap:[callbackType:Report, endpointInt:1, clusterInt:29, attrInt:0, data:[0:ARRAY-STRUCT:[[0:UINT:10, 1:UINT:1], [0:UINT:17, 1:UINT:1]]], value:[[[tag:0, value:10], [tag:1, value:1]], [[tag:0, value:17], [tag:1, value:1]]], attrId:0000, cluster:001D, endpoint:01
-
+    // For Reports, ensure attrId is available in both hex string and integer formats
     if (patchedMap.attrId == null && patchedMap.attrInt != null) {
         patchedMap.attrId = HexUtils.integerToHexString(patchedMap.attrInt as Integer, 2)
     }
@@ -676,16 +696,17 @@ Map newParseCompatibilityPatch(final Map descMap) {
         patchedMap.attrId = patchedMap.attrId[-4..-1]
     }
    
-
-    //log.trace "newParseCompatibilityPatch: newParse is enabled - checking for compatibility patches for descMap:${descMap}"
+    // TODO: this patch has to be removed! Do NOT modify the value format for list attributes, as this will break the parsers that expect TLV-decoded lists (like the Descriptor Cluster Parts List). 
+    // Instead, the parsers should be updated to handle both formats if needed. This patch was a quick fix for early parsing issues but is no longer appropriate as the new parsing method has matured.
     if (patchedMap.value != null && patchedMap.attrId != null) {
         // Check for AttributeList and other list attributes that use TLV encoding
         //log.trace "newParseCompatibilityPatch: descMap.attrId = ${patchedMap.attrId} descMap.value instanceof List = ${patchedMap.value instanceof List}"
-        if (/*patchedMap.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && */patchedMap.value instanceof List) {
+        if (patchedMap.value instanceof List) {
             logTrace "newParseCompatibilityPatch: newParse is enabled - converting the value ${patchedMap.value} to HEX for ${patchedMap.attrId}"
             // descMap:[callbackType:Report, endpointInt:0, clusterInt:29, attrInt:65531, data:[65531:ARRAY-UINT:[0, 1, 2, 3, 65528, 65529, 65531, 65532, 65533]], value:[0, 1, 2, 3, 65528, 65529, 65531, 65532, 65533], cluster:001D, attrId:FFFB, endpoint:00]
             // readAttribute 0x00 0x001D 0xFFFB
             //log.trace "newParseCompatibilityPatch: descMap before HEX conversion:${patchedMap}"
+            // TODO: this is a temporary patch to convert list values to HEX strings for compatibility with existing parsers. The parsers should be updated to handle the new format directly, and this patch should be removed once that is done.
             try {
                 List<String> hexValues = []
                 if (patchedMap.value instanceof List) {
@@ -705,6 +726,7 @@ Map newParseCompatibilityPatch(final Map descMap) {
         // Handle legacy empty list detection
         else if (patchedMap.value in ['1518', '1618', '1818'] 
             && ( patchedMap.attrId in ['FFF8', 'FFF9','FFFA', 'FFFB', 'FFFC', 'FFFD', 'FFFE', 'FFFF']
+            // TODO: !!!
             || patchedMap.cluster == '001D')
         ) {
             patchedMap.value = []
@@ -717,7 +739,6 @@ Map newParseCompatibilityPatch(final Map descMap) {
     }
     //log.trace "newParseCompatibilityPatch: patchedMap after patch:${patchedMap}"
     return patchedMap
-
 }
 
 
@@ -845,6 +866,7 @@ void parseGlobalElements(final Map descMap) {
                 state[fingerprintName][attributeName] = [:]
                 action = 'created in'
             }
+            // TODO: convert the decial array back to hex string format for better readability in logs and consistency with parsers that expect hex strings.
             state[fingerprintName][attributeName] = descMap.value
             logTrace "parseGlobalElements: cluster: <b>${getClusterName(descMap.cluster)}</b> (0x${descMap.cluster}) attr: <b>${attributeName}</b> (0x${descMap.attrId})  value:${descMap.value} <b>-> ${action}</b> [$fingerprintName][$attributeName]"
             //logTrace "parseGlobalElements: state[${fingerprintName}][${attributeName}] = ${state[fingerprintName][attributeName]}"
@@ -858,9 +880,12 @@ void parseGlobalElements(final Map descMap) {
         default :
             break   // not a global element
     }
-
 }
 
+// This method gathers attribute values for informational purposes, especially during the "Info" state. 
+// It formats the attribute values for display, including special handling for certain attributes like DeviceTypeList, SW Version, Manufacturing Date, and Matter Spec Version. 
+// It also updates ping statistics when processing ping responses.
+// TODO - this method is doing too much and should be refactored into smaller, more focused methods. The current implementation is a quick way to extract and format attribute values for display in the Info state, but it mixes concerns and has some hardcoded logic that could be improved.
 void gatherAttributesValuesInfo(final Map descMap) {
     if (descMap == null || descMap?.attrId == null) {
         return
@@ -889,6 +914,7 @@ void gatherAttributesValuesInfo(final Map descMap) {
                     
                     if (settings.newParse == true) {
                         // Extract device type IDs from newParse format: [[[tag:0, value:22], [tag:1, value:1]]]
+                        // TODO: !!!!
                         descMap.value.each { structEntry ->
                             if (structEntry instanceof List && structEntry.size() >= 1) {
                                 def deviceTypeEntry = structEntry[0]
@@ -960,21 +986,22 @@ void gatherAttributesValuesInfo(final Map descMap) {
     }
 }
 
-//@CompileStatic
+// TODO: refactor! 
 void parseGeneralDiagnostics(final Map descMap) {
     //logTrace "parseGeneralDiagnostics: descMap:${descMap}"
     Integer value
     switch (descMap.attrId) {
         case '0001' :   // RebootCount -  a best-effort count of the number of times the Node has rebooted
-            value = getDescMapValueAsInt(descMap)
+            value = safeToInt(descMap.value)
             sendHubitatEvent([name: 'rebootCount', value: value,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} RebootCount is ${value}"])
             break
         case '0002' :   // UpTime -  a best-effort assessment of the length of time, in seconds,since the Node’s last reboot
-            value = getDescMapValueAsInt(descMap)
-            sendHubitatEvent([name: 'upTime', value:value,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} UpTime is ${value} seconds"])
+            value = safeToInt(descMap.value)
+            String upTimeStr = secondsToDHMS(value)
+            sendHubitatEvent([name: 'upTime', value:upTimeStr,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} UpTime is ${upTimeStr} (${value} seconds)"])
             break
         case '0003' :   // TotalOperationalHours -  a best-effort attempt at tracking the length of time, in hours, that the Node has been operational
-            value = getDescMapValueAsInt(descMap)
+            value = safeToInt(descMap.value)
             sendHubitatEvent([name: 'totalOperationalHours', value: value,  descriptionText: "${getDeviceDisplayName(descMap.endpoint)} TotalOperationalHours is ${value} hours"])
             break
         default :
@@ -983,57 +1010,6 @@ void parseGeneralDiagnostics(final Map descMap) {
     }
 }
 
-Integer getDescMapValueAsInt(final Map descMap) {
-    if (descMap == null) {
-        return null
-    }
-    // Handle value as a list of maps (e.g., [[tag:0, value:268], ...])
-    def patchedValue = descMap.value
-    if (patchedValue instanceof List && patchedValue && patchedValue[0] instanceof Map && patchedValue[0].containsKey('value')) {
-        patchedValue = patchedValue[0].value
-    } else if (patchedValue instanceof Map && patchedValue.containsKey('value')) {
-        patchedValue = patchedValue.value
-    }
-    // If already an Integer, return directly (newParse = true case)
-    if (patchedValue instanceof Integer) {
-        return patchedValue
-    }
-    Map dataMap = (descMap.data instanceof Map) ? descMap.data : null
-    //log.trace "getDescMapValueAsInt: dataMap:${dataMap} descMap.data instanceof Map:${descMap.data instanceof Map}"
-    if (dataMap != null) {
-        for (Object entry : dataMap.values()) {
-            String typeHint = null
-            if (entry instanceof Map) {
-                logTrace "getDescMapValueAsInt: entry Map:${entry}"
-                typeHint = (entry.type ?: entry.dataType)?.toString()?.toUpperCase()
-            } else if (entry instanceof String) {
-                logTrace "getDescMapValueAsInt: entry String:${entry}"
-                typeHint = entry.toUpperCase()
-            }
-            if (typeHint?.contains('UINT')) {
-                logTrace "getDescMapValueAsInt: typeHint contains UINT, returning safeNumberToInt for value:${patchedValue}"
-                return safeNumberToInt(patchedValue, null)
-            }
-        }
-    }
-    try {
-        //logTrace "getDescMapValueAsInt: trying 'toInteger' for value:${patchedValue}"
-        return patchedValue.toInteger()
-    } catch (e) {
-        String rawValue = patchedValue?.toString()?.trim()
-        if (rawValue) {
-            String hexCandidate = rawValue
-            if (hexCandidate.startsWith('0x') || hexCandidate.startsWith('0X')) {
-                hexCandidate = hexCandidate.substring(2)
-            }
-            if (hexCandidate.matches('[0-9A-Fa-f]+')) {
-                return HexUtils.hexStringToInt(hexCandidate)
-            }
-        }
-        logWarn "getDescMapValueAsInt: exception ${e} converting value:${patchedValue} to Integer"
-        return safeNumberToInt(patchedValue, null)
-    }
-}
 
 void parsePowerSource(final Map descMap) {
     logTrace "parsePowerSource: descMap:${descMap}"
@@ -1050,7 +1026,7 @@ void parsePowerSource(final Map descMap) {
             break
         case 'BatPercentRemaining' :   // BatteryPercentageRemaining 0x000C
             // newParse : : descMap:[callbackType:Report, endpointInt:2, clusterInt:47, attrInt:12, data:[12:UINT:114], value:114, attrId:000C, cluster:002F, endpoint:02]
-            value = getDescMapValueAsInt(descMap)
+            value = safeToInt(descMap.value)
             // Patch for Zemismart M1 - reports battery percentage remaining as 1 ???? TODO
             if (value == 1 && device.getDataValue('model') == 'Zemismart M1 Hub') {
                 value = 200  // interpret as 100%
@@ -1060,14 +1036,12 @@ void parsePowerSource(final Map descMap) {
             eventMap = [name: 'battery', value: value / 2, descriptionText: descriptionText]
             break
         case 'BatVoltage' :   // BatteryVoltage 0x000B
-            //log.trace "parsePowerSource: before getDescMapValueAsInt for BatVoltage:${descMap.value}"
-            value = getDescMapValueAsInt(descMap)
-            //log.trace "parsePowerSource: after getDescMapValueAsInt for BatVoltage:${value}"
+            value = safeToInt(descMap.value)
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Battery voltage is ${value / 1000}V (raw:${descMap.value})"
             eventMap = [name: 'batteryVoltage', value: value / 1000, descriptionText: descriptionText]
             break
         case 'Status' :  // PowerSourceStatus 0x0000
-            String statusDesc = PowerSourceClusterStatus[getDescMapValueAsInt(descMap)] ?: UNKNOWN
+            String statusDesc = PowerSourceClusterStatus[safeToInt(descMap.value)] ?: UNKNOWN
             statusDesc = statusDesc[0].toLowerCase() + statusDesc[1..-1]  // change the powerSourceStatus attribute value first letter to lower case
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Power source status is ${statusDesc} (raw:${descMap.value})"
             eventMap = [name: 'powerSourceStatus', value: statusDesc, descriptionText: descriptionText]
@@ -1091,6 +1065,8 @@ void parsePowerSource(final Map descMap) {
     }
 }
 
+// Cluster 0x0028 is called in collectBasicInfo() and in the stateMachine DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_LIST 
+// TODO - use it in getInfo() new command !
 void parseBasicInformationCluster(final Map descMap) {  // 0x0028 BasicInformation (the Bridge)
     Map eventMap = [:]
     String attrName = getAttributeName(descMap)
@@ -1119,10 +1095,8 @@ void parseBridgedDeviceBasic(final Map descMap) {       // 0x0039 BridgedDeviceB
     if (attrName in ['VendorName', 'ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable', 'ProductLabel']) {
         if (descMap.value != null && descMap.value != '') {
             state[fingerprintName][attrName] = descMap.value
-            
             // Note: These values are stored in state[fingerprintName] and don't need to be duplicated in device data
             // Child drivers can access them via parent methods if needed
-            
             eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  ${eventName} is: ${descMap.value}"]
             if (logEnable) { logInfo "parseBridgedDeviceBasic: ${attrName} = ${descMap.value}" }
         }
@@ -1148,6 +1122,7 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
         case ['0000', '0001', '0002', '0003'] :
             if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
             // Normalize DeviceTypeList at storage time for both legacy and newParse formats
+            // TODO: !!!!
             if (attrName == 'DeviceTypeList' && descMap.value instanceof List) {
                 List rawList = descMap.value as List
                 List deviceTypesOnly = []
@@ -1201,7 +1176,7 @@ void parseOnOffCluster(final Map descMap) {
     Integer value
 
     switch (descMap.attrId) {
-        case '0000' : // Switch
+        case '0000' : // Switch - nice patch, let it live ... :) 
             String switchState = ((descMap.value?.toString()?.trim()?.toLowerCase()) in ['1', '01', 'true', 'on']) ? 'on' : 'off'
             sendHubitatEvent([
                 name: 'switch',
@@ -1253,7 +1228,8 @@ Integer getLuxValue(rawValue) {
 
 
 void parseLevelControlCluster(final Map descMap) {
-    Integer scaledValue = safeHexToInt(descMap.value)   // integer value if newParse=true, else hex string 
+    // starting from MAB 1.8.0, we support only the new parsing format (newParse=true), which provides the attribute value as an integer.
+    Integer scaledValue = safeToInt(descMap.value)
     logTrace "parseLevelControlCluster: _scaledValue:${scaledValue} (descMap:${descMap})"
     if (descMap.cluster != '0008') { logWarn "parseLevelControlCluster: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     Integer value
@@ -1337,22 +1313,25 @@ String getEventName(final String cluster, String evtId) {
     return (evtInt != null) ? (getEventsMapByClusterId(cluster)?.get(evtInt) ?: UNKNOWN) : UNKNOWN
 }
 
+
+@Field static final Integer IGNORE_RECENT_SUBSCRIBE_THRESHOLD_MS = 30000    // 30 seconds threshold for ignoring events after a recent subscribe
+@Field static final Integer HUB_BOOT_UPTIME_THRESHOLD_SEC = 300             // 5 minutes threshold for ignoring events after hub boot
+@Field static final Integer SUBSCRIBE_RECENT_THRESHOLD_MS = 60000           // 60 seconds threshold for considering a subscribe as recent (used in the dynamic subscribe intervals calculation)
+
+
+
 // Filter noisy Matter *events* (evtId present) that arrive shortly after (re)subscription.
 // Some devices/controllers send a burst of events right after subscribe; these are often duplicates/stale.
 private boolean shouldFilterNoisyPostSubscribeEvent(final Map descMap, final String source = null) {
-    if (descMap?.evtId == null) {
-        return false
-    }
-
+    
+    if (descMap?.evtId == null) { return false }    // only filter events, not attribute reports}
     def lastSubscribe = state.lastTx?.subscribeTime
-    if (lastSubscribe == null) {
-        return false
-    }
+    if (lastSubscribe == null) { return false }     // no record of last subscribe time, so don't filter}
 
-    long ageMs = now() - (lastSubscribe as long)
-    long uptimeSec = location.hub.uptime ?: 0L
-    // Use 30s threshold if hub just booted (uptime < 5min) OR subscription is recent (age < 60s)
-    long thresholdMs = (uptimeSec < 300 || ageMs < 60000) ? 30000 : 10000
+    long ageMs = now() - (lastSubscribe as long)    // how many milliseconds since the last subscribe
+    long uptimeSec = location.hub.uptime ?: 0L      // how many seconds the hub has been up since last boot
+    // Use 30s threshold if hub just booted (uptime < 5min) OR subscription is recent (age < 60s). Otherwise, use a shorter 10s threshold for filtering, as we would expect any post-subscribe event burst to have settled down by then.
+    long thresholdMs = (uptimeSec < HUB_BOOT_UPTIME_THRESHOLD_SEC || ageMs < SUBSCRIBE_RECENT_THRESHOLD_MS) ? 30000 : 10000
 
     if (settings?.logEnable) {
         String src = (source != null) ? "${source}: " : ''
@@ -1378,15 +1357,16 @@ void parseSwitch(final Map descMap) {
         logDebug "parseSwitch: FILTERED noisy post-subscribe event: descMap:${descMap}"
         return
     }
+    // [callbackType:Report, endpointInt:62, clusterInt:59, attrInt:1, data:[1:UINT:0], value:0, cluster:003B, endpoint:3E, attrId:0001]
     
     String attributeName = (descMap.attrId != null) ? getAttributeName(descMap) : null
     String eventName = (descMap.evtId != null) ? getEventName(descMap) : null
-    logTrace "parseSwitch: <b>UNPROCESSED</b> ${attributeName ?: eventName ?: UNKNOWN} = ${descMap.value}"
-    // send the unprocessed attributes and events to the child driver for further processing
+    String eventOrAttr = (descMap.evtId != null) ? "event '${eventName}'" : "attribute '${attributeName}'"
+    // send all the 0x003B attributes and events to the child driver for further processing
     sendHubitatEvent([
-        name: 'unprocessed',
-        value: JsonOutput.toJson(descMap),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} ${descMap.attrId ? 'attribute ' + descMap.attrId : 'event ' + descMap.evtId} <i>(to be re-processed in the child driver!)</i>"
+        name: 'handleInChildDriver',
+        value: descMap,  // ver 1.8.0 
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} sending 0x${descMap.cluster} cluster ${eventOrAttr} for processing in the child driver",
     ], descMap, ignoreDuplicates = false)
 }
 
@@ -1428,7 +1408,7 @@ void parseBooleanState(final Map descMap) {
 void parseIlluminanceMeasurement(final Map descMap) { // 0400
     if (descMap.cluster != '0400') { logWarn "parseIlluminanceMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Illuminance
-        Integer valueInt = (descMap.value instanceof Integer) ? descMap.value : HexUtils.hexStringToInt(descMap.value)
+        Integer valueInt = safeToInt(descMap.value)
         Integer valueLux = Math.pow( 10, (valueInt -1) / 10000)  as Integer
         if (valueLux < 0 || valueLux > 100000) {
             logWarn "parseIlluminanceMeasurement: valueInt:${valueInt} is out of range"
@@ -1449,7 +1429,7 @@ void parseIlluminanceMeasurement(final Map descMap) { // 0400
 void parseTemperatureMeasurement(final Map descMap) { // 0402
     if (descMap.cluster != '0402') { logWarn "parseTemperatureMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Temperature
-        Double valueInt = safeHexToInt(descMap.value) / 100.0
+        Double valueInt = safeToInt(descMap.value) / 100.0
         String unit
         //log.debug "parseTemperatureMeasurement: location.temperatureScale:${location.temperatureScale}"
         if (valueInt < -100 || valueInt > 300) {
@@ -1475,14 +1455,33 @@ void parseTemperatureMeasurement(final Map descMap) { // 0402
     }
 }
 
+// Method for parsing pressure measurement
+void parsePressureMeasurement(final Map descMap) { // 0403
+    if (descMap.cluster != '0403') { logWarn "parsePressureMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (descMap.attrId == '0000') { // MeasuredValue (in 0.1 kPa units)
+        Integer rawValue = safeToInt(descMap.value)
+        if (rawValue == null || rawValue < 0) {
+            logWarn "parsePressureMeasurement: invalid value:${descMap.value}"
+            return
+        }
+        // Convert from 0.1 kPa units to kPa
+        Double pressureKPa = rawValue / 10.0
+        sendHubitatEvent([
+            name: 'pressure',
+            value: pressureKPa.round(1) as double,
+            descriptionText: "${getDeviceDisplayName(descMap.endpoint)} pressure is ${pressureKPa.round(1)} kPa",
+            unit: 'kPa'
+        ], descMap, true)
+    } else {
+        logTrace "parsePressureMeasurement: ${(PressureMeasurementClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    }
+}
+
 // Method for parsing humidity measurement
 void parseHumidityMeasurement(final Map descMap) { // 0405
-    if (descMap.cluster != '0405') {
-        logWarn "parseHumidityMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"
-        return
-    }
+    if (descMap.cluster != '0405') { logWarn "parseHumidityMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Humidity
-        Double valueInt = safeHexToInt(descMap.value) / 100.0
+        Double valueInt = safeToInt(descMap.value) / 100.0
         if (valueInt <= 0 || valueInt > 100) {
             logWarn "parseHumidityMeasurement: valueInt:${valueInt} is out of range"
             return
@@ -1578,14 +1577,14 @@ void parseCarbonDioxideConcentrationMeasurement(final Map descMap) { // 040D
 void parseWindowCovering(final Map descMap) { // 0102
     if (descMap.cluster != '0102') { logWarn "parseWindowCovering: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '000B') { // TargetPositionLiftPercent100ths
-        Integer valueInt = (safeHexToInt(descMap.value) / 100) as int
+        Integer valueInt = (safeToInt(descMap.value) / 100) as int
         sendHubitatEvent([
             name: 'targetPosition',
             value: valueInt,
             descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} <b>targetPosition</b> is reported as ${valueInt} <i>(to be re-processed in the child driver!)</i>"
         ], descMap, ignoreDuplicates = false)
     } else if (descMap.attrId == '000E') { // CurrentPositionLiftPercent100ths
-        Integer valueInt = (safeHexToInt(descMap.value) / 100) as int
+        Integer valueInt = (safeToInt(descMap.value) / 100) as int
         sendHubitatEvent([
             name: 'position',
             value: valueInt,
@@ -1636,7 +1635,7 @@ private int miredIntToCt(final Integer miredInt) {
 void parseColorControl(final Map descMap) { // 0300
     if (descMap.cluster != '0300') { logWarn "parseColorControl: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     ChildDeviceWrapper dw = getDw(descMap)
-    Integer value = safeHexToInt(descMap.value)
+    Integer value = safeToInt(descMap.value)
     switch (descMap.attrId) {
         case '0000' : // CurrentHue
             Integer scaledValue = int256ToInt100(value ?: 0)
@@ -1663,7 +1662,7 @@ void parseColorControl(final Map descMap) { // 0300
             }
             break
         case '0007' : // ColorTemperatureMireds
-            // parse: descMap:[callbackType:Report, endpointInt:11, clusterInt:768, attrInt:7, data:[7:UINT:263], value:263, attrId:0007, cluster:0300, endpoint:0B]
+            // [callbackType:Report, endpointInt:11, clusterInt:768, attrInt:7, data:[7:UINT:263], value:263, attrId:0007, cluster:0300, endpoint:0B]
             Integer valueCt = miredIntToCt(value ?: 0)
             logTrace "parseColorControl: ColorTemperatureCT = ${valueCt} (raw=0x${descMap.value})"
             sendHubitatEvent([
@@ -1684,7 +1683,7 @@ void parseColorControl(final Map descMap) { // 0300
             break
         case '0008' : // ColorMode
             // Normalize value to integer for robust mapping
-            int colorModeInt = safeHexToInt(descMap.value, -1)
+            int colorModeInt = safeToInt(descMap.value, -1)
             String colorMode = (colorModeInt == 0) ? 'RGB' : (colorModeInt == 1) ? 'XY' : (colorModeInt == 2) ? 'CT' : UNKNOWN
             logTrace "parseColorControl: ColorMode= ${colorMode} (raw=0x${descMap.value}) - sending <b>colorName</b>"
             if (dw != null) {
@@ -1736,8 +1735,8 @@ void parseColorControl(final Map descMap) { // 0300
                     if (child && child.typeName?.contains('CT') && !child.typeName?.contains('RGBW')) {
                         String oldName = child.displayName
                         String oldLabel = child.label
-                        logInfo "parseColorControl: ${oldName} has hue/saturation - upgrading from CT to RGBW driver"
-                        
+                        logInfo "parseColorControl: ${oldName} has hue/saturation - change the child device type (driver) manually to 'Generic Component RGBW'"
+                        /*
                         try {
                             deleteChildDevice(dni)      // TODO : check if this changes the deviceId ...
                             def newChild = addChildDevice('hubitat', 'Generic Component RGBW', dni, [name: oldName])
@@ -1747,6 +1746,7 @@ void parseColorControl(final Map descMap) { // 0300
                         } catch (Exception e) {
                             logWarn "parseColorControl: Failed to upgrade ${oldName}: ${e.message}"
                         }
+                        */
                     }
                 }
             }
@@ -1797,7 +1797,7 @@ String getTemperatureUnit() {
 }
 
 Double convertTemperature(final Map descMap) {
-    Double valueInt = safeHexToInt(descMap.value) / 100.0
+    Double valueInt = safeToInt(descMap.value) / 100.0
     String unit
     //log.debug "convertTemperature: location.temperatureScale:${location.temperatureScale}"
     if (location.temperatureScale == 'F') {
@@ -1986,7 +1986,7 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
         }
         // Route internal events through parse() without requiring attribute declaration
         else if (name in INTERNAL_EVENTS) {
-            logDebug "sendHubitatEvent: routing internal event '${name}' through child parse(): dw:${dw} dni:${dni}"
+            logDebug "sendHubitatEvent: routing internal event '${eventMap.descriptionText}' through child parse(): dw:${dw} dni:${dni}"
             dw.parse([eventMap])
         }
         // For attributes, keep the existing behavior: if child doesn't declare the attribute, send it directly.
@@ -2503,7 +2503,6 @@ String subscribeCmd() {
 // availabe from HE platform version [2.3.9.186]
 String cleanSubscribeCmd() {
     List<Map<String, String>> paths = []
-    //paths.add(matter.attributePath(0, 0x001D, 0x03))   // Descriptor Cluster - PartsList
     // Build event paths first, then attribute paths (requested ordering)
     List<Map<String, String>> eventPaths = []
 
@@ -2674,8 +2673,6 @@ void fingerprintsToSubscriptionsList() {
 
     // For each fingerprint in the state, check if the fingerprint has entries in the SupportedMatterClusters list. Then, add these entries to the state.subscriptions map
     Integer deviceCount = 0
-    //Map stateCopy = state.clone()
-    //Map stateCopy = state
     state.each { fingerprintName, fingerprintMap ->
         if (fingerprintName.startsWith('fingerprint')) {
             boolean knownClusterFound = false
@@ -2848,25 +2845,6 @@ void componentLog(DeviceWrapper dw, String level, String message) {
 /* ============================= Child Devices code ================================== */
 /* code segments 'borrowed' from Jonathan's 'Tuya IoT Platform (Cloud)' driver importUrl: 'https://raw.githubusercontent.com/bradsjm/hubitat-drivers/main/Tuya/TuyaOpenCloudAPI.groovy' */
 
-/**
- * Helper function to extract device types from DeviceTypeList
- * DeviceTypeList format: [deviceType, revision, deviceType, revision, ...]
- * This function returns only the device types (even-indexed elements)
- */
- /*
- TOBEDEL !!!!!!!!!!!!!!!!
-List<String> deviceTypesOnly(List<String> dtList) {
-    if (!(dtList instanceof List)) return []
-    return (0..<dtList.size()).findAll { (it % 2) == 0 }.collect { dtList[it] }
-}
-*/
-
-/**
-  *  Tuya Standard Instruction Set Category Mapping to Hubitat Drivers
-  *  https://developer.tuya.com/en/docs/iot/standarddescription?id=K9i5ql6waswzq
-  *  MATTER : https://developer.tuya.com/en/docs/iot-device-dev/Matter_Product_Feature_List?id=Kd2wjfpuhgmrw
-  */
-//private static Map mapMatterCategory(Map d) {
 Map mapMatterCategory(Map d) {
     // check order is important!
     logDebug "mapMatterCategory: ServerList=${d.ServerList} DeviceType=${d.DeviceType}"
@@ -2917,6 +2895,9 @@ Map mapMatterCategory(Map d) {
     }
     if ('0402' in d.ServerList) {   // TemperatureMeasurement
         return [ driver: 'Generic Component Omni Sensor', product_name: 'Temperature Sensor' ]
+    }
+    if ('0403' in d.ServerList) {   // PressureMeasurement
+        return [ driver: 'Generic Component Pressure Sensor', product_name: 'Pressure Sensor' ]
     }
     if ('0405' in d.ServerList) {   // HumidityMeasurement
         return [ driver: 'Generic Component Omni Sensor', product_name: 'Humidity Sensor' ]
@@ -3424,48 +3405,6 @@ void initializeThermostat(DeviceWrapper dw) {
     if (dw.currentValue('temperature') == null) { sendHubitatEvent([name: "temperature", value: 23.4, unit: "\u00B0"+"C", isStateChange: true, description: "inital attribute setting"], dw) }
 }
 
-/*
-* Retrieves a map of functions from a cache.
-* If the map is not already in the cache, it computes the map by parsing a JSON string and adds it to the cache.
-* The JSON string is obtained from the DeviceWrapper instance.
-* If the DeviceWrapper instance is null or does not contain a 'functions' data value, the method uses an empty JSON string.
-*/
-private static Map<String, Map> getFunctions(DeviceWrapper dw) {
-    return jsonCache.computeIfAbsent(dw?.getDataValue('functions') ?: '{}') {
-        k -> jsonParser.parseText(k)
-    }
-}
-
-/*
-* Returns the value of the first key-value pair in the functions map where the key is also an element in the codes list.
-* If no such key-value pair is found, or if functions is null, the method returns null.
-*/
-/* groovylint-disable-next-line UnusedPrivateMethod */
-private static Map getFunction(Map functions, List codes) {
-    return functions?.find { f -> f.key in codes }?.value
-}
-
-/*
-* Returns the first code in the codes list that is also a key in the functions map.
-* If no such code is found, or if codes or functions is null, the method returns null.
-*/
-/* groovylint-disable-next-line UnusedPrivateMethod */
-private static String getFunctionCode(Map functions, List codes) {
-    return codes?.find { c -> functions?.containsKey(c) }
-}
-
-/*
-* Retrieves a map of status sets from a cache. If the map is not already in the cache, it computes the map by parsing a JSON string and adds it to the cache.
-* The JSON string is obtained from the DeviceWrapper instance.
-* If the DeviceWrapper instance is null or does not contain a 'statusSet' data value, the method uses an empty JSON string.
-*/
-/* groovylint-disable-next-line UnusedPrivateMethod */
-private static Map<String, Map> getStatusSet(DeviceWrapper dw) {
-    return jsonCache.computeIfAbsent(dw?.getDataValue('statusSet') ?: '{}') {
-        k -> jsonParser.parseText(k)
-    }
-}
-
 // Command to remove all the child devices
 void removeAllDevices() {
     logInfo 'Removing all child devices'
@@ -3581,10 +3520,7 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
             }
         }
     }
-    /*
-    String functionJson = JsonOutput.toJson(d.functions)
-    jsonCache.put(functionJson, d.functions)
-    */
+
     dw?.with {
         //label = label ?: d.name
         updateDataValue 'id', d.id
@@ -3710,6 +3646,7 @@ void markClusterDataReceived(String endpoint, String cluster, String attrId) {
  * @param dataName The data value name (e.g., 'ProductName', 'VendorName')
  * @param value The value to set
  */
+ /*
 void updateChildDeviceDataValue(String fingerprintName, String dataName, Object value) {
     // Get the endpoint from fingerprintName (e.g., 'fingerprint08' -> '08')
     String endpointHex = fingerprintName.replaceFirst('fingerprint', '')
@@ -3728,6 +3665,7 @@ void updateChildDeviceDataValue(String fingerprintName, String dataName, Object 
         logDebug "updateChildDeviceDataValue: failed to update ${dni} ${dataName}: ${e.message}"
     }
 }
+*/
 
 /* ================================================================================================================================================================================ */
 
@@ -3904,7 +3842,7 @@ void sendRttEvent(String value=null) {
     Integer rxCtrAtPing = state.lastTx['rxCtrAtPing'] ?: 0
     Integer rxCtrNow = (state.stats != null && state.stats['rxCtr'] != null) ? state.stats['rxCtr'] : 0
     Integer rxCtrDelta = rxCtrNow - rxCtrAtPing
-    String descriptionText = "${device.displayName} Round-trip time is ${timeRunning} ms (rxCtr delta=${rxCtrDelta}), min=${state.stats['pingsMin']} max=${state.stats['pingsMax']} average=${state.stats['pingsAvg']} (HE uptime: ${formatUptime()})"
+    String descriptionText = "${device.displayName} Round-trip time is ${timeRunning} ms (rxCtr delta=${rxCtrDelta}), min=${state.stats['pingsMin']} max=${state.stats['pingsMax']} average=${state.stats['pingsAvg']} (HE uptime: ${formatUpTime()})"
     if (value == null) {
         logInfo "${descriptionText}"
         sendEvent(name: 'rtt', value: timeRunning, descriptionText: descriptionText, unit: 'ms', type: 'physical')
@@ -3919,9 +3857,12 @@ void sendRttEvent(String value=null) {
 }
 
 // credits @thebearmay
-String formatUptime() {
+String formatUpTime() {
+    return secondsToDHMS(location.hub.uptime.toLong())
+}
+
+String secondsToDHMS(Long ut = null) {
     try {
-        Long ut = location.hub.uptime.toLong()
         Integer days = Math.floor(ut/(3600*24)).toInteger()
         Integer hrs = Math.floor((ut - (days * (3600*24))) /3600).toInteger()
         Integer min = Math.floor((ut -  ((days * (3600*24)) + (hrs * 3600))) /60).toInteger()
@@ -3941,10 +3882,7 @@ String getDeviceInfo() {
 
 void resetStats() {
     logDebug 'resetStats...'
-    state.stats  = [:]
-    state.states = [:]
-    state.lastRx = [:]
-    state.lastTx = [:]
+    state.stats  = [:] ; state.states = [:] ; state.lastRx = [:] ; state.lastTx = [:]
     state.lastTx['pingTime'] = now() ; state.lastTx['cmdTime'] = now()
     state.lastTx['subscribeTime'] = now() ; state.lastTx['unsubscribeTime'] = now()
     state.health = [:]
@@ -3967,10 +3905,9 @@ void initializeVars(boolean fullInit = false) {
         state.clear()
         unschedule()
         resetStats()
-        state.comment = 'Experimental Matter Bridge Driver'
+        state.comment = 'Matter Advanced Bridge driver'
         logInfo 'all states and scheduled jobs cleared!'
         state.driverVersion = driverVersionAndTimeStamp()
-        // TEMP until we discover: unknown
         state.deviceType = 'UNKNOWN'
         logInfo "DEVICE_TYPE (initial) = ${state.deviceType}"
         sendInfoEvent('Initialized (fullInit = true)', 'full initialization - loaded all defaults!')
@@ -4040,153 +3977,31 @@ void updateStateStats(Map descMap) {
     if (state.lastRx != null) { state.lastRx['checkInTime'] = new Date().getTime() }     else { state.lastRx = [:] }
 }
 
-//@Field static final Map<String, Map> stateCache = new ConcurrentHashMap<>()
-
-//@Field volatile static Map<String,Long> TimeStamps = [:]
-
 /* groovylint-disable-next-line UnusedMethodParameter */
 void test(par) {
-    par = "16152400432401011818"
-    def x = decodeTLVToHex(par)
+    //par = "16152400432401011818"
+
+    //def x = decodeTLVToHex(par)
+    //decodeTLVToHex(16152400432401011818 -> [0043, 0001])
+
+
+
+
+    //def x = matter.TLVparser(par)
+    par = ["041D041E041F042804300431043304360437043C043E043F18"]
+    def x = testDecodeTLV(par)
+    /*
+    // decodeTLVToHex(16152400432401011818 -> 
+    [
+    21:[type:16, isContextSpecific:false, 
+        values:[0:[type:04, isContextSpecific:true, value:43],
+                1:[type:04, isContextSpecific:true, value:01]]
+       ]
+    ]
+    */
     log.warn "decodeTLVToHex(${par} -> ${x})"
 }
 
-// - to be moved to matterLib.groovy when tested ! - 
-
-@Field static final Map<Integer, String> MATTER_DEVICE_TYPE_NAMES_SUPPORTED = [
-    // Utility / node
-    0x0016: 'Root Node',
-    0x0011: 'Power Source',
-    0x000E: 'Aggregator',
-    0x0013: 'Bridged Node',
-
-    // Lighting
-    0x0100: 'On/Off Light',
-    0x0101: 'Dimmable Light',
-    0x010C: 'Color Temperature Light',
-    0x010D: 'Extended Color Light',
-
-    // Plugs / outlets
-    0x010A: 'On/Off Plug-in Unit',
-    0x010B: 'Dimmable Plug-In Unit',
-
-    // Switches / controls
-    0x0103: 'On/Off Light Switch',
-    0x0104: 'Dimmer Switch',
-    0x0105: 'Color Dimmer Switch',
-    0x000F: 'Generic Switch',
-
-    // Closures
-    0x000A: 'Door Lock',
-    0x0202: 'Window Covering',
-
-    // HVAC
-    0x0301: 'Thermostat',
-
-    // Sensors
-    0x0015: 'Contact Sensor',
-    0x0106: 'Light Sensor',
-    0x0107: 'Occupancy Sensor',
-    0x0302: 'Temperature Sensor',
-    0x0307: 'Humidity Sensor',
-    0x002C: 'Air Quality Sensor',
-]
-
-// Normalizes a single element like "0016", "0x0016", "16" to int 0x0016
-private Integer normalizeDeviceTypeId(Object raw) {
-    if (raw == null) return null
-    String s = raw.toString().trim()
-    if (s.startsWith('0x') || s.startsWith('0X')) s = s.substring(2)
-    if (s == '') return null
-    // If user passed decimal, this will throw; assume hex by default (your data is hex)
-    try {
-        return Integer.parseInt(s, 16)
-    } catch (Exception ignored) {
-        try { return Integer.parseInt(raw.toString().trim(), 10) } catch (Exception ignored2) { return null }
-    }
-}
-
-/**
- * Converts normalized DeviceTypeList (type IDs only) to human readable names.
- * Returns both a list and a compact summary string.
- */
-Map deviceTypeNames(List deviceTypeList) {
-    List<String> names = []
-    List<String> unknown = []
-
-    (deviceTypeList ?: []).each { dt ->
-        Integer id = normalizeDeviceTypeId(dt)
-        if (id == null) return
-        String name = MATTER_DEVICE_TYPE_NAMES_SUPPORTED[id]
-        if (name != null) {
-            names << name
-        } else {
-            unknown << String.format('0x%04X', id)
-        }
-    }
-
-    // Optional: a “best label” heuristic for logging
-    // Prefer application types over utility types if present
-    List<String> utility = ['Root Node','Power Source','OTA Requestor','Bridged Node']
-    String best =
-        (names.find { !(it in utility) } ?:  // first non-utility
-         (names.contains('Aggregator') ? 'Aggregator' :
-          (names[0] ?: 'Unknown')))
-
-    String summary = names.join(', ')
-    if (unknown) summary = summary ? "${summary}, Unknown(${unknown.join(', ')})" : "Unknown(${unknown.join(', ')})"
-
-    return [best: best, names: names, unknown: unknown, summary: summary]
-}
-
-private boolean isAggregatorDevice(Map bd) {
-    if (!bd) return false
-
-    List<String> dt = (bd.DeviceTypeList ?: [])*.toUpperCase()
-    List<String> parts = (bd.PartsList ?: [])*.toUpperCase()
-    List<String> server = (bd.ServerList ?: [])*.toUpperCase()
-
-    boolean hasAggregatorType = dt.contains('000E') || dt.contains('0E')
-    boolean hasParts = parts && parts.size() > 0
-
-    // Strong signal: Aggregator type + parts
-    if (hasAggregatorType && hasParts) return true
-
-    // Fallback: parts exist and descriptor/basic patterns typical for bridges
-    // Many bridges expose Bridged Device Basic Information (0x0039) on child endpoints.
-    // If endpoint0 already claims 0x0039, that's suspicious (some do), but still:
-    boolean hasBridgedBasicSomewhere = false
-    parts?.each { epHex ->
-        String fp = getFingerprintName(HexUtils.hexStringToInt(epHex))
-        List<String> sl = (state[fp]?.ServerList ?: [])*.toUpperCase()
-        if (sl.contains('0039')) hasBridgedBasicSomewhere = true
-    }
-    logDebug "isAggregatorDevice(): hasAggregatorType=${hasAggregatorType} hasParts=${hasParts} hasBridgedBasicSomewhere=${hasBridgedBasicSomewhere}"
-    return hasParts && hasBridgedBasicSomewhere
-}
-
-
-private boolean isMatterBridgeByAnyEndpoint() {
-    // scan all fingerprints (endpoint descriptor snapshots)
-    List<Map> fps = state.findAll { k, v -> (k as String).startsWith('fingerprint') && (v instanceof Map) }
-                         .collect { it.value as Map }
-
-    for (Map fp : fps) {
-        List<String> dt    = ((fp.DeviceTypeList ?: []) as List)*.toString()*.toUpperCase()
-        List<String> parts = ((fp.PartsList ?: []) as List)*.toString()*.toUpperCase()
-
-        if (dt.contains('000E') && parts && parts.size() > 0) {
-            return true
-        }
-    }
-    return false
-}
-
-private void finalizeDeviceType() {
-    boolean isBridge = isMatterBridgeByAnyEndpoint()
-    state.deviceType = isBridge ? 'MATTER_BRIDGE' : 'MATTER_DEVICE'
-    logInfo "DEVICE_TYPE (detected) = ${state.deviceType}"
-}
 
 
 // -------- libraries here --------

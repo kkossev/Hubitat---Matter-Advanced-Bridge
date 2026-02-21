@@ -19,6 +19,7 @@
  * ver. 1.1.0  2025-01-10 kkossev   - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.2.0  2025-01-18 kkossev   - added ALPSTUGA Air Quality Monitor support
  * ver. 1.2.1  2026-01-29 kkossev   - added common library matterCommonLib
+ * ver. 1.2.2  2026-02-19 kkossev   - (dev.branch) moved common methods to matterCommonLib
  * 
  *                                   TODO: use safeToHex methods;  decodeIeee754Float method float value
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
@@ -30,13 +31,13 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 
-@Field static final String matterComponentAirPurifierVersion = '1.2.1'
-@Field static final String matterComponentAirPurifierStamp   = '2026/01/29 10:38 PM'
+@Field static final String matterComponentAirPurifierVersion = '1.2.2'
+@Field static final String matterComponentAirPurifierStamp   = '2026/02/19 4:46 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 
 metadata {
-    definition(name: 'Matter Generic Component Air Purifier', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Air_Quality') {
+    definition(name: 'Matter Generic Component Air Purifier', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Air_Purifier.groovy') {
         capability 'Configuration'
         capability 'Refresh'
         capability 'Sensor'
@@ -317,60 +318,6 @@ void refresh() {
     parent?.componentRefresh(this.device)
 }
 
-void setState(String stateName, String stateValue) {
-    if (logEnable) { log.debug "${device.displayName} setting state '${stateName}' to '${stateValue}'" }
-    state[stateName] = stateValue
-}
-
-String getState(String stateName) {
-    if (logEnable) { log.debug "${device.displayName} getting state '${stateName}'" }
-    return state[stateName]
-}
-
-// ============ Helper Methods for Fingerprint Data ============
-
-/**
- * Get parsed fingerprint data from device
- * @return Map containing fingerprint data or null if not available
- */
-Map getFingerprintData() {
-    String fingerprintJson = device.getDataValue('fingerprintData')
-    if (!fingerprintJson) {
-        logDebug "getFingerprintData: fingerprintData not found in device data"
-        return null
-    }
-    
-    try {
-        return new groovy.json.JsonSlurper().parseText(fingerprintJson)
-    } catch (Exception e) {
-        logWarn "getFingerprintData: failed to parse fingerprintData: ${e.message}"
-        return null
-    }
-}
-
-/**
- * Get ServerList from fingerprint data
- * @return List of cluster IDs as hex strings (e.g., ["0006", "005B", "0402", "0405", "040D", "042A"])
- */
-List<String> getServerList() {
-    Map fingerprint = getFingerprintData()
-    if (fingerprint == null) {
-        logDebug "getServerList: fingerprint data not available"
-        return []
-    }
-    
-    return fingerprint['ServerList'] ?: []
-}
-
-/**
- * Check if a specific cluster is supported by this device
- * @param clusterHex Cluster ID as hex string (e.g., "005B" for Air Quality)
- * @return true if cluster is in ServerList
- */
-boolean isClusterSupported(String clusterHex) {
-    List<String> serverList = getServerList()
-    return serverList.contains(clusterHex?.toUpperCase())
-}
 
 // Custom parsing for description strings with array values
 // NOTE: This workaround may not be needed once complex structure parsing is fixed generally

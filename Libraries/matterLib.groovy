@@ -1,4 +1,3 @@
-/* groovylint-disable CompileStatic, DuplicateListLiteral, DuplicateMapLiteral, DuplicateStringLiteral, LineLength */
 library(
     base: 'driver',
     author: 'Krassimir Kossev',
@@ -6,8 +5,8 @@ library(
     description: 'Matter Library',
     name: 'matterLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterLib.groovy',
-    version: '1.4.1',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterLib.groovy',
+    version: '1.4.2',
     documentationLink: ''
 )
 /*
@@ -31,14 +30,15 @@ library(
   * ver. 1.3.0  2024-10-11 kkossev  - added 0x005B  : 'AirQuality'
   * ver. 1.4.0  2025-04-02 kkossev  - added 0x0091 : 'Electrical Energy Measuremen'; adding 0x0090 : 'Electrical Power Measurement'
   * ver. 1.4.1  2026-01-15 kkossev  - added tagsList, added more attributes to BridgedDeviceBasicClusterAttributes
+  * ver. 1.4.2  2026-02-15 kkossev  - minor fixes and improvements
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.4.1'
-@Field static final String matterLibStamp   = '2026/01/15 3:50 PM'
+@Field static final String matterLibVersion = '1.4.2'
+@Field static final String matterLibStamp   = '2026/02/15 10:45 AM'
 
 // no metadata section for matterLib
 
@@ -610,15 +610,6 @@ Map getEventsMapByClusterId(String cluster) {
     0x04    : 'LockUserChange'      // generated when a user is added or removed from the lock. (INFO, V, US)
 ]
 
-/* moved to the component device driver
-@Field static final Map<Integer, String> DoorLockClusterLockState = [
-    0x00    : 'NotFullyLocked',
-    0x01    : 'Locked',
-    0x02    : 'Unlocked',
-    0x03    : 'Unlatched'
-]
-*/
-
 @Field static final Map<Integer, String> DoorLockClusterCommands = [
     0x00    : 'LockDoor',
     0x01    : 'UnlockDoor',
@@ -876,61 +867,140 @@ Map getEventsMapByClusterId(String cluster) {
     0x0032  : 'PhysicalContactUnoccupiedToOccupiedThreshold'
 ]
 
-@Field static final Map<Integer, String> MatterDeviceTypes = [
-    0x000A: 'Door Lock',
-    0x000B: 'Door Lock Controller',
+// - to be moved to matterLib.groovy when tested ! - 
+
+@Field static final Map<Integer, String> MATTER_DEVICE_TYPE_NAMES_SUPPORTED = [
+    // Utility / node
+    0x0016: 'Root Node',
+    0x0011: 'Power Source',
     0x000E: 'Aggregator',
-    0x000F: 'Generic Switch (Button)',
-    0x0015: 'Contact Sensor',
-    0x0022: 'Speaker',
-    0x0023: 'Casting Video Player',
-    0x0024: 'Content App',
-    0x0028: 'Basic Video Player',
-    0x0029: 'Casting Video Client',
-    0x002A: 'Video Remote Control',
-    0x002B: 'Fan',
-    0x002C: 'Air Quality Sensor',
-    0x002D: 'Air Purifier',
-    0x0070: 'Refrigerator',
-    0x0071: 'Temperature Controlled Cabinet',
-    0x0072: 'Room Air Conditioner',
-    0x0073: 'Laundry Washer',
-    0x0074: 'Robotic Vacuum Cleaner',
-    0x0075: 'Dishwasher',
-    0x0076: 'Smoke CO Alarm',
+    0x0013: 'Bridged Node',
+
+    // Lighting
     0x0100: 'On/Off Light',
     0x0101: 'Dimmable Light',
+    0x010C: 'Color Temperature Light',
+    0x010D: 'Extended Color Light',
+
+    // Plugs / outlets
+    0x010A: 'On/Off Plug-in Unit',
+    0x010B: 'Dimmable Plug-In Unit',
+
+    // Switches / controls
     0x0103: 'On/Off Light Switch',
     0x0104: 'Dimmer Switch',
     0x0105: 'Color Dimmer Switch',
+    0x000F: 'Generic Switch',
+
+    // Closures
+    0x000A: 'Door Lock',
+    0x0202: 'Window Covering',
+
+    // HVAC
+    0x0301: 'Thermostat',
+
+    // Sensors
+    0x0015: 'Contact Sensor',
     0x0106: 'Light Sensor',
     0x0107: 'Occupancy Sensor',
-    0x010A: 'On/Off Plug-in Unit',
-    0x010B: 'Dimmable Plug-In Unit',
-    0x010C: 'Color Temperature Light',
-    0x010D: 'Extended Color Light',
-    0x0202: 'Window Covering',
-    0x0203: 'Window Covering Controller',
-    0x0300: 'Heating/Cooling Unit',
-    0x0301: 'Thermostat',
     0x0302: 'Temperature Sensor',
-    0x0303: 'Pump',
-    0x0304: 'Pump Controller',
-    0x0305: 'Pressure Sensor',
-    0x0306: 'Flow Sensor',
     0x0307: 'Humidity Sensor',
-    0x0840: 'Control Bridge',
-    0x0850: 'On/Off Sensor'
+    0x002C: 'Air Quality Sensor',
 ]
 
-@Field static final Map<String, Map<String, String>> MatterDeviceTypeMappingsTuya = [
-    'On/Off Light':             ['clusters': ['On/Off', 'Level Control'],   'tuyaType': 'Switch'],
-    'Dimmable Light':           ['clusters': ['On/Off', 'Level Control'],   'tuyaType': 'Light'],
-    'Color Temperature Light':  ['clusters': ['On/Off', 'Level Control', 'Color Control'], 'tuyaType': 'Light'],
-    'Extended Color Light':     ['clusters': ['On/Off', 'Level Control', 'Color Control'], 'tuyaType': 'Light'],
-    'On/Off Plug-in Unit':      ['clusters': ['On/Off', 'Level Control'],   'tuyaType': 'Socket'],
-    'Dimmable Plug-In Unit':    ['clusters': ['On/Off', 'Level Control'],   'tuyaType': 'Socket'],
-    'Contact Sensor':           ['clusters': ['Boolean State'],             'tuyaType': 'Door and Window Sensor'],
-    'Occupancy Sensor':         ['clusters': ['Occupancy Sensing'],         'tuyaType': 'PIR'],
-    'Window Covering':          ['clusters': ['Window Covering'],           'tuyaType': 'Curtain']
-]
+// Normalizes a single element like "0016", "0x0016", "16" to int 0x0016
+private Integer normalizeDeviceTypeId(Object raw) {
+    if (raw == null) return null
+    String s = raw.toString().trim()
+    if (s.startsWith('0x') || s.startsWith('0X')) s = s.substring(2)
+    if (s == '') return null
+    // If user passed decimal, this will throw; assume hex by default (your data is hex)
+    try {
+        return Integer.parseInt(s, 16)
+    } catch (Exception ignored) {
+        try { return Integer.parseInt(raw.toString().trim(), 10) } catch (Exception ignored2) { return null }
+    }
+}
+
+/**
+ * Converts normalized DeviceTypeList (type IDs only) to human readable names.
+ * Returns both a list and a compact summary string.
+ */
+Map deviceTypeNames(List deviceTypeList) {
+    List<String> names = []
+    List<String> unknown = []
+
+    (deviceTypeList ?: []).each { dt ->
+        Integer id = normalizeDeviceTypeId(dt)
+        if (id == null) return
+        String name = MATTER_DEVICE_TYPE_NAMES_SUPPORTED[id]
+        if (name != null) {
+            names << name
+        } else {
+            unknown << String.format('0x%04X', id)
+        }
+    }
+
+    // Optional: a “best label” heuristic for logging
+    // Prefer application types over utility types if present
+    List<String> utility = ['Root Node','Power Source','OTA Requestor','Bridged Node']
+    String best =
+        (names.find { !(it in utility) } ?:  // first non-utility
+         (names.contains('Aggregator') ? 'Aggregator' :
+          (names[0] ?: 'Unknown')))
+
+    String summary = names.join(', ')
+    if (unknown) summary = summary ? "${summary}, Unknown(${unknown.join(', ')})" : "Unknown(${unknown.join(', ')})"
+
+    return [best: best, names: names, unknown: unknown, summary: summary]
+}
+
+private boolean isAggregatorDevice(Map bd) {
+    if (!bd) return false
+
+    List<String> dt = (bd.DeviceTypeList ?: [])*.toUpperCase()
+    List<String> parts = (bd.PartsList ?: [])*.toUpperCase()
+    List<String> server = (bd.ServerList ?: [])*.toUpperCase()
+
+    boolean hasAggregatorType = dt.contains('000E') || dt.contains('0E')
+    boolean hasParts = parts && parts.size() > 0
+
+    // Strong signal: Aggregator type + parts
+    if (hasAggregatorType && hasParts) return true
+
+    // Fallback: parts exist and descriptor/basic patterns typical for bridges
+    // Many bridges expose Bridged Device Basic Information (0x0039) on child endpoints.
+    // If endpoint0 already claims 0x0039, that's suspicious (some do), but still:
+    boolean hasBridgedBasicSomewhere = false
+    parts?.each { epHex ->
+        String fp = getFingerprintName(HexUtils.hexStringToInt(epHex))
+        List<String> sl = (state[fp]?.ServerList ?: [])*.toUpperCase()
+        if (sl.contains('0039')) hasBridgedBasicSomewhere = true
+    }
+    logDebug "isAggregatorDevice(): hasAggregatorType=${hasAggregatorType} hasParts=${hasParts} hasBridgedBasicSomewhere=${hasBridgedBasicSomewhere}"
+    return hasParts && hasBridgedBasicSomewhere
+}
+
+
+private boolean isMatterBridgeByAnyEndpoint() {
+    // scan all fingerprints (endpoint descriptor snapshots)
+    List<Map> fps = state.findAll { k, v -> (k as String).startsWith('fingerprint') && (v instanceof Map) }
+                         .collect { it.value as Map }
+
+    for (Map fp : fps) {
+        List<String> dt    = ((fp.DeviceTypeList ?: []) as List)*.toString()*.toUpperCase()
+        List<String> parts = ((fp.PartsList ?: []) as List)*.toString()*.toUpperCase()
+
+        if (dt.contains('000E') && parts && parts.size() > 0) {
+            return true
+        }
+    }
+    return false
+}
+
+private void finalizeDeviceType() {
+    boolean isBridge = isMatterBridgeByAnyEndpoint()
+    state.deviceType = isBridge ? 'MATTER_BRIDGE' : 'MATTER_DEVICE'
+    logInfo "DEVICE_TYPE (detected) = ${state.deviceType}"
+}
+

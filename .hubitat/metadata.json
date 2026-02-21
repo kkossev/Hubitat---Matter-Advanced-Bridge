@@ -4,19 +4,19 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1629
+      "version": 1662
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
       "id": 162,
       "codeType": "library",
-      "version": 94
+      "version": 101
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterLib.groovy",
       "id": 145,
       "codeType": "library",
-      "version": 64
+      "version": 66
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/Matter_State_Machines.groovy",
@@ -46,19 +46,19 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Window_Shade.groovy",
       "id": 2766,
       "codeType": "driver",
-      "version": 258
+      "version": 259
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Door_Lock",
       "codeType": "driver",
       "id": 3188,
-      "version": 312
+      "version": 313
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Air_Purifier.groovy",
       "codeType": "driver",
       "id": 3429,
-      "version": 46
+      "version": 47
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter Generic Component_Energy.groovy",
@@ -70,7 +70,7 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom Component_Power_Energy.groovy",
       "id": 3802,
       "codeType": "driver",
-      "version": 62
+      "version": 64
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom_Component_Signal.groovy",
@@ -82,19 +82,19 @@
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Button.groovy",
       "codeType": "driver",
       "id": 4764,
-      "version": 37
+      "version": 70
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterHealthStatusLib.groovy",
       "codeType": "library",
       "id": 199,
-      "version": 8
+      "version": 9
     },
     {
       "filepath": "/c:/Work/Hubitat---Matter-Advanced-Bridge/Libraries/matterCommonLib.groovy",
       "codeType": "library",
       "id": 200,
-      "version": 12
+      "version": 13
     }
   ]
 }

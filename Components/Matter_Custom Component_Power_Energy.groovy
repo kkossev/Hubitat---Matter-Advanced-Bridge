@@ -15,17 +15,18 @@
  * ver. 1.0.0  2025-04-06 kkossev  - first release
  * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.1.1  2025-01-29 kkossev  - common libraries
- * ver. 1.1.2  2026-02-14 kkossev - (dev. branch) getInfo(); bugfix: Power/Energy processing exceptions;
+ * ver. 1.1.2  2026-02-14 kkossev - getInfo(); bugfix: Power/Energy processing exceptions;
+ * ver. 1.1.3  2026-02-19 kkossev - (dev. branch) moved common methods to matterCommonLib
 *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentPowerEnergyVersion = '1.1.2'
-@Field static final String matterComponentPowerEnergyStamp   = '2026/02/14 10:26 AM'
+@Field static final String matterComponentPowerEnergyVersion = '1.1.3'
+@Field static final String matterComponentPowerEnergyStamp   = '2026/02/19 4:46 PM'
 
 metadata {
-    definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Energy.groovy') {
+    definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom%20Component_Power_Energy.groovy') {
         capability 'Actuator'
         capability 'Switch'             // Commands:[off, on, refresh]
         capability 'PowerMeter'
@@ -126,16 +127,6 @@ private void logsOff() {
 
 void refresh() {
     parent?.componentRefresh(this.device)
-}
-
-void setState(String stateName, String stateValue) {
-    if (logEnable) { log.debug "${device.displayName} setting state '${stateName}' to '${stateValue}'" }
-    state[stateName] = stateValue
-}
-
-String getState(String stateName) {
-    if (logEnable) { log.debug "${device.displayName} getting state '${stateName}'" }
-    return state[stateName]
 }
 
 
@@ -765,37 +756,6 @@ void clearInfoMode() {
     logDebug "clearInfoMode: info mode disabled"
 }
 
-
-Map getFingerprintData() {
-    String fingerprintJson = device.getDataValue('fingerprintData')
-    if (!fingerprintJson) {
-        logDebug "getFingerprintData: fingerprintData not found in device data"
-        return null
-    }
-    
-    try {
-        return new groovy.json.JsonSlurper().parseText(fingerprintJson)
-    } catch (Exception e) {
-        logWarn "getFingerprintData: failed to parse fingerprintData: ${e.message}"
-        return null
-    }
-}
-
-List<String> getServerList() {
-    Map fingerprint = getFingerprintData()
-    if (fingerprint == null) {
-        logDebug "getServerList: fingerprint data not available"
-        return []
-    }
-    
-    return fingerprint['ServerList'] ?: []
-}
-
-
-boolean isClusterSupported(String clusterHex) {
-    List<String> serverList = getServerList()
-    return serverList.contains(clusterHex?.toUpperCase())
-}
 
 List<String> getElectricalPowerMeasurementAttributeList() {
     Map fingerprint = getFingerprintData()

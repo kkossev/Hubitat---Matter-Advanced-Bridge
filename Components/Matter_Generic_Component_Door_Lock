@@ -22,7 +22,8 @@
   * ver. 1.3.1  2025-01-22 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements (clearUser seems to be working!)
   * ver. 1.3.2  2025-01-25 kkossev + GPT-4.1 : newParse: true decoding; use matterCommonLib; 
   *                                  capability 'LockCodes' is commented out temporarily: (lock codes still not working)
-  * ver. 1.3.3  2025-02-06 kkossev   (dev. branch) added events 'locking', 'unlocking' for better UI feedback; experimenting ...
+  * ver. 1.3.3  2025-02-06 kkossev   added events 'locking', 'unlocking' for better UI feedback; experimenting ...
+  * ver. 1.3.4  2025-02-19 kkossev   (dev. branch) moved common methods to matterCommonLib;
   * 
   *                                  TODO: 
   *                                  TODO: filter duplicated events
@@ -42,8 +43,8 @@ import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
-@Field static final String matterComponentLockVersion = '1.3.3'
-@Field static final String matterComponentLockStamp   = '2025/02/06 9:27 PM'
+@Field static final String matterComponentLockVersion = '1.3.4'
+@Field static final String matterComponentLockStamp   = '2025/02/19 4:49 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false              // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false      // disable on production
@@ -64,7 +65,7 @@ import hubitat.matter.DataType
 @Field static final Integer FEATURE_UNBOLT = 0x1000                  // Bit 12: Unbolt support
 
 metadata {
-    definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Daniel Segall', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Door_Lock') {
+    definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Daniel Segall', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Door_Lock') {
         capability 'Sensor'
         capability 'Actuator'
         capability 'Battery'
@@ -1247,60 +1248,7 @@ void refresh() {
     parent?.componentRefresh(this.device)
 }
 
-// for use by parent driver
-void setState(String stateName, String stateValue) {
-    logDebug "setting state '${stateName}' to '${stateValue}'"
-    state[stateName] = stateValue
-}
 
-// for use by parent driver
-String getState(String stateName) {
-    logDebug "getting state '${stateName}'"
-    return state[stateName]
-}
-
-/**
- * Get the complete fingerprint data stored in device data
- * @return Map containing fingerprint data or null if not found
- */
-Map getFingerprintData() {
-    String fingerprintJson = device.getDataValue('fingerprintData')
-    if (!fingerprintJson) {
-        logDebug "getFingerprintData: fingerprintData not found in device data"
-        return null
-    }
-    
-    try {
-        return new groovy.json.JsonSlurper().parseText(fingerprintJson)
-    } catch (Exception e) {
-        logWarn "getFingerprintData: failed to parse fingerprintData: ${e.message}"
-        return null
-    }
-}
-
-/**
- * Get ServerList from fingerprint data
- * @return List of cluster IDs as hex strings (e.g., ["03", "1D", "2F", "0101"])
- */
-List<String> getServerList() {
-    Map fingerprint = getFingerprintData()
-    if (fingerprint == null) {
-        logDebug "getServerList: fingerprint data not available"
-        return []
-    }
-    
-    return fingerprint['ServerList'] ?: []
-}
-
-/**
- * Check if a specific cluster is supported by this device
- * @param clusterHex Cluster ID as hex string (e.g., "0101" for Door Lock)
- * @return true if cluster is in ServerList
- */
-boolean isClusterSupported(String clusterHex) {
-    List<String> serverList = getServerList()
-    return serverList.contains(clusterHex?.toUpperCase())
-}
 
 /**
  * Get the Door Lock cluster AttributeList (0x0101_FFFB)

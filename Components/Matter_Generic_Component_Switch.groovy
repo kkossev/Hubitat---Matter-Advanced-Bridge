@@ -25,7 +25,7 @@ import groovy.transform.Field
 @Field static final String matterComponentSwitchStamp   = '2025/01/29 10:32 PM'
 
 metadata {
-    definition(name: 'Matter Generic Component Switch', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Switch.groovy') {
+    definition(name: 'Matter Generic Component Switch', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Switch.groovy') {
         capability 'Actuator'
         capability 'Switch'             // Commands:[off, on, refresh]
         capability 'Refresh'
@@ -115,15 +115,6 @@ void refresh() {
     parent?.componentRefresh(this.device)
 }
 
-void setState(String stateName, String stateValue) {
-    if (logEnable) { log.debug "${device.displayName} setting state '${stateName}' to '${stateValue}'" }
-    state[stateName] = stateValue
-}
-
-String getState(String stateName) {
-    if (logEnable) { log.debug "${device.displayName} getting state '${stateName}'" }
-    return state[stateName]
-}
 
 // --------- common matter libraries included below --------
 #include kkossev.matterCommonLib
