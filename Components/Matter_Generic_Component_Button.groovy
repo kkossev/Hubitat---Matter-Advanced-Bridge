@@ -20,14 +20,16 @@
   * ver. 1.0.4  2026-01-29 kkossev  - common libraries
   * ver. 1.1.0  2026-02-21 kkossev  - (dev. branch) - added getInfo() command; code refactoring
   *
-  *                                 TODO: featureMap in deviceFingerprintData is wrong!! 
+  *                                 TODO: featureMap in deviceFingerprintData is in decimal, maybe should be stored in hex for better readability?
+  *                                 TODO: add getFeatureMap(cluster) method in the commonLib
+  *                                 TODO: send supportedButtonValues attribute event depending on the featureMap (e.g. if MSM supported, send supportedButtonValues = 'pushed, held, released, double') to help Hubitat apps know which button events to expect
 */
 
 import groovy.transform.Field
 import groovy.json.JsonSlurper
 
 @Field static final String matterComponentButtonVersion = '1.1.0'
-@Field static final String matterComponentButtonStamp   = '2026/02/21 7:27 PM'
+@Field static final String matterComponentButtonStamp   = '2026/02/21 11:05 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -57,7 +59,6 @@ void parse(String description) { log.warn 'parse(String description) not impleme
 
 // parse commands from parent
 void parse(List<Map> description) {
-    //log.trace "parse(List<Map> description) called with: ${description}"
     logDebug "parse(List<Map> description) called with: ${description}"
 
     description.each { d ->
@@ -218,7 +219,7 @@ private void handleSwitchEvent(Map descMap) {
             // Verify device supports MSM before processing MultiPressComplete events
             Integer featureMapMulti = getFeatureMap()
             if ((featureMapMulti & 0x10) == 0) { // MSM (MomentarySwitchMultiPress) NOT supported
-                logDebug "multiPressComplete event ignored - device does not declare MSM support in FeatureMap (0x${Integer.toHexString(featureMapMulti)}) but is sending MultiPressComplete events (device firmware bug)"
+                logDebug "multiPressComplete event ignored - device does not declare MSM support in FeatureMap (0x${Integer.toHexString(featureMapMulti)}) but is sending MultiPressComplete events (the FeatureMap map takes precedence)"
                 return
             }
             
@@ -282,10 +283,8 @@ private void handleSwitchAttribute(Map descMap) {
 
         case 0xFFFC: // FeatureMap
             Integer featureMap = safeToInt(descMap.value)
-            log.trace "FeatureMap raw value: ${descMap.value} hex=0x${matter.integerTo8bitUnsignedHex(featureMap)}"
-            device.updateDataValue('featureMap', matter.integerTo8bitUnsignedHex(featureMap).toString())
             String featuresText = decodeFeatureMap(featureMap)
-            // FeatureMapRaw is stored in fingerprintData as '003B_FFFC', but it is wrong !!! - TODO !!
+            // FeatureMapRaw is stored in fingerprintData as '003B_FFFC'
             message = "${prefix}FeatureMap: ${featuresText} (0x${matter.integerTo8bitUnsignedHex(featureMap)})"
             break
         case 0xFFFB: // AttributeList

@@ -54,7 +54,7 @@
  * ver. 1.7.7  2026-02-14 kkossev   bugfix: Power/Energy processing exceptions; 'Matter Custom Component Power Energy' getInfo() method; newParse is true by default;
  * ver. 1.8.0  2026-02-21 kkossev   (dev. branch) - enforcing newParse:true; removing old custom parse code; Button driver improvements; added PressureMeasurement cluster 0x0403 support with 'Generic Component Pressure Sensor'
  *
- *                                   TODO: featureMap is missing after inital discovery !!! 
+ *                                   TODO: refresh() to use the subscription list to read the attributes
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
  *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
@@ -76,15 +76,15 @@
  */
 
 static String version() { '1.8.0' }
-static String timeStamp() { '2026/02/21 7:28 PM' }
+static String timeStamp() { '2026/02/21 10:16 PM' }
 
 
-@Field static final Boolean _DEBUG = false                     // make it FALSE for production!
+@Field static final Boolean _DEBUG = false                   // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = true        // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = false        // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
@@ -226,6 +226,16 @@ metadata {
                                [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // CurrentPosition
                                [0x0002: [min: 0, max: 0xFFFF, delta: 0]]],  // MultiPressMax
               eventSubscriptions : [-1]  // -1 means subscribe to ALL events from this cluster
+              /*
+              eventSubscriptions : [//  [0x0000: [min: 0, max: 0xFFFF, delta: 0]],
+                                      [0x0001: [min: 0, max: 0xFFFF, delta: 0]],
+                                      [0x0002: [min: 0, max: 0xFFFF, delta: 0]],
+                                      [0x0003: [min: 0, max: 0xFFFF, delta: 0]],
+                                      [0x0004: [min: 0, max: 0xFFFF, delta: 0]],
+                                      [0x0005: [min: 0, max: 0xFFFF, delta: 0]],
+                                      [0x0006: [min: 0, max: 0xFFFF, delta: 0]]
+                                  ] */
+
     ],
     
     // Descriptor Cluster - subscribing to it seems to create a lot of issues!! :( 
@@ -2378,125 +2388,10 @@ void sendSubscribeList() {
         }
     }
     else {
-        // Fallback to older subscribe method for firmware < 2.3.9.186
-        List<String> cmds = getSubscribeOrRefreshCmdList('SUBSCRIBE_ALL')
-        if (cmds != null && cmds != []) {
-            state.lastTx['subscribeTime'] = now()
-            logTrace "sendSubscribeList(): cmds = ${cmds}"
-            sendToDevice(cmds)
-        }
+        logWarn 'cleanSubscribe() is not supported for this Hub firmware version!'
     }
 }
 
-List<String> getSubscribeOrRefreshCmdList(action='REFRESH') {
-    // the state.subscriptions list is: subscriptions : [[0, 29, 3], [36, 6, 0], [36, 8, 0], [36, 768, 0], [36, 768, 1], [36, 768, 7], [54, 6, 0], [8, 1029, 0], [7, 1026, 0], [55, 6, 0], [15, 6, 0], [13, 513, 0]]
-    List<List<Integer>>  stateSubscriptionsList = new ArrayList<List<Integer>>(state.subscriptions ) ?: []
-    List<String> cmdsList = []
-    logDebug "getSubscribeCmdList(): stateSubscriptionsList = ${stateSubscriptionsList}"
-
-    LinkedHashMap<Integer, List<List<Integer>>>  groupedSubscriptionsByCluster = stateSubscriptionsList.groupBy { it[1] }
-    logTrace "groupedSubscriptionsByCluster=${groupedSubscriptionsByCluster}"
-    // sample groupedSubscriptionsByCluster:  768 : [[36, 768, 0], [36, 768, 1], [36, 768, 7]]
-    for (Map.Entry<Integer, List<List<Integer>>> entry : groupedSubscriptionsByCluster.entrySet()) {
-        Integer cluster = entry.getKey()
-        Integer attribute = null
-        List<List<Integer>> value = entry.getValue()
-        //logTrace "Cluster:${cluster}, value:${value}"
-        // check if the cluster is in the supported clusters list
-        if (!SupportedMatterClusters.containsKey(cluster)) {
-            logWarn "getSubscribeCmdList(): cluster 0x${HexUtils.integerToHexString(cluster, 2)} is not in the SupportedMatterClusters list!"
-            continue  // do not subscribe to this cluster, continue with the next cluster
-        }
-        // Sample groupedSubscriptionsByAttribute Attribute 0 : [[36, 768, 0]]
-        Map<Integer, List<List<Integer>>> groupedSubscriptionsByAttribute = value.groupBy { it[2] }
-        //logTrace "groupedSubscriptionsByAttribute=${groupedSubscriptionsByAttribute}"
-        for (Map.Entry<Integer, List<List<Integer>>> entry2 : groupedSubscriptionsByAttribute.entrySet()) {
-            List<Map<String, String>> attributePaths = []       // individual attributePaths for each attribute
-            attribute = entry2.getKey()
-            List<List<Integer>> endpointsList = entry2.getValue()
-            //logTrace "Cluster:${cluster}, Attribute:${attribute}, endpointsList:${endpointsList}"
-
-            List<List<Map<Integer, Map<String, Integer>>>> supportedSubscriptions = SupportedMatterClusters[cluster]['subscriptions']
-            //def supportedSubscriptions = SupportedMatterClusters[cluster]['subscriptions']
-            // sample supportedSubscriptions=[[0:[min:0, max:65535, delta:0]], [1:[min:0, max:65535, delta:0]]]
-            if (supportedSubscriptions == null || supportedSubscriptions == []) {
-                logWarn "<b>getSubscribeCmdList(): supportedSubscriptions is null or empty for cluster:${cluster} attribute:${attribute}!</b>"
-                continue  // do not subscribe to this attribute, continue with the next
-            }
-            // make a list of integer keys from  the supportedSubscriptions list
-            List<Integer> supportedSubscriptionsKeys = supportedSubscriptions*.keySet().flatten()
-            //logTrace "supportedSubscriptionsKeys=${supportedSubscriptionsKeys}"
-            // check if the attribute is in the supportedSubscriptionsKeys list
-            if (!supportedSubscriptionsKeys.contains(attribute)) {
-                logWarn "getSubscribeCmdList(): attribute 0x${HexUtils.integerToHexString(attribute, 2)} is not in the supportedSubscriptionsKeys:${supportedSubscriptionsKeys} list! "
-                continue  // do not subscribe to this attribute, continue with the next
-            }
-            // here we have a list of same cluster, same attribute, different endpoints
-            endpointsList.each { endpointList ->
-                Integer endpoint = endpointList[0]
-                // Skip disabled child devices
-                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-                ChildDeviceWrapper childDevice = getChildDevice(dni)
-                if (childDevice?.disabled == true) {
-                    logDebug "getSubscribeOrRefreshCmdList(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
-                    return  // continue to next endpoint
-                }
-                attributePaths.add(matter.attributePath(endpoint, cluster, attribute))
-            }
-            //logTrace "attribute: ${attribute} attributePaths:${attributePaths} supportedSubscriptions[attribute]:${supportedSubscriptions[attribute]}"
-            // assume the min, max and delta values are the same for all endpoints
-            def firstSupportedSubscription = supportedSubscriptions[attribute]?.get(0)
-            //logTrace "firstSupportedSubscription = ${firstSupportedSubscription}"
-            Integer min = firstSupportedSubscription?.get('min') ?: 0
-            Integer max = firstSupportedSubscription?.get('max') ?: 0xFFFF
-            //logTrace "min=${min}, max=${max}, delta=${delta}"
-            if (action == 'REFRESH_ALL') {
-                cmdsList.add(matter.readAttributes(attributePaths))
-            }
-            else if (action == 'SUBSCRIBE_ALL') {
-                cmdsList.add(matter.subscribe(min, max, attributePaths))
-            }
-        } // for each attribute
-        
-        // Handle event subscriptions for this cluster (if configured)
-        if (action == 'SUBSCRIBE_ALL' && SupportedMatterClusters[cluster]?.eventSubscriptions) {
-            List<Integer> eventIds = SupportedMatterClusters[cluster].eventSubscriptions
-            List<Map<String, String>> eventPaths = []
-            
-            // Get unique endpoints for this cluster from the grouped subscriptions
-            Set<Integer> clusterEndpoints = [] as Set<Integer>
-            value.each { endpointClusterAttr ->
-                clusterEndpoints.add(endpointClusterAttr[0] as Integer)
-            }
-            
-            // Build event paths for each endpoint (skip disabled devices)
-            clusterEndpoints.each { endpoint ->
-                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-                ChildDeviceWrapper childDevice = getChildDevice(dni)
-                if (childDevice?.disabled == true) {
-                    logDebug "getSubscribeOrRefreshCmdList(): skipping disabled device events for endpoint ${endpoint} (${childDevice.displayName})"
-                    return  // continue to next endpoint
-                }
-                
-                eventIds.each { eventId ->
-                    eventPaths.add(matter.eventPath(endpoint, cluster, eventId))
-                }
-            }
-            
-            // Add event subscription command if we have any event paths
-            if (!eventPaths.isEmpty()) {
-                String evtSubscribeCmd = matter.subscribe(0, 0xFFFF, eventPaths)
-                cmdsList.add(evtSubscribeCmd)
-                logDebug "getSubscribeOrRefreshCmdList(): added event subscriptions for cluster 0x${HexUtils.integerToHexString(cluster, 2)} endpoints=${clusterEndpoints} eventIds=${eventIds}"
-            }
-        }
-        
-        //logTrace "attribute:${attribute} cmdsList=${cmdsList}"
-        //return cmdsList
-    }   // for each cluster
-
-    return cmdsList
-}
 
 String subscribeCmd() {
     log.warn 'subscribeCmd() is deprecated. Use cleanSubscribeCmd() instead.'
@@ -2506,30 +2401,7 @@ String subscribeCmd() {
 // availabe from HE platform version [2.3.9.186]
 String cleanSubscribeCmd() {
     List<Map<String, String>> paths = []
-    // Build event paths first, then attribute paths (requested ordering)
-    List<Map<String, String>> eventPaths = []
-
-    // Add event subscriptions for clusters that have eventSubscriptions configured
-    LinkedHashMap<Integer, List<List<Integer>>> groupedSubscriptionsByCluster = state.subscriptions?.groupBy { it[1] }
-    groupedSubscriptionsByCluster?.each { Integer cluster, List<List<Integer>> endpointsList ->
-        if (SupportedMatterClusters[cluster]?.eventSubscriptions) {
-            List<Integer> eventIds = SupportedMatterClusters[cluster].eventSubscriptions
-            // Get unique endpoints for this cluster
-            Set<Integer> clusterEndpoints = endpointsList*.get(0) as Set<Integer>
-            // Build event paths for each endpoint (skip disabled devices)
-            clusterEndpoints.each { Integer endpoint ->
-                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-                ChildDeviceWrapper childDevice = getChildDevice(dni)
-                if (childDevice?.disabled == true) {
-                    logDebug "cleanSubscribeCmd(): skipping disabled device events for endpoint ${endpoint} (${childDevice.displayName})"
-                    return  // continue to next endpoint
-                }
-                eventIds.each { Integer eventId ->
-                    eventPaths.add(matter.eventPath(endpoint, cluster, eventId))
-                }
-            }
-        }
-    }
+    List<Map<String, String>> eventPaths = []       // Build attribute paths first, then event paths
 
     // Filter out attribute subscriptions for disabled child devices
     List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
@@ -2545,8 +2417,40 @@ String cleanSubscribeCmd() {
         matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
     } ?: []
 
-    paths.addAll(eventPaths)
+    // Add event subscriptions for clusters that have eventSubscriptions configured
+    LinkedHashMap<Integer, List<List<Integer>>> groupedSubscriptionsByCluster = state.subscriptions?.groupBy { it[1] }
+    groupedSubscriptionsByCluster?.each { Integer cluster, List<List<Integer>> endpointsList ->
+        if (SupportedMatterClusters[cluster]?.eventSubscriptions) {
+            // Extract event IDs from eventSubscriptions
+            // Supports two formats:
+            // 1. (wildcard): eventSubscriptions : [-1]  → subscribes to ALL events from cluster
+            // 2. (detailed): eventSubscriptions : [[0x0001:[min:0,max:0xFFFF,delta:0]], [0x0002:[...]], ...]
+            def eventSubscriptions = SupportedMatterClusters[cluster].eventSubscriptions
+            List<Integer> eventIds = eventSubscriptions.collect { eventSub ->
+                // If eventSub is a Map, extract the key (event ID)
+                // If eventSub is an Integer (wildcard), use it directly (-1 for wildcard or specific event ID)
+                eventSub instanceof Map ? (eventSub.keySet()[0] as Integer) : (eventSub as Integer)
+            }
+            // Get unique endpoints for this cluster
+            Set<Integer> clusterEndpoints = endpointsList*.get(0) as Set<Integer>
+            // Build event paths for each endpoint (skip disabled devices)
+            clusterEndpoints.each { Integer endpoint ->
+                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+                ChildDeviceWrapper childDevice = getChildDevice(dni)
+                if (childDevice?.disabled == true) {
+                    logDebug "cleanSubscribeCmd(): skipping disabled device events for endpoint ${endpoint} (${childDevice.displayName})"
+                    return  // continue to next endpoint
+                }
+                eventIds.each { Integer eventId ->
+                    // eventId can be -1 (wildcard for ALL events) or specific event ID (0x0001, 0x0002, etc.)
+                    eventPaths.add(matter.eventPath(endpoint, cluster, eventId))
+                }
+            }
+        }
+    }
+
     paths.addAll(attributePaths)
+    paths.addAll(eventPaths)
     
     if (paths.isEmpty()) {
         logWarn 'cleanSubscribeCmd(): paths is empty!'
@@ -2638,7 +2542,7 @@ void checkSubscriptionStatus() {
 
 /**
  * This method is called at the end of the discovery process to update the state.subscriptions list of lists.
- * It collects the known clusters and attributes based on the state.fingerprintXX.Subscribe individual devoces lists.
+ * It collects the known clusters and attributes based on the state.fingerprintXX.Subscribe individual devices lists.
  * It iterates through each fingerprint in the state and checks if the fingerprint has entries in the SupportedMatterClusters list.
  * If a match is found, it adds the corresponding entries to the state.subscriptions list of lists.
  * The number of the found subscriptions and the device count are logged and sent as info events.
@@ -2767,19 +2671,39 @@ void setSwitch(String commandPar, String deviceNumberPar/*, extraPar = null*/) {
 }
 
 void refresh() {
-    logInfo'refresh() ...'
+    logInfo 'refresh() ...'
     checkDriverVersion()
     setRefreshRequest()    // 6 seconds
-    List<String> cmdsList = getSubscribeOrRefreshCmdList('REFRESH_ALL')
-    if (cmdsList != null && cmdsList != []) {
-        logDebug "refresh(): cmdsList = ${cmdsList}"
-        sendToDevice(cmdsList)
+    
+    // Build attribute paths from state.subscriptions, filtering out disabled child devices
+    List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
+        Integer endpoint = sub[0] as Integer
+        // Skip bridge endpoint (0) - will be handled separately if needed
+        if (endpoint == 0) {
+            return true  // include bridge attributes
+        }
+        // Check if child device is disabled
+        String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
+        ChildDeviceWrapper childDevice = getChildDevice(dni)
+        if (childDevice?.disabled == true) {
+            logDebug "refresh(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
+            return false
+        }
+        return true
+    }?.collect { sub ->
+        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
+    } ?: []
+    
+    if (attributePaths.isEmpty()) {
+        logWarn 'refresh(): no attributes to refresh!'
+        return
     }
-    else {
-        logWarn 'refresh(): cmdsList is null or empty!'
-    }
+    
+    logDebug "refresh(): reading ${attributePaths.size()} attributes from ${state.subscriptions?.size()} subscriptions"
+    String cmd = matter.readAttributes(attributePaths)
+    sendToDevice(cmd)
 }
-
+/*
 String refreshCmd() {
     logInfo 'refreshCmd() ...'
     List<Map<String, String>> attributePaths = state.subscriptions?.collect { sub ->
@@ -2794,6 +2718,7 @@ String refreshCmd() {
     })
     return matter.readAttributes(attributePaths)
 }
+*/
 
 void logsOff() {
     log.warn 'debug logging disabled...'
@@ -3983,16 +3908,11 @@ void updateStateStats(Map descMap) {
 /* groovylint-disable-next-line UnusedMethodParameter */
 void test(par) {
     //par = "16152400432401011818"
-
     //def x = decodeTLVToHex(par)
     //decodeTLVToHex(16152400432401011818 -> [0043, 0001])
-
-
-
-
     //def x = matter.TLVparser(par)
-    par = ["041D041E041F042804300431043304360437043C043E043F18"]
-    def x = testDecodeTLV(par)
+   // par = ["041D041E041F042804300431043304360437043C043E043F18"]
+//    def x = testDecodeTLV(par)
     /*
     // decodeTLVToHex(16152400432401011818 -> 
     [
@@ -4002,7 +3922,43 @@ void test(par) {
        ]
     ]
     */
-    log.warn "decodeTLVToHex(${par} -> ${x})"
+    //log.warn "decodeTLVToHex(${par} -> ${x})"
+
+    // Subscribe to Switch cluster InitialPress event for endpoint 0x57
+    Integer endpoint = 0x57  // 87 decimal
+    Integer cluster = 0x3B   // 59 decimal (Switch cluster)
+    Integer eventId = 1      // InitialPress event
+    
+     List<Map<String,String>> paths = []
+
+    // Battery attribute
+    paths.add(matter.attributePath(0x57, 0x002F, 0x000C))
+
+    
+    // 0x003B attr 0x0001 = PresentValue(CurrentState)
+    // Subscribing to this attribute seems to 'unlock' or keep events flowing.
+    // Probably, other Matter switches also require any attribute subscription to activate event streams?
+
+     paths.add(matter.attributePath(0x57, 0x003B, 1))      // Switch cluster attribute 0x0001 (current position) seems to be enough
+
+    
+    // matter events are always enabled    
+
+    //paths.add(matter.eventPath(0x57, 0x003B, -1))         // We need to subscribe for ALL events from the switch cluster 
+    paths.add(matter.eventPath(0x57, 0x003B, 1))
+    paths.add(matter.eventPath(0x57, 0x003B, 2))
+    paths.add(matter.eventPath(0x57, 0x003B, 3))
+    paths.add(matter.eventPath(0x57, 0x003B, 4))
+    paths.add(matter.eventPath(0x57, 0x003B, 5))
+    paths.add(matter.eventPath(0x57, 0x003B, 6))
+
+
+    String cmd = matter.cleanSubscribe(1, 0xFFFF, paths)
+    logDebug "subscribeToPaths cmd=${cmd}"
+    
+    sendToDevice(cmd)
+
+       
 }
 
 
