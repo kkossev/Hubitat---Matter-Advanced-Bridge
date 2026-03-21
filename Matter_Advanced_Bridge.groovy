@@ -52,7 +52,9 @@
  * ver. 1.7.5  2026-02-11 kkossev   processing the new callbackType:WriteAttributes and callbackType:SubscribeResult;
  * ver. 1.7.6  2026-02-12 kkossev   bugfix: WindowCovering processing exceptions; 'Matter Generic Component Window Shade' getInfo() method;
  * ver. 1.7.7  2026-02-14 kkossev   bugfix: Power/Energy processing exceptions; 'Matter Custom Component Power Energy' getInfo() method; newParse is true by default;
+ * ver. 1.7.8  2026-03-21 lgk       added delayed illumination handling;
  * ver. 1.8.0  2026-02-21 kkossev   (dev. branch) - enforcing newParse:true; removing old custom parse code; Button driver improvements; added PressureMeasurement cluster 0x0403 support with 'Generic Component Pressure Sensor'
+ * ver. 1.8.1  2026-03-21 kkossev   (dev. branch) - merged ver. 1.7.8; 
  *
  *                                   TODO: refresh() to use the subscription list to read the attributes
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -75,8 +77,8 @@
  *
  */
 
-static String version() { '1.8.0' }
-static String timeStamp() { '2026/02/21 10:16 PM' }
+static String version() { '1.8.1' }
+static String timeStamp() { '2026/03/21 8:26 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -99,6 +101,7 @@ static String timeStamp() { '2026/02/21 10:16 PM' }
 @Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 1
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT = 600
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL = 0xFFFF
+@Field static final Integer defaultMinReportingTime = 10
 
 // Internal events that should be routed through parse() without requiring attribute declaration
 @Field static final List<String> INTERNAL_EVENTS = ['unprocessed', 'handleInChildDriver']
@@ -164,6 +167,7 @@ metadata {
         input name:'txtEnable', type: 'bool', title: '<b>Enable descriptionText logging</b>', defaultValue: true
         input name:'logEnable', type: 'bool', title: '<b>Enable debug logging</b>', defaultValue: DEFAULT_LOG_ENABLE
         input name: 'advancedOptions', type: 'bool', title: '<b>Advanced Options</b>', description: '<i>These advanced options should be already automatically set in an optimal way for your device...</i>', defaultValue: false
+        input name: "minReportingTimeIllum", type: "number", title: "Minimum time between illumination/lux reports", description: "Minimum time between illumination/lux reporting, seconds", defaultValue: 10, range: "1..3600",  limit:['ALL']
         if (device && advancedOptions == true) {
             input name: 'healthCheckMethod', type: 'enum', title: '<b>Healthcheck Method</b>', options: HealthcheckMethodOpts.options, defaultValue: HealthcheckMethodOpts.defaultValue, required: true, description: '<i>Method to check device online/offline status.</i>'
             input name: 'healthCheckInterval', type: 'enum', title: '<b>Healthcheck Interval</b>', options: HealthcheckIntervalOpts.options, defaultValue: HealthcheckIntervalOpts.defaultValue, required: true, description: '<i>How often the hub will check the device health.<br>3 consecutive failures will result in status "offline"</i>'
@@ -1426,12 +1430,17 @@ void parseIlluminanceMeasurement(final Map descMap) { // 0400
             logWarn "parseIlluminanceMeasurement: valueInt:${valueInt} is out of range"
             return
         }
+        int lux = valueLux.toInteger()
+        illumEvent(lux, descMap)
+        /*
         sendHubitatEvent([
             name: 'illuminance',
             value: valueLux as int,
             unit: 'lx',
             descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  illuminance is ${valueLux} lux"
         ], descMap, true)
+        
+        */
     } else {
         logTrace "parseIlluminanceMeasurement: ${(IlluminanceMeasurementClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
     }
@@ -2220,6 +2229,10 @@ void updated() {
     }
     state.preferences['minimizeStateVariables'] = settings.minimizeStateVariables
     ensureNewParseFlag()
+    
+    if (settings?.minReportingTimeIllum == null) device.updateSetting("minReportingTimeIllum",  [value:10, type:"number"])
+    resetStats2()
+   
 }
 
 // delete all Preferences
@@ -3833,6 +3846,7 @@ void initializeVars(boolean fullInit = false) {
         state.clear()
         unschedule()
         resetStats()
+        resetStats2() 
         state.comment = 'Matter Advanced Bridge driver'
         logInfo 'all states and scheduled jobs cleared!'
         state.driverVersion = driverVersionAndTimeStamp()
@@ -3957,11 +3971,102 @@ void test(par) {
     logDebug "subscribeToPaths cmd=${cmd}"
     
     sendToDevice(cmd)
+ }
 
+// lgk 03/26 add delayed illum
+
+def illumEvent( illum, descMap) {
+    logDebug "In lgk illum event"
+    def map = [:] 
+    //def newMap = [:]
+    Map statsMap = stringToJsonMap(state.stats2); try {statsMap['illumCtr']++ } catch (e) {statsMap['illumCtr']=1}; state.stats2 = mapToJsonString(statsMap)
+    int lux = illum
+    if (lux <= 0) {
+        log.warn "ignored invalid illum/lux ${lux}"
+        return
+    }
+    map.value = lux
+    map.name = "illumination"
+    map.unit = "lx"
+    map.type = "digital"
+    map.isStateChange = true
+    map.descriptionText = "${map.name} is ${lux} ${map.unit}"
+    Map lastRxMap = stringToJsonMap(state.lastRx2)
+    def timeElapsed = Math.round((now() - lastRxMap['illumTime'])/1000)
+    Integer timeRamaining = (minReportingTimeIllum - timeElapsed) as Integer
+    if (timeElapsed >= minReportingTimeIllum) {
+       // if (settings?.txtEnable) {log.info "${device.displayName} ${map.descriptionText}"}
+        unschedule("sendDelayedEventIllum")
+        lastRxMap['illumTime'] = now()
+        logDebug "Not delaying sending $map"
+        
+       sendHubitatEvent([ 
+            name: 'illuminance',
+            value: illum,
+            unit: 'lx',
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  illuminance is ${illum} lux"
+            ], descMap, true)       
+    }
+    else { // queue the event 
+    	map.type = "delayed"
+        logDebug "${device.displayName} DELAYING ${timeRamaining} seconds event : ${map}"   
+        
+        map.descMap = descMap
+        // [callbackType:Report, endpointInt:9, clusterInt:1024, attrInt:0, data:[0:UINT:13586], value:13586, cluster:0400, endpoint:09, attrId:0000]
+        runIn(timeRamaining, 'sendDelayedEventIllum',  [overwrite: true, data: map ])
+    }
+    state.lastRx2 = mapToJsonString(lastRxMap)
+}
+
+private void sendDelayedEventIllum(Map map) {
+    def descMap = [:]
+ 
+    Map lastRxMap = stringToJsonMap(state.lastRx2); try {lastRxMap['illumTime'] = now()} catch (e) {lastRxMap['illumTime']=now()-(minReportingTimeIllum * 2000)}; state.lastRx2 = mapToJsonString(lastRxMap)
+    logInfo "In Send/Processing delayed map = $map"
+   
+    int illum = map.value
+    descMap = map.descMap 
        
+    sendHubitatEvent([
+            name: 'illuminance',
+            value: illum,
+            unit: 'lx',
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  illuminance is ${illum} lux"
+            ], descMap, true)
 }
 
 
+def resetStats2() {
+    Map stats2 = [
+        date : new Date().format('yyyy-MM-dd', location.timeZone),
+        rxCtr : 0,
+        txCtr : 0,
+        rejoins: 0
+    ]
+       
+    Map lastRx2 = [
+        illumTime : now() - defaultMinReportingTime * 1000,
+        illumCfg : '-1,-1,-1'
+    ]
+
+
+    state.stats2  =  mapToJsonString( stats2 )
+    state.lastRx2 =  mapToJsonString( lastRx2 )
+    log.info "${device.displayName} Statistics were reset."
+}
+
+String mapToJsonString( Map map) {
+    if (map==null || map==[:]) return ""
+    String str = JsonOutput.toJson(map)
+    return str
+}
+
+Map stringToJsonMap( String str) {
+    if (str==null) return [:]
+    def jsonSlurper = new JsonSlurper()
+    def map = jsonSlurper.parseText( str )
+    return map
+}
 
 // -------- libraries here --------
 /* groovylint-disable-next-line NglParseError */
