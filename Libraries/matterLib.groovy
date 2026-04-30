@@ -31,14 +31,15 @@ library(
   * ver. 1.4.0  2025-04-02 kkossev  - added 0x0091 : 'Electrical Energy Measuremen'; adding 0x0090 : 'Electrical Power Measurement'
   * ver. 1.4.1  2026-01-15 kkossev  - added tagsList, added more attributes to BridgedDeviceBasicClusterAttributes
   * ver. 1.4.2  2026-02-15 kkossev  - minor fixes and improvements
+  * ver. 1.4.3  2026-02-16 kkossev  - (dev. branch) added BooleanStateConfiguration
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.4.2'
-@Field static final String matterLibStamp   = '2026/02/15 10:45 AM'
+@Field static final String matterLibVersion = '1.4.3'
+@Field static final String matterLibStamp   = '2026/02/16 10:45 AM'
 
 // no metadata section for matterLib
 
@@ -87,6 +88,7 @@ Matter cluster names = [$FaultInjection, $UnitTesting, $ElectricalMeasurement, $
     0x001C  : 'LevelControlDerived',        // Derived cluster specifications are defined elsewhere.
     0x003B  : 'Switch',                     // Exposes interactions with a switch device, for the purpose of using those interactions by other devices
     0x0045  : 'BooleanState',               // Provides an interface to a boolean state.
+    0x0080  : 'BooleanStateConfiguration',   // Provides an interface for configuring and controlling a boolean state (e.g. sensitivity level).
     0x0050  : 'ModeSelect',                 // Provides an interface for controlling a characteristic of a device that can be set to one of several predefined values.
     0x0051  : 'LaundryWasherMode',          // Commands and attributes for controlling a laundry washer
     0x0052  : 'RefrigeratorAndTemperatureControlledCabinetMode',          // Commands and attributes for controlling a refrigerator or a temperature controlled cabinet
@@ -175,6 +177,7 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0040') { return FixedLabelClusterAttributes }
     if (cluster == '0041') { return UserLabelClusterAttributes }
     if (cluster == '0045') { return BooleanStateClusterAttributes }
+    if (cluster == '0080') { return BooleanStateConfigurationClusterAttributes }
     if (cluster == '005B') { return AirQualityClusterAttributes }
     if (cluster == '0090') { return ElectricalPowerMeasurementAttributes}
     if (cluster == '0091') { return ElectricalEnergyMeasurementAttributes}
@@ -590,6 +593,17 @@ Map getEventsMapByClusterId(String cluster) {
 // 1.7.5. Events 0x0045
 @Field static final Map<Integer, String> BooleanStateClusterEvents = [
     0x00    : 'StateChange'          // generated when the StateValue attribute changes. (INFO, V, O)
+]
+
+// 1.7.x Boolean State Configuration Cluster 0x0080 (Matter 1.3+)
+@Field static final Map<Integer, String> BooleanStateConfigurationClusterAttributes = [
+    0x0000  : 'SensitivityLevel',            // UINT8, R/W - index into supported sensitivity levels
+    0x0001  : 'SupportedSensitivityLevels',  // UINT8, R   - total number of supported sensitivity levels
+    0x0002  : 'DefaultSensitivityLevel',     // UINT8, R   - default sensitivity level
+    0x0003  : 'AlarmsActive',               // BITMAP8, R  - active alarms
+    0x0004  : 'AlarmsSuppressed',           // BITMAP8, R/W - suppressed alarms
+    0x0005  : 'AlarmsEnabled',              // BITMAP8, R/W - enabled alarms
+    0x0006  : 'AlarmsSupported'             // BITMAP8, R  - supported alarms
 ]
 
 // 5.2.6 Door Lock Cluster 0x0101 (257)

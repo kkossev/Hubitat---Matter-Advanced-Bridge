@@ -55,6 +55,9 @@
  * ver. 1.7.8  2026-03-21 lgk       added delayed illumination handling;
  * ver. 1.8.0  2026-02-21 kkossev   (dev. branch) - enforcing newParse:true; removing old custom parse code; Button driver improvements; added PressureMeasurement cluster 0x0403 support with 'Generic Component Pressure Sensor'
  * ver. 1.8.1  2026-03-21 kkossev   (dev. branch) - merged ver. 1.7.8; 
+ * ver. 1.8.2  2026-04-30 kkossev   bugfix: parsePowerSource() BatVoltage and BatPercentRemaining use safeHexToInt() to correctly parse hex string values from the old parse path;
+ *                                  added subscribe + parse support for Matter cluster 0x0080 (BooleanStateConfiguration): SensitivityLevel, SupportedSensitivityLevels, DefaultSensitivityLevel;
+ *                                  added 'Matter Custom Component Contact Sensor' child driver with sensitivityLevel attribute; mapMatterCategory uses it when cluster 0x0080 is present;
  *
  *                                   TODO: refresh() to use the subscription list to read the attributes
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -77,8 +80,8 @@
  *
  */
 
-static String version() { '1.8.1' }
-static String timeStamp() { '2026/03/21 8:26 PM' }
+static String version() { '1.8.2' }
+static String timeStamp() { '2026/04/30 8:45 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -252,6 +255,12 @@ metadata {
     0x0045 : [attributes: 'BooleanStateClusterAttributes', parser: 'parseBooleanState',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
     ],
+    // Boolean State Configuration Cluster (sensitivity, alarms config)
+    0x0080 : [attributes: 'BooleanStateConfigurationClusterAttributes', parser: 'parseBooleanStateConfiguration',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // SensitivityLevel
+                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // SupportedSensitivityLevels
+                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // DefaultSensitivityLevel
+    ],
     // Air Quality Cluster
     0x005B : [attributes: 'AirQualityClusterAttributes', parser: 'parseAirQuality',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
@@ -355,6 +364,7 @@ metadata {
     0x0039 : 'parseBridgedDeviceBasic',
     0x003B : 'parseSwitch',
     0x0045 : 'parseBooleanState',
+    0x0080 : 'parseBooleanStateConfiguration',
     0x005B : 'parseAirQuality',
     0x0090 : 'parseElectricalPowerMeasurement',
     0x0091 : 'parseElectricalEnergyMeasurement',
@@ -1042,7 +1052,7 @@ void parsePowerSource(final Map descMap) {
             break
         case 'BatPercentRemaining' :   // BatteryPercentageRemaining 0x000C
             // newParse : : descMap:[callbackType:Report, endpointInt:2, clusterInt:47, attrInt:12, data:[12:UINT:114], value:114, attrId:000C, cluster:002F, endpoint:02]
-            value = safeToInt(descMap.value)
+            value = safeHexToInt(descMap.value)  // hex string in old parse path (e.g. '64'), Integer in new parse path
             // Patch for Zemismart M1 - reports battery percentage remaining as 1 ???? TODO
             if (value == 1 && device.getDataValue('model') == 'Zemismart M1 Hub') {
                 value = 200  // interpret as 100%
@@ -1052,7 +1062,7 @@ void parsePowerSource(final Map descMap) {
             eventMap = [name: 'battery', value: value / 2, descriptionText: descriptionText]
             break
         case 'BatVoltage' :   // BatteryVoltage 0x000B
-            value = safeToInt(descMap.value)
+            value = safeHexToInt(descMap.value)  // hex string in old parse path (e.g. '0B3C'), Integer in new parse path
             descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} Battery voltage is ${value / 1000}V (raw:${descMap.value})"
             eventMap = [name: 'batteryVoltage', value: value / 1000, descriptionText: descriptionText]
             break
@@ -1417,6 +1427,45 @@ void parseBooleanState(final Map descMap) {
         }
     } else {
         logTrace "parseBooleanState: ${(BooleanStateClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    }
+}
+
+// Method for parsing Boolean State Configuration Cluster 0x0080 (sensitivity level, alarms config)
+void parseBooleanStateConfiguration(final Map descMap) {
+    if (descMap.cluster != '0080') { logWarn "parseBooleanStateConfiguration: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    Integer value = safeHexToInt(descMap.value)
+    String fingerprintName = getFingerprintName(descMap)
+    switch (descMap.attrId) {
+        case '0000':   // SensitivityLevel (R/W)
+            logInfo "${getDeviceDisplayName(descMap.endpoint)} sensitivity level is ${value}"
+            updateChildFingerprintData(fingerprintName, 'sensitivityLevel', value)
+            sendHubitatEvent([
+                name: 'sensitivityLevel',
+                value: value,
+                descriptionText: "${getDeviceDisplayName(descMap.endpoint)} sensitivity level is ${value} (raw:${descMap.value})"
+            ], descMap, true)
+            break
+        case '0001':   // SupportedSensitivityLevels (R)
+            logInfo "${getDeviceDisplayName(descMap.endpoint)} supported sensitivity levels is ${value}"
+            updateChildFingerprintData(fingerprintName, 'supportedSensitivityLevels', value)
+            sendHubitatEvent([
+                name: 'supportedSensitivityLevels',
+                value: value,
+                descriptionText: "${getDeviceDisplayName(descMap.endpoint)} supported sensitivity levels is ${value}"
+            ], descMap, true)
+            break
+        case '0002':   // DefaultSensitivityLevel (R)
+            logInfo "${getDeviceDisplayName(descMap.endpoint)} default sensitivity level is ${value}"
+            updateChildFingerprintData(fingerprintName, 'defaultSensitivityLevel', value)
+            sendHubitatEvent([
+                name: 'defaultSensitivityLevel',
+                value: value,
+                descriptionText: "${getDeviceDisplayName(descMap.endpoint)} default sensitivity level is ${value}"
+            ], descMap, true)
+            break
+        default:
+            logTrace "parseBooleanStateConfiguration: ${(BooleanStateConfigurationClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
+            break
     }
 }
 
@@ -2812,11 +2861,17 @@ Map mapMatterCategory(Map d) {
             return [ driver: 'Generic Component Water Sensor', product_name: 'Water Leak Sensor' ]
         }
         if (deviceTypes.any { it.toUpperCase() in ['15', '0015'] }) {   // 0x0015 = Contact Sensor
+            if ('0080' in d.ServerList) {   // Has BooleanStateConfiguration (e.g. Aqara P100) - use custom driver with sensitivityLevel attribute
+                return [ namespace: 'kkossev', driver: 'Matter Custom Component Contact Sensor', product_name: 'Contact Sensor' ]
+            }
             return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
         }
-        
+
         // Default to Contact Sensor if DeviceType is not specified
         logWarn "mapMatterCategory: Boolean State cluster 0x0045 found but DeviceType is ambiguous: ${deviceTypes} - defaulting to Contact Sensor"
+        if ('0080' in d.ServerList) {
+            return [ namespace: 'kkossev', driver: 'Matter Custom Component Contact Sensor', product_name: 'Contact Sensor' ]
+        }
         return [ driver: 'Generic Component Contact Sensor', product_name: 'Contact Sensor' ]
     }
     if ('005B' in d.ServerList) {   // Air Quality Sensor
@@ -2889,6 +2944,20 @@ void componentRefresh(DeviceWrapper dw) {
         sendToDevice(matter.readAttributes(attributePaths))
         logDebug "componentRefresh(${dw}) id=${id} : refreshing attributePaths=${attributePaths}"
     }
+}
+
+// Component command to set the sensitivity level (cluster 0x0080, attr 0x0000) - used by Matter Custom Component Contact Sensor
+void componentSetSensitivityLevel(DeviceWrapper dw, Integer level) {
+    Integer endpoint = HexUtils.hexStringToInt(dw.getDataValue('id'))
+    Integer supported = dw.currentValue('supportedSensitivityLevels') as Integer
+    if (supported != null && (level < 0 || level >= supported)) {
+        logWarn "componentSetSensitivityLevel: level ${level} out of range 0..${supported - 1} for ${dw.displayName}"
+        return
+    }
+    logInfo "${dw.displayName} setting sensitivity level to ${level}"
+    List<Map<String, String>> attrWriteRequests = []
+    attrWriteRequests.add(matter.attributeWriteRequest(endpoint, 0x0080, 0x0000, DataType.UINT8, intToHexStr(level, 1)))
+    sendToDevice(matter.writeAttributes(attrWriteRequests))
 }
 
 void componentIdentify(DeviceWrapper dw) {
