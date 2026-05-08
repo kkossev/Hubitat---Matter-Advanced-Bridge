@@ -58,6 +58,9 @@
  * ver. 1.8.2  2026-04-30 kkossev   bugfix: parsePowerSource() BatVoltage and BatPercentRemaining use safeHexToInt() to correctly parse hex string values from the old parse path;
  *                                  added subscribe + parse support for Matter cluster 0x0080 (BooleanStateConfiguration): SensitivityLevel, SupportedSensitivityLevels, DefaultSensitivityLevel;
  *                                  added 'Matter Custom Component Contact Sensor' child driver with sensitivityLevel attribute; mapMatterCategory uses it when cluster 0x0080 is present;
+ * ver. 1.8.3  2026-05-08 kkossev   bugfix: componentSetHeatingSetpoint() was not converting °F to °C before sending to device (caused 95°F clamping bug);
+ *                                  implemented componentSetCoolingSetpoint() (attr 0x0011 OccupiedCoolingSetpoint); added 0x0011 subscription and parse case for coolingSetpoint;
+ *                                  bugfix: ThermostatRunningState (attr 0x0029) bitmap is now decoded to Hubitat thermostatOperatingState (heating/cooling/fan only/idle); Tnx @Murv82
  *
  *                                   TODO: refresh() to use the subscription list to read the attributes
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -80,8 +83,8 @@
  *
  */
 
-static String version() { '1.8.2' }
-static String timeStamp() { '2026/04/30 8:45 PM' }
+static String version() { '1.8.3' }
+static String timeStamp() { '2026/05/08 3:32 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -307,6 +310,7 @@ metadata {
                                [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // AbsMinHeatSetpointLimit  +Aqaea
                                [0x0004: [min: 0, max: 0xFFFF, delta: 0]],   // AbsMaxHeatSetpointLimit  +Aqara
                                [0x0010: [min: 0, max: 0xFFFF, delta: 0]],   // LocalTemperatureCalibration
+                               [0x0011: [min: 0, max: 0xFFFF, delta: 0]],   // OccupiedCoolingSetpoint
                                [0x0012: [min: 0, max: 0xFFFF, delta: 0]],   // OccupiedHeatingSetpoint  +Aqara
                                [0x0015: [min: 0, max: 0xFFFF, delta: 0]],   // MinHeatSetpointLimit +Aqara
                                [0x0016: [min: 0, max: 0xFFFF, delta: 0]],   // MaxHeatSetpointLimit +Aqara
@@ -1892,6 +1896,15 @@ void parseThermostat(final Map descMap) {
                 unit: unit
             ], descMap, false)
             break
+        case '0011' : // OccupiedCoolingSetpoint -> coolingSetpoint
+            valueIntCorrected = convertTemperature(descMap)
+            sendHubitatEvent([
+                name: 'coolingSetpoint',
+                value: valueIntCorrected,
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} coolingSetpoint is ${valueIntCorrected} ${unit}",
+                unit: unit
+            ], descMap, false)
+            break
         case '0012' : // OccupiedHeatingSetpoint -> heatingSetpoint
             valueIntCorrected = convertTemperature(descMap)
             sendHubitatEvent([
@@ -1927,6 +1940,21 @@ void parseThermostat(final Map descMap) {
                 name: 'thermostatMode',
                 value: systemMode,      // off, heat, ......
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatMode is ${systemMode}"
+            ], descMap, false)
+            break
+        case '0029' : // ThermostatRunningState bitmap -> thermostatOperatingState
+            // Bit 0=Heat, Bit 1=Cool, Bit 2=Fan, Bit 3=Heat2, Bit 4=Cool2, Bit 5=Fan2, Bit 6=Fan3
+            Integer runningStateBitmap = safeToInt(descMap.value)
+            String operatingState
+            if      ((runningStateBitmap & 0x01) != 0) { operatingState = 'heating' }
+            else if ((runningStateBitmap & 0x02) != 0) { operatingState = 'cooling' }
+            else if ((runningStateBitmap & 0x04) != 0) { operatingState = 'fan only' }
+            else                                        { operatingState = 'idle' }
+            logDebug "parseThermostat: ThermostatRunningState bitmap=${runningStateBitmap} -> ${operatingState}"
+            sendHubitatEvent([
+                name: 'thermostatOperatingState',
+                value: operatingState,
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatOperatingState is ${operatingState}"
             ], descMap, false)
             break
         case ['FFF8', 'FFF9', 'FFFA', 'FFFB', 'FFFC', 'FFFD', '00FE'] :
@@ -3372,24 +3400,38 @@ void componentSetHeatingSetpoint(DeviceWrapper dw, BigDecimal temperaturePar) {
     if (dw.currentValue('heatingSetpoint') == null) { initializeThermostat(dw) }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logDebug "componentSetHeatingSetpoint: setting heatingSetpoint to <b>${temperaturePar}</b> for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetThermostatMode(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
-    Double temperature = temperaturePar as Double
-    Double minHeatSetpoint = safeToDouble(dw?.getDataValue('minHeatSetpointLimit')) ?: safeToDouble(dw?.getDataValue('absMinHeatSetpointLimit')) ?: 5.0
-    Double maxHeatSetpoint = safeToDouble(dw?.getDataValue('maxHeatSetpointLimit')) ?: safeToDouble(dw?.getDataValue('absMaxHeatSetpointLimit')) ?: 35.0
-    //log.trace "parseThermostat: minHeatSetpoint:${minHeatSetpoint} maxHeatSetpoint:${maxHeatSetpoint}"
-    if (temperature < minHeatSetpoint) { temperature = minHeatSetpoint }
-    if (temperature > maxHeatSetpoint) { temperature = maxHeatSetpoint }
-    Integer temperatureScaled = temperature * 100
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetHeatingSetpoint(): deviceNumber is not valid!"; return; }
+    // Matter always uses 0.01°C units — convert from hub's temperature scale to Celsius
+    Double temperatureCelsius = temperaturePar as Double
+    if (location.temperatureScale == 'F') { temperatureCelsius = (temperatureCelsius - 32.0) / 1.8 }
+    Double minHeatSetpointC = 5.0
+    Double maxHeatSetpointC = 35.0
+    if (temperatureCelsius < minHeatSetpointC) { temperatureCelsius = minHeatSetpointC }
+    if (temperatureCelsius > maxHeatSetpointC) { temperatureCelsius = maxHeatSetpointC }
+    Integer temperatureScaled = Math.round(temperatureCelsius * 100).toInteger()
     List<Map<String, String>> attrWriteRequests = []
-    attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x201, 0x0012, DataType.INT16, intToHexStr(temperatureScaled,2))) // 0x0201 = Thermostat Cluster, 0x0012 = OccupiedHeatingSetpoint
+    attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x201, 0x0012, DataType.INT16, intToHexStr(temperatureScaled, 2))) // 0x0201 = Thermostat Cluster, 0x0012 = OccupiedHeatingSetpoint
     String cmd = matter.writeAttributes(attrWriteRequests)
     sendToDevice(cmd)
 }
 
-void componentSetCoolingSetpoint(DeviceWrapper dw, BigDecimal temperature) {
+void componentSetCoolingSetpoint(DeviceWrapper dw, BigDecimal temperaturePar) {
     if (dw.currentValue('coolingSetpoint') == null) { initializeThermostat(dw) }
-    logWarn "componentSetCoolingSetpoint(${dw}, ${temperature}) is not implemented!"
-    return
+    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
+    logDebug "componentSetCoolingSetpoint: setting coolingSetpoint to <b>${temperaturePar}</b> for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetCoolingSetpoint(): deviceNumber is not valid!"; return; }
+    // Matter always uses 0.01°C units — convert from hub's temperature scale to Celsius
+    Double temperatureCelsius = temperaturePar as Double
+    if (location.temperatureScale == 'F') { temperatureCelsius = (temperatureCelsius - 32.0) / 1.8 }
+    Double minCoolSetpointC = 16.0
+    Double maxCoolSetpointC = 32.0
+    if (temperatureCelsius < minCoolSetpointC) { temperatureCelsius = minCoolSetpointC }
+    if (temperatureCelsius > maxCoolSetpointC) { temperatureCelsius = maxCoolSetpointC }
+    Integer temperatureScaled = Math.round(temperatureCelsius * 100).toInteger()
+    List<Map<String, String>> attrWriteRequests = []
+    attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x201, 0x0011, DataType.INT16, intToHexStr(temperatureScaled, 2))) // 0x0201 = Thermostat Cluster, 0x0011 = OccupiedCoolingSetpoint
+    String cmd = matter.writeAttributes(attrWriteRequests)
+    sendToDevice(cmd)
 }
 
 /*
