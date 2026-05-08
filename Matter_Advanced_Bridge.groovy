@@ -61,8 +61,9 @@
  * ver. 1.8.3  2026-05-08 kkossev   bugfix: componentSetHeatingSetpoint() was not converting °F to °C before sending to device (caused 95°F clamping bug);
  *                                  implemented componentSetCoolingSetpoint() (attr 0x0011 OccupiedCoolingSetpoint); added 0x0011 subscription and parse case for coolingSetpoint;
  *                                  bugfix: ThermostatRunningState (attr 0x0029) bitmap is now decoded to Hubitat thermostatOperatingState (heating/cooling/fan only/idle); Tnx @Murv82
+ * ver. 1.8.4  2026-05-08 kkossev   refresh() now reads attributes in chunks of 20 to stay within Matter Read Request PDU size limits (Thread MTU ~1280 bytes);
+ *                                  setRefreshRequest() window is now scaled proportionally to the number of chunks;
  *
- *                                   TODO: refresh() to use the subscription list to read the attributes
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
  *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
@@ -83,8 +84,8 @@
  *
  */
 
-static String version() { '1.8.3' }
-static String timeStamp() { '2026/05/08 3:32 PM' }
+static String version() { '1.8.4' }
+static String timeStamp() { '2026/05/08 5:00 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -2125,7 +2126,7 @@ void identify() {
     sendToDevice(cmd)
 }
 
-void setRefreshRequest()   { if (state.states == null) { state.states = [:] } ; state.states['isRefresh'] = true ; runInMillis(REFRESH_TIMER, clearRefreshRequest, [overwrite: true]) }                 // 3 seconds
+void setRefreshRequest(Integer durationMs = REFRESH_TIMER) { if (state.states == null) { state.states = [:] } ; state.states['isRefresh'] = true ; runInMillis(durationMs, clearRefreshRequest, [overwrite: true]) }
 void clearRefreshRequest() { if (state.states == null) { state.states = [:] } ; state.states['isRefresh'] = false }
 void setDigitalRequest()   { if (state.states == null) { state.states = [:] } ; state.states['isDigital'] = true ; runInMillis(DIGITAL_TIMER, clearDigitalRequest, [overwrite: true]) }                 // 3 seconds
 void clearDigitalRequest() { if (state.states == null) { state.states = [:] } ; state.states['isDigital'] = false }
@@ -2763,16 +2764,11 @@ void setSwitch(String commandPar, String deviceNumberPar/*, extraPar = null*/) {
 void refresh() {
     logInfo 'refresh() ...'
     checkDriverVersion()
-    setRefreshRequest()    // 6 seconds
-    
+
     // Build attribute paths from state.subscriptions, filtering out disabled child devices
     List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
         Integer endpoint = sub[0] as Integer
-        // Skip bridge endpoint (0) - will be handled separately if needed
-        if (endpoint == 0) {
-            return true  // include bridge attributes
-        }
-        // Check if child device is disabled
+        if (endpoint == 0) { return true }          // always include bridge endpoint (0) attributes
         String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
         ChildDeviceWrapper childDevice = getChildDevice(dni)
         if (childDevice?.disabled == true) {
@@ -2783,32 +2779,27 @@ void refresh() {
     }?.collect { sub ->
         matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
     } ?: []
-    
+
     if (attributePaths.isEmpty()) {
-        logWarn 'refresh(): no attributes to refresh!'
+        logWarn 'refresh(): no attributes to refresh! Run _DiscoverAll first to discover bridged devices.'
         return
     }
-    
-    logDebug "refresh(): reading ${attributePaths.size()} attributes from ${state.subscriptions?.size()} subscriptions"
-    String cmd = matter.readAttributes(attributePaths)
-    sendToDevice(cmd)
+
+    // Chunk into groups of 20 to stay within Matter Read Request PDU size limits.
+    // Each AttributePathIB encodes to ~14 bytes; Thread MTU is 1280 bytes → max ~87 paths per PDU.
+    // Using 20 per chunk is conservative and leaves room for header overhead variation.
+    final int READ_CHUNK_SIZE = 20
+    List<String> cmds = attributePaths.collate(READ_CHUNK_SIZE).collect { chunk ->
+        matter.readAttributes(chunk)
+    }
+
+    // Extend the refresh window to cover all chunks: (chunks × 500ms delay) + 3s safety margin
+    Integer refreshWindowMs = Math.max(REFRESH_TIMER, (cmds.size() * 500) + 3000)
+    setRefreshRequest(refreshWindowMs)
+
+    logDebug "refresh(): reading ${attributePaths.size()} attributes in ${cmds.size()} chunk(s) of max ${READ_CHUNK_SIZE} (window=${refreshWindowMs}ms)"
+    sendToDevice(cmds, 500)
 }
-/*
-String refreshCmd() {
-    logInfo 'refreshCmd() ...'
-    List<Map<String, String>> attributePaths = state.subscriptions?.collect { sub ->
-        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
-    } ?: []
-    if (state['bridgeDescriptor'] == null) { logWarn 'refreshCmd(): state.bridgeDescriptor is null!'; return null  }
-    List<String> serverList = (state['bridgeDescriptor']['0033_FFFB'] as List)?.clone()  // new ArrayList<>(originalList)
-    serverList?.removeAll(['FFF8', 'FFF9', 'FFFB', 'FFFC', 'FFFD', '00'])                // 0x0000  : 'NetworkInterfaces' - not supported
-    if (serverList == null) { logWarn 'refreshCmd(): serverList is null!'; return null  }
-    attributePaths.addAll(serverList?.collect { attr ->
-        matter.attributePath(0, 0x0033, HexUtils.hexStringToInt(attr))
-    })
-    return matter.readAttributes(attributePaths)
-}
-*/
 
 void logsOff() {
     log.warn 'debug logging disabled...'
