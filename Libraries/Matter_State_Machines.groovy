@@ -6,7 +6,7 @@ library(
     description: 'Matter State Machines',
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/Matter_State_Machines.groovy',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/Matter_State_Machines.groovy',
     version: '1.1.1',
     documentationLink: ''
 )
@@ -33,14 +33,15 @@ library(
   * ver. 1.0.5  2026-01-08 GPT-5.2  - skip discovery for disabled child devices to eliminate timeouts
   * ver. 1.1.0  2026-01-17 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine; added finalizeDeviceType() call
   * ver. 1.1.1  2026-01-17 GPT-5.2  - restored DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
+  * ver. 1.1.2  2026-02-21 kkossev  - (dev. branch) potential bug fix in discovering global elements (including FeatureMap); added 0xFFFA
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.1.1'
-@Field static final String matterStateMachinesLibStamp   = '2026/02/06 11:17 PM'
+@Field static final String matterStateMachinesLib = '1.1.2'
+@Field static final String matterStateMachinesLibStamp   = '2026/02/21 10:43 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -775,14 +776,16 @@ void discoverAllStateMachine(Map data = null) {
                 Map<String, Boolean> expectedAttributes = [:]  // Track what we're waiting for
                 
                 matchedClustersList?.each { cluster ->
-                    String clusterHex = HexUtils.integerToHexString(cluster, 2).toUpperCase()
+                    String clusterHex = HexUtils.integerToHexString(cluster, 2).padLeft(4, '0').toUpperCase()
+                    // was: String clusterHex = HexUtils.integerToHexString(cluster, 2).toUpperCase()
                     String endpointHex = HexUtils.integerToHexString(partEndpointInt, 1).padLeft(2, '0').toUpperCase()
                     // Add attribute read requests
+                    // the EventList oxFFFA is missed intentionally, seems it can not be read
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFB))    // AttributeList
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFF8))    // GeneratedCommandList
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFF9))    // AcceptedCommandList
                     attributePaths.add(matter.attributePath(partEndpointInt, cluster, 0xFFFC))    // FeatureMap
-                    // Track expected responses
+                    // Track expected responses. 
                     expectedAttributes["${endpointHex}_${clusterHex}_FFFB"] = false
                     expectedAttributes["${endpointHex}_${clusterHex}_FFF8"] = false
                     expectedAttributes["${endpointHex}_${clusterHex}_FFF9"] = false

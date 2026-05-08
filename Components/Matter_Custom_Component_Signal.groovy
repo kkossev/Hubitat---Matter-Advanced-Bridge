@@ -26,7 +26,7 @@ import groovy.transform.Field
 @Field static final String matterComponentSignalStamp   = '2025/01/29 10:40 PM'
 
 metadata {
-    definition(name: 'Matter Custom Component Signal', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Custom_Component_Signal.groovy') {
+    definition(name: 'Matter Custom Component Signal', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom_Component_Signal.groovy') {
         capability 'Refresh'
         capability 'PushableButton'
         capability 'MotionSensor'

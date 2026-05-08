@@ -23,14 +23,15 @@
  * ver. 1.2.1  2025-01-10 kkossev - bugfix: changed OPEN/CLOSED to Hubitat standard (100/0) for correct Dashboard display; invertPosition preference default to true
  * ver. 1.2.2  2025-01-29 kkossev - common libraries
  * ver. 1.2.3  2026-02-11 kkossev - (dev. branch) getInfo()
+ * ver. 1.2.4  2026-02-19 kkossev - (dev. branch) moved common methods to matterCommonLib
  *
  *                                   TODO:
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '1.2.3'
-@Field static final String matterComponentWindowShadeStamp   = '2026/02/11 11:59 PM'
+@Field static final String matterComponentWindowShadeVersion = '1.2.4'
+@Field static final String matterComponentWindowShadeStamp   = '2026/02/19 4:49 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -41,7 +42,7 @@ import groovy.transform.Field
 @Field static final Boolean SIMULATE_LEVEL = true
 
 metadata {
-    definition(name: 'Matter Generic Component Window Shade', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Window_Shade.groovy', singleThreaded: true) {
+    definition(name: 'Matter Generic Component Window Shade', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Window_Shade.groovy', singleThreaded: true) {
         capability 'Actuator'
         capability 'WindowShade'    // Attributes: position - NUMBER, unit:% windowShade - ENUM ["opening", "partially open", "closed", "open", "closing", "unknown"]
                                     // Commands: close(); open(); setPosition(position) position required (NUMBER) - Shade position (0 to 100);
@@ -620,48 +621,8 @@ private void logsOff() {
 
 // -------------
 
-/**
- * Get the complete fingerprint data stored in device data
- * @return Map containing fingerprint data or null if not found
- */
-Map getFingerprintData() {
-    String fingerprintJson = device.getDataValue('fingerprintData')
-    if (!fingerprintJson) {
-        logDebug "getFingerprintData: fingerprintData not found in device data"
-        return null
-    }
-    
-    try {
-        return new groovy.json.JsonSlurper().parseText(fingerprintJson)
-    } catch (Exception e) {
-        logWarn "getFingerprintData: failed to parse fingerprintData: ${e.message}"
-        return null
-    }
-}
 
-/**
- * Get ServerList from fingerprint data
- * @return List of cluster IDs as hex strings (e.g., ["03", "1D", "2F", "0102"])
- */
-List<String> getServerList() {
-    Map fingerprint = getFingerprintData()
-    if (fingerprint == null) {
-        logDebug "getServerList: fingerprint data not available"
-        return []
-    }
-    
-    return fingerprint['ServerList'] ?: []
-}
 
-/**
- * Check if a specific cluster is supported by this device
- * @param clusterHex Cluster ID as hex string (e.g., "0102" for WindowCovering cluster)
- * @return true if cluster is in ServerList
- */
-boolean isClusterSupported(String clusterHex) {
-    List<String> serverList = getServerList()
-    return serverList.contains(clusterHex?.toUpperCase())
-}
 
 /**
  * Get the Window Covering cluster AttributeList (0x0102_FFFB)

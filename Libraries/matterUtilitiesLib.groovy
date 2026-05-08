@@ -1,4 +1,3 @@
-/* groovylint-disable CompileStatic, DuplicateNumberLiteral, DuplicateStringLiteral, ImplicitClosureParameter, LineLength */
 library(
     base: 'driver',
     author: 'Krassimir Kossev',
@@ -6,8 +5,8 @@ library(
     description: 'Matter Utilities Library',
     name: 'matterUtilitiesLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterUtilitiesLib.groovy',
-    version: '1.3.2',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterUtilitiesLib.groovy',
+    version: '1.3.3',
     documentationLink: ''
 )
 /*
@@ -31,13 +30,16 @@ library(
   * ver. 1.3.0  2025-06-28 Claude Sonnet 4  - added custom decodeTLVToHex() and decodeTLV()
   * ver. 1.3.1  2026-01-06 GPT-5.2 - added discoveryTimeoutScale
   * ver. 1.3.2  2026-01-26 GPT-5.2 - Minimal fix: make decodeTLVContainer() handle nested containers; reduced warning level logging
+  * ver. 1.3.3  2026-02-18 kkossev   -(dev.branch)
+  * 
+  *                        TODO: remove the custom decodeTLV() !!!!!!!!!!
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterUtilitiesLibVersion = '1.3.2'
-@Field static final String matterUtilitiesLibStamp   = '2026/01/26 2:45 PM'
+@Field static final String matterUtilitiesLibVersion = '1.3.3'
+@Field static final String matterUtilitiesLibStamp   = '2026/02/18 10:03 PM'
 
 metadata {
     // no capabilities
@@ -134,12 +136,11 @@ void removeAllSubscriptions(List<String> parameters) {
 }
 
 void removeAllDevices(List<String> parameters) {
-    logTrace "Removing all child devices ${parameters}"
+    logInfo "Removing all child devices ${parameters}"
     removeAllDevices()
 }
 
 boolean utilities(String commandLine=null) {
-    //List<String> supportedCommandsList =  UtilitiesMap.keySet().collect { it.toLowerCase() }
     List<String> supportedCommandsList = UtilitiesMap.keySet()*.toLowerCase()
     List commandLineParsed = commandLine?.split(' ')
     if (commandLineParsed == null || commandLineParsed.size() == 0) {
@@ -301,6 +302,7 @@ void testMatter(String parameters) {
     sendToDevice(xxx)
 }
 
+
 /**
  * Decodes Matter TLV (Tag-Length-Value) encoded data
  * @param tlvHex The hex string containing TLV encoded data
@@ -379,19 +381,24 @@ void testDecodeTLV(List<String> parameters) {
     List<Integer> decodedInts = decodeTLV(tlvHex)
     List<String> decodedHex = decodeTLVToHex(tlvHex)
     
-    logInfo "testDecodeTLV: decoded integers: ${decodedInts}"
-    logInfo "testDecodeTLV: decoded hex strings: ${decodedHex}"
+    logInfo "testDecodeTLV: decoded integers: ${decodedInts}"           //  decoded integers: [29, 30, 31, 40, 48, 49, 51, 54, 55, 60, 62, 63]
+    logInfo "testDecodeTLV: decoded hex strings: ${decodedHex}"         //  decoded hex strings: [001D, 001E, 001F, 0028, 0030, 0031, 0033, 0036, 0037, 003C, 003E, 003F]
     
     // If this looks like an attribute list, show the attribute names too
     if (decodedHex.size() > 0) {
         logInfo "testDecodeTLV: attribute names (if applicable):"
         decodedHex.each { hexValue ->
-            Integer attrInt = HexUtils.hexStringToInt(hexValue)
-            String attrName = GlobalElementsAttributes[attrInt] ?: "Unknown"
-            logInfo "  0x${hexValue} (${attrInt}) = ${attrName}"
+            Integer clusterInt = HexUtils.hexStringToInt(hexValue)
+            def obj = matter.clusterLookup(clusterInt)
+            //log.warn "Returned object class: ${obj?.class}"      // clusterEnum = DESCRIPTOR_CLUSTER clusterInt = 29 clusterLabel = Descriptor
+            //String attrName = GlobalElementsAttributes[attrInt] ?: "Unknown"
+            String clusterName = obj?.clusterLabel ?: "Unknown"
+            //String clusterName = matter.getClusterName(clusterInt as Long) ?: "Unknown"
+            logInfo "  0x${hexValue} (${clusterInt}) = ${clusterName}"
         }
     }
 }
+
 
 /**
  * Helper method to get value length from length control field

@@ -1,4 +1,3 @@
-/* groovylint-disable CompileStatic, DuplicateStringLiteral, LineLength, PublicMethodsBeforeNonPublicMethods */
 /*
   *  'Matter Generic Component SwitchBot Button' - component driver for Matter Advanced Bridge
   *
@@ -16,13 +15,14 @@
   *
   * ver. 1.0.0  2024-10-10 ymerj      - first release
   * ver. 1.0.1  2024-10-11 kkossev    - minor fixes and improvements
+  * ver. 1.0.2  2026-02-21 kkossev    - remove unused setState/getState methods;
   *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentSwitchBotButtonVersion = '1.0.1'
-@Field static final String matterComponentSwitchBotButtonStamp   = '2024/10/11 9:53 PM'
+@Field static final String matterComponentSwitchBotButtonVersion = '1.0.2'
+@Field static final String matterComponentSwitchBotButtonStamp   = '2026/02/21 11:29 AM'
 
 metadata {
     definition(name: 'Matter Generic Component SwitchBot Button', namespace: 'kkossev', author: 'Yves Mercier', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_SwitchBot_Button.groovy') {
@@ -116,14 +116,4 @@ private void logsOff() {
 
 void refresh() {
     parent?.componentRefresh(this.device)
-}
-
-void setState(String stateName, String stateValue) {
-    if (logEnable) { log.debug "${device.displayName} setting state '${stateName}' to '${stateValue}'" }
-    state[stateName] = stateValue
-}
-
-String getState(String stateName) {
-    if (logEnable) { log.debug "${device.displayName} getting state '${stateName}'" }
-    return state[stateName]
 }

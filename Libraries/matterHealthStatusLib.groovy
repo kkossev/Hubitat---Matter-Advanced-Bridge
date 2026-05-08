@@ -5,8 +5,8 @@ library(
     description: 'Matter Health Status Library - Device Ping and RTT Monitoring',
     name: 'matterHealthStatusLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterHealthStatusLib.groovy',
-    version: '1.0.1',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterHealthStatusLib.groovy',
+    version: '1.0.2',
     documentationLink: ''
 )
 /*
@@ -29,14 +29,15 @@ library(
   *                                  - parseRttEvent() method for child drivers
   *                                  - foundation for health monitoring features
   * ver. 1.0.1  2025-01-14 kkossev - use matterCommonLib
+  * ver. 1.0.2  2026-02-16 kkossev - (dev. branch)
   * 
   *                                 TODO: add delta in the rtt
 */
 
 import groovy.transform.Field
 
-@Field static final String matterHealthStatusLibVersion = '1.0.1'
-@Field static final String matterHealthStatusLibStamp   = '2025/01/24 9:22 AM'
+@Field static final String matterHealthStatusLibVersion = '1.0.2'
+@Field static final String matterHealthStatusLibStamp   = '2026/02/16 10:49 PM'
 @Field static final int ROLLING_AVERAGE_N = 10
 
 metadata {
@@ -89,7 +90,7 @@ boolean parseRttEvent(Map d) {
         state.stats['pingsAvg'] = approxRollingAverage(safeToDouble(state.stats['pingsAvg']), safeToDouble(rttValue)) as int
         
         // Log with statistics
-        String descriptionText = "${device.displayName} Round-trip time is ${rttValue} ms (min=${state.stats['pingsMin']} max=${state.stats['pingsMax']} average=${state.stats['pingsAvg']} (HE uptime: ${formatUptime()})"
+        String descriptionText = "${device.displayName} Round-trip time is ${rttValue} ms (min=${state.stats['pingsMin']} max=${state.stats['pingsMax']} average=${state.stats['pingsAvg']} (HE uptime: ${formatUptimeX()})"
         if (settings?.txtEnable) { log.info "${descriptionText}" }
         
         // Update description text in the event
@@ -108,7 +109,7 @@ private double approxRollingAverage(double avg, double newSample) {
     return (avg * (ROLLING_AVERAGE_N - 1) + newSample) / ROLLING_AVERAGE_N
 }
 
-private String formatUptime() {
+private String formatUptimeX() {
     try {
         Long ut = location.hub.uptime.toLong()
         Integer days = Math.floor(ut/(3600*24)).toInteger()

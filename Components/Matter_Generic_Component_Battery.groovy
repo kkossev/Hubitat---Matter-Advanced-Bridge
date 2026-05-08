@@ -23,7 +23,7 @@ import groovy.transform.Field
 @Field static final String matterComponentBatteryStamp   = '2025/01/10 9:23 AM'
 
 metadata {
-    definition(name: 'Matter Generic Component Battery', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_Battery.groovy') {
+    definition(name: 'Matter Generic Component Battery', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Battery.groovy') {
         capability 'Sensor'
         capability 'Battery'
         capability 'Refresh'

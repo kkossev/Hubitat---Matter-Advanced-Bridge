@@ -5,7 +5,7 @@ library(
     description: 'Matter Common Library',
     name: 'matterCommonLib',
     namespace: 'kkossev',
-    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Libraries/matterCommonLib.groovy',
+    importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterCommonLib.groovy',
     version: '1.0.0',
     documentationLink: ''
 )
@@ -112,6 +112,67 @@ private Integer getDeviceNumber() {
     }
     
     return deviceNumber
+}
+
+// for use by parent driver
+void setState(String stateName, String stateValue) {
+    logDebug "setting state '${stateName}' to '${stateValue}'"
+    state[stateName] = stateValue
+}
+
+// for use by parent driver
+String getState(String stateName) {
+    logDebug "getting state '${stateName}'"
+    return state[stateName]
+}
+
+
+// ============ Helper Methods for Fingerprint Data ============
+
+
+/**
+ * Get the complete fingerprint data stored in device data
+ * @return Map containing fingerprint data or null if not found
+ */
+Map getFingerprintData() {
+    String fingerprintJson = device.getDataValue('fingerprintData')
+    if (!fingerprintJson) {
+        logDebug "getFingerprintData: fingerprintData not found in device data"
+        return null
+    }
+    
+    try {
+        return new groovy.json.JsonSlurper().parseText(fingerprintJson)
+    } catch (Exception e) {
+        logWarn "getFingerprintData: failed to parse fingerprintData: ${e.message}"
+        return null
+    }
+}
+
+
+/**
+ * Get ServerList from fingerprint data
+ * @return List of cluster IDs as hex strings (e.g., ["03", "1D", "2F", "0102"])
+ */
+List<String> getServerList() {
+    Map fingerprint = getFingerprintData()
+    if (fingerprint == null) {
+        logDebug "getServerList: fingerprint data not available"
+        return []
+    }
+    
+    return fingerprint['ServerList'] ?: []
+}
+
+
+/**
+ * Check if a specific cluster is supported by this device
+ * @param clusterHex Cluster ID as hex string (e.g., "005B" for Air Quality)
+ * @return true if cluster is in ServerList
+ */
+boolean isClusterSupported(String clusterHex) {
+    List<String> serverList = getServerList()
+    return serverList.contains(clusterHex?.toUpperCase())
 }
 
 
