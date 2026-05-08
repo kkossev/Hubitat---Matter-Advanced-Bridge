@@ -55,14 +55,15 @@
  * ver. 1.7.8  2026-03-21 lgk       added delayed illumination handling;
  * ver. 1.8.0  2026-02-21 kkossev   (dev. branch) - enforcing newParse:true; removing old custom parse code; Button driver improvements; added PressureMeasurement cluster 0x0403 support with 'Generic Component Pressure Sensor'
  * ver. 1.8.1  2026-03-21 kkossev   (dev. branch) - merged ver. 1.7.8; 
- * ver. 1.8.2  2026-04-30 kkossev   bugfix: parsePowerSource() BatVoltage and BatPercentRemaining use safeHexToInt() to correctly parse hex string values from the old parse path;
+ * ver. 1.8.2  2026-04-30 kkossev   (dev. branch) -bugfix: parsePowerSource() BatVoltage and BatPercentRemaining use safeHexToInt() to correctly parse hex string values from the old parse path;
  *                                  added subscribe + parse support for Matter cluster 0x0080 (BooleanStateConfiguration): SensitivityLevel, SupportedSensitivityLevels, DefaultSensitivityLevel;
  *                                  added 'Matter Custom Component Contact Sensor' child driver with sensitivityLevel attribute; mapMatterCategory uses it when cluster 0x0080 is present;
- * ver. 1.8.3  2026-05-08 kkossev   bugfix: componentSetHeatingSetpoint() was not converting °F to °C before sending to device (caused 95°F clamping bug);
+ * ver. 1.8.3  2026-05-08 kkossev   (dev. branch) -bugfix: componentSetHeatingSetpoint() was not converting °F to °C before sending to device (caused 95°F clamping bug);
  *                                  implemented componentSetCoolingSetpoint() (attr 0x0011 OccupiedCoolingSetpoint); added 0x0011 subscription and parse case for coolingSetpoint;
  *                                  bugfix: ThermostatRunningState (attr 0x0029) bitmap is now decoded to Hubitat thermostatOperatingState (heating/cooling/fan only/idle); Tnx @Murv82
- * ver. 1.8.4  2026-05-08 kkossev   refresh() now reads attributes in chunks of 20 to stay within Matter Read Request PDU size limits (Thread MTU ~1280 bytes);
+ * ver. 1.8.4  2026-05-08 kkossev   (dev. branch) -refresh() now reads attributes in chunks of 20 to stay within Matter Read Request PDU size limits (Thread MTU ~1280 bytes);
  *                                  setRefreshRequest() window is now scaled proportionally to the number of chunks;
+ * ver. 1.8.5  2026-05-08 kkossev   merged dev. branch to main;
  *
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
@@ -85,8 +86,8 @@
  */
 
 
-static String version() { '1.8.4' }
-static String timeStamp() { '2026/05/08 6:37 PM' }
+static String version() { '1.8.5' }
+static String timeStamp() { '2026/05/08 8:33 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -4078,7 +4079,7 @@ void test(par) {
     sendToDevice(cmd)
  }
 
-
+/*
 private boolean isMatterBridgeByAnyEndpoint() {
     // scan all fingerprints (endpoint descriptor snapshots)
     List<Map> fps = state.findAll { k, v -> (k as String).startsWith('fingerprint') && (v instanceof Map) }
@@ -4100,6 +4101,7 @@ private void finalizeDeviceType() {
     state.deviceType = isBridge ? 'MATTER_BRIDGE' : 'MATTER_DEVICE'
     logInfo "DEVICE_TYPE (detected) = ${state.deviceType}"
 }
+*/
 
 // lgk 03/26 add delayed illum
 
