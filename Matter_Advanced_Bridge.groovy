@@ -64,6 +64,7 @@
  * ver. 1.8.4  2026-05-08 kkossev   (dev. branch) -refresh() now reads attributes in chunks of 20 to stay within Matter Read Request PDU size limits (Thread MTU ~1280 bytes);
  *                                  setRefreshRequest() window is now scaled proportionally to the number of chunks;
  * ver. 1.8.5  2026-05-08 kkossev   merged dev. branch to main;
+ * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
  *
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
@@ -86,8 +87,8 @@
  */
 
 
-static String version() { '1.8.5' }
-static String timeStamp() { '2026/05/08 8:33 PM' }
+static String version() { '1.8.6' }
+static String timeStamp() { '2026/05/10 7:47 AM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
