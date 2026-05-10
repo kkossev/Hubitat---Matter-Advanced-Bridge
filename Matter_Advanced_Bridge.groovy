@@ -324,6 +324,10 @@ metadata {
                                [0x001E: [min: 0, max: 0xFFFF, delta: 0]],   // ThermostatRunningMode
                                [0x0029: [min: 0, max: 0xFFFF, delta: 0]]]   // ThermostatRunningState
     ],
+    // Fan Control Cluster
+    0x0202 : [attributes: 'FanControlClusterAttributes', commands: 'FanControlClusterCommands', parser: 'parseFanControl',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]   // FanMode / SpeedSetting
+    ],
     // ColorControl Cluster
     0x0300 : [attributes: 'ColorControlClusterAttributes', commands: 'ColorControlClusterCommands', parser: 'parseColorControl',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // CurrentHue
@@ -378,6 +382,7 @@ metadata {
     0x0101 : 'parseDoorLock',
     0x0102 : 'parseWindowCovering',
     0x0201 : 'parseThermostat',
+    0x0202 : 'parseFanControl',
     0x0300 : 'parseColorControl',
     0x0400 : 'parseIlluminanceMeasurement',
     0x0402 : 'parseTemperatureMeasurement',
@@ -1709,6 +1714,36 @@ private int miredIntToCt(final Integer miredInt) {
     return miredInt > 0 ? (1000000 / miredInt) as int : 0
 }
 
+void parseFanControl(final Map descMap) { // 0202
+    if (descMap.cluster != '0202') { logWarn "parseFanControl: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    ChildDeviceWrapper dw = getDw(descMap)
+    Integer value = safeToInt(descMap.value)
+    switch (descMap.attrId) {
+        case '0000' : // FanMode
+            logTrace "parseFanControl: FanMode = ${value} (raw=${descMap.value})"
+            String speed = 'off'
+            switch (value) {
+                case 0: speed = 'off'; break
+                case 1: speed = 'low'; break
+                case 2: speed = 'medium'; break
+                case 3: speed = 'high'; break
+                case 4: speed = 'on'; break
+                case 5: speed = 'auto'; break
+                case 6: speed = 'smart'; break
+                default: logWarn "parseFanControl: Unknown FanMode value ${value}"; break
+            }
+            sendHubitatEvent([
+                name: 'speed',
+                value: speed,
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} speed is ${speed}"
+            ], descMap, true)
+            break
+        default:
+            logWarn "parseFanControl: unexpected attribute ${descMap.attrId}"
+            break
+    }
+}
+
 void parseColorControl(final Map descMap) { // 0300
     if (descMap.cluster != '0300') { logWarn "parseColorControl: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     ChildDeviceWrapper dw = getDw(descMap)
@@ -2907,6 +2942,9 @@ Map mapMatterCategory(Map d) {
     if ('0201' in d.ServerList) {   // Thermostat (since version 1.2.0)
         return [ driver: 'Generic Component Thermostat', product_name: 'Thermostat' ]
     }
+    if ('0202' in d.ServerList) {   // Fan Control
+        return [ driver: 'Generic Component Fan Control', product_name: 'Fan' ]
+    }
     if ('0400' in d.ServerList) {   // Illuminance Sensor
         return [ driver: 'Generic Component Omni Sensor', product_name: 'Illuminance Sensor' ]
     }
@@ -3189,6 +3227,32 @@ void componentClose(DeviceWrapper dw) {
     String cmd = matter.invoke(deviceNumber, 0x0102, 0x01) // 0x0102 = Window Covering Cluster, 0x01 = DownOrClose
     logTrace "componentClose(): sending command '${cmd}'"
     sendToDevice(cmd)
+}
+
+void componentSetSpeed(DeviceWrapper dw, String speed) {
+    if (!dw.hasCommand('setSpeed')) { logError "componentSetSpeed(${dw}) driver '${dw.typeName}' does not have command 'setSpeed' in ${dw.supportedCommands}"; return }
+    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
+    logDebug "Setting fan speed ${speed} for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
+
+    Integer fanMode = 0
+    switch (speed) {
+        case 'off': fanMode = 0; break
+        case 'low': fanMode = 1; break
+        case 'medium-low': fanMode = 2; break
+        case 'medium': fanMode = 2; break
+        case 'medium-high': fanMode = 3; break
+        case 'high': fanMode = 3; break
+        case 'on': fanMode = 4; break
+        case 'auto': fanMode = 5; break
+        case 'smart': fanMode = 6; break
+        default:
+            logWarn "componentSetSpeed(): speed '${speed}' is not supported!"
+            return
+    }
+
+    List<Map<String, String>> attrWriteRequests = []
+    attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x0202, 0x0000, DataType.UINT8, intToHexStr(fanMode, 1)))
+    sendToDevice(matter.writeAttributes(attrWriteRequests))
 }
 
 // prestage level : https://community.hubitat.com/t/sengled-element-color-plus-driver/21811/2
