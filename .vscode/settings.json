@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^Select-String -Path \"c:\\\\Users\\\\krass\\\\Downloads\\\\matter \\(38\\)\\.log\" -Pattern 'cluster 257, command 38','cluster 257, command 36','cluster 257, command 35','ClusterId = 0x101','CommandId = 0x26','CommandId = 0x24','CommandId = 0x23','InvokeCommandResponse','InvokeCommandRequest' \\| Select-Object -First 250 \\| ForEach-Object \\{ \"\\{0\\}:\\{1\\}\" -f \\$_\\.LineNumber, \\$_\\.Line \\}$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
