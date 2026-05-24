@@ -13,18 +13,17 @@
   *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
   *  for the specific language governing permissions and limitations under the License.
   *
-  * ver. 1.0.0  2024-04-05 dds82   - first version
+  * ver. 1.0.0  2024-04-05 dds82   - first version by Daniel Segall
   * ver. 1.1.0  2024-07-20 kkossev - added Battery capability; added Identify command; added warning state and log messages; added handling of unprocessed Door Lock events
   * ver. 1.1.1  2024-07-23 kkossev - added switch capability (for Apple Home integration workaround)
   * ver. 1.1.2  2024-08-12 kkossev - fixed importURL
   * ver. 1.2.0  2025-01-10 kkossev + Calude Sonnet 4.5 : Matter events handling rework; Door Lock working! :) added ping command and RTT attribute; removed switch capability
   * ver. 1.3.0  2025-01-14 kkossev - moved component methods from parent to component driver; major refactoring 
   * ver. 1.3.1  2025-01-22 kkossev + Claude Haiku 4.5 : Aqara U200 Door Lock support improvements (clearUser seems to be working!)
-  * ver. 1.3.2  2025-01-25 kkossev + GPT-4.1 : newParse: true decoding; use matterCommonLib; 
-  *                                  capability 'LockCodes' is commented out temporarily: (lock codes still not working)
+  * ver. 1.3.2  2025-01-25 kkossev + GPT-4.1 : newParse: true decoding; use matterCommonLib; capability 'LockCodes' is commented out temporarily: (lock codes still not working)
   * ver. 1.3.3  2025-02-06 kkossev   added events 'locking', 'unlocking' for better UI feedback; experimenting ...
   * ver. 1.3.4  2025-02-19 kkossev   moved common methods to matterCommonLib;
-  * ver. 1.4.0  2026-05-23 kkossev   (dev. branch) capability 'LockCodes' (blind implementation) attemps
+  * ver. 1.4.0  2026-05-24 kkossev   (dev. branch) capability 'LockCodes' (blind implementation) attemps
   * 
   *                                  TODO: 
   *                                  TODO: filter duplicated events
@@ -36,7 +35,7 @@
   *                                  TODO: analyze https://matter-survey.org/cluster/0x0101
   *                                  TODO: update gitHub documentation
   *                                  
-  *   WORKING COMMANDS :  lock(), unlock(), SetCredential (0x22),
+  *   WORKING MATTER COMMANDS     :  identify(), lock(), unlock(), matterSetCredentialPIN (0x22), matterClearCredential (0x26), 
   *                                  
   *
 */
@@ -45,27 +44,13 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 import hubitat.matter.DataType
+import groovy.json.JsonOutput
 
 @Field static final String matterComponentLockVersion = '1.4.0'
-@Field static final String matterComponentLockStamp   = '2026/05/23 11:57 PM'
+@Field static final String matterComponentLockStamp   = '2026/05/24 9:05 AM'
 
 @Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true      // disable on production
-
-// Matter Door Lock Feature Map bits (from Matter specification 1.3)
-@Field static final Integer FEATURE_PIN_CREDENTIAL = 0x0001          // Bit 0: PIN credential support
-@Field static final Integer FEATURE_RFID_CREDENTIAL = 0x0002         // Bit 1: RFID credential support
-@Field static final Integer FEATURE_FINGER_CREDENTIALS = 0x0004      // Bit 2: Fingerprint credential support
-@Field static final Integer FEATURE_LOGGING = 0x0008                 // Bit 3: Logging support
-@Field static final Integer FEATURE_WEEK_DAY_SCHEDULES = 0x0010      // Bit 4: Week day access schedules
-@Field static final Integer FEATURE_DOOR_POSITION_SENSOR = 0x0020    // Bit 5: Door position sensor
-@Field static final Integer FEATURE_FACE_CREDENTIALS = 0x0040        // Bit 6: Face recognition credentials
-@Field static final Integer FEATURE_COTA = 0x0080                    // Bit 7: Credential Over The Air (COTA)
-@Field static final Integer FEATURE_USER_MANAGEMENT = 0x0100         // Bit 8: User management
-@Field static final Integer FEATURE_NOTIFICATION = 0x0200            // Bit 9: Notification support
-@Field static final Integer FEATURE_YEAR_DAY_SCHEDULES = 0x0400      // Bit 10: Year day access schedules
-@Field static final Integer FEATURE_HOLIDAY_SCHEDULES = 0x0800       // Bit 11: Holiday schedules
-@Field static final Integer FEATURE_UNBOLT = 0x1000                  // Bit 12: Unbolt support
 
 metadata {
     definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Door_Lock') {
@@ -520,6 +505,32 @@ void setCode(codePosition, pinCode, name = null) {
 
     matterSetCredentialPIN(codePosition, pinCode)
     // events will be generated when the lock reports the change
+
+    boolean newCode = true
+    Map lockcodes = [:]
+    if (device.currentValue("lockCodes") != null) {
+        if (optEncrypt) {
+            lockcodes = parseJson(decrypt(device.currentValue("lockCodes")))
+        } else {
+            lockcodes = parseJson(device.currentValue("lockCodes"))
+        }
+    }
+    if (lockcodes["${codePosition}"]) { newCode = false }
+    lockcodes["${codePosition}"] = ["code": "${pinCode}", "name": "${name}"]
+    if (optEncrypt) {
+        sendEvent(name: "lockCodes", value: encrypt(JsonOutput.toJson(lockcodes)))
+    } else {
+        sendEvent(name: "lockCodes", value: JsonOutput.toJson(lockcodes), isStateChange: true)
+    }
+    if (newCode) {
+        sendEvent(name: "codeChanged", value:"added")
+    } else {
+        sendEvent(name: "codeChanged", value: "changed")
+    }
+    logDebug "Lock codes: ${lockcodes}"
+
+
+
 }   
 
 
@@ -547,7 +558,7 @@ void deleteCode(codePosition) {
 void getCodes() {
     if (!supportsLockCodes()) {
         logWarn "getCodes: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
-        sendEvent(name: 'lockCodes', value: '{}', descriptionText: "Lock <b>does not</b> support PIN codes")
+        //sendEvent(name: 'lockCodes', value: '', descriptionText: "Lock <b>does not</b> support PIN codes")
         return
     }
     
@@ -559,7 +570,6 @@ void getCodes() {
     // 3. Build lockCodes JSON and update attribute
     
     logWarn "getCodes: Not yet implemented - requires Matter User query"
-    sendEvent(name: 'lockCodes', value: '{}', descriptionText: "getCodes not yet implemented")
 }
 
 // Command to set the maximum PIN code length for this lock (per Hubitat LockCodes capability)
@@ -1013,42 +1023,6 @@ void matterClearUser(String userIndex) {
     // :) 
 }
 */
-
-
-@Field static final Map<Integer, String> CredentialTypeEnum = [
-    0: 'ProgrammingPIN', // Programming PIN code credential type (O)
-    1: 'PIN',            // PIN code credential type (PIN)
-    2: 'RFID',           // RFID identifier credential type (RID)
-    3: 'Fingerprint',    // Fingerprint identifier credential type (FGP)
-    4: 'FingerVein',     // Finger vein identifier credential type (FGP)
-    5: 'Face'            // Face identifier credential type (FACE)
-]
-
-@Field static final Map<Integer, String> DataOperationTypeEnum = [
-    0: 'Add',    // Data is being added or was added (M)
-    1: 'Clear',  // Data is being cleared or was cleared (M)
-    2: 'Modify'  // Data is being modified or was modified (M)
-]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 // Command to unbolt door (for locks with separate bolt mechanism)
@@ -1822,6 +1796,21 @@ Boolean Value Summary
     0x04    : 'failed'
 ]
 
+@Field static final Map<Integer, String> CredentialTypeEnum = [
+    0: 'ProgrammingPIN', // Programming PIN code credential type (O)
+    1: 'PIN',            // PIN code credential type (PIN)
+    2: 'RFID',           // RFID identifier credential type (RID)
+    3: 'Fingerprint',    // Fingerprint identifier credential type (FGP)
+    4: 'FingerVein',     // Finger vein identifier credential type (FGP)
+    5: 'Face'            // Face identifier credential type (FACE)
+]
+
+@Field static final Map<Integer, String> DataOperationTypeEnum = [
+    0: 'Add',    // Data is being added or was added (M)
+    1: 'Clear',  // Data is being cleared or was cleared (M)
+    2: 'Modify'  // Data is being modified or was modified (M)
+]
+
 // Helper method to decode CredentialRulesSupport bitmap
 String decodeCredentialRules(Integer rules) {
     List<String> supported = []
@@ -1833,6 +1822,22 @@ String decodeCredentialRules(Integer rules) {
 
 
 // 5.2.4. Features This cluster SHALL support the FeatureMap bitmap attribute as defined below.
+
+// Matter Door Lock Feature Map bits (from Matter specification 1.3)
+@Field static final Integer FEATURE_PIN_CREDENTIAL = 0x0001          // Bit 0: PIN credential support
+@Field static final Integer FEATURE_RFID_CREDENTIAL = 0x0002         // Bit 1: RFID credential support
+@Field static final Integer FEATURE_FINGER_CREDENTIALS = 0x0004      // Bit 2: Fingerprint credential support
+@Field static final Integer FEATURE_LOGGING = 0x0008                 // Bit 3: Logging support
+@Field static final Integer FEATURE_WEEK_DAY_SCHEDULES = 0x0010      // Bit 4: Week day access schedules
+@Field static final Integer FEATURE_DOOR_POSITION_SENSOR = 0x0020    // Bit 5: Door position sensor
+@Field static final Integer FEATURE_FACE_CREDENTIALS = 0x0040        // Bit 6: Face recognition credentials
+@Field static final Integer FEATURE_COTA = 0x0080                    // Bit 7: Credential Over The Air (COTA)
+@Field static final Integer FEATURE_USER_MANAGEMENT = 0x0100         // Bit 8: User management
+@Field static final Integer FEATURE_NOTIFICATION = 0x0200            // Bit 9: Notification support
+@Field static final Integer FEATURE_YEAR_DAY_SCHEDULES = 0x0400      // Bit 10: Year day access schedules
+@Field static final Integer FEATURE_HOLIDAY_SCHEDULES = 0x0800       // Bit 11: Holiday schedules
+@Field static final Integer FEATURE_UNBOLT = 0x1000                  // Bit 12: Unbolt support
+
 String decodeFeatureMap(Integer featureMap) {
     if (featureMap == 0) { return 'None (Mandatory features only)' }
     List<String> features = []
@@ -2069,6 +2074,7 @@ Integer safeParseHex(String hexValue) {
         return 0
     }
 }
+
 
 
 def testInvoke(params) {
