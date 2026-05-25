@@ -65,7 +65,7 @@
  *                                  setRefreshRequest() window is now scaled proportionally to the number of chunks;
  * ver. 1.8.5  2026-05-08 kkossev   merged dev. branch to main;
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
- * ver. 1.8.7  2026-05-25 kkossev   (dev. branch) Matter Lock Codes!; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
+ * ver. 1.8.7  2026-05-25 kkossev   (dev. branch) Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  *
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -90,7 +90,7 @@
 
 
 static String version() { '1.8.7' }
-static String timeStamp() { '2026/05/25 10:18 AM' }
+static String timeStamp() { '2026/05/25 6:34 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
