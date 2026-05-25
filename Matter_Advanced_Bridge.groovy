@@ -65,7 +65,9 @@
  *                                  setRefreshRequest() window is now scaled proportionally to the number of chunks;
  * ver. 1.8.5  2026-05-08 kkossev   merged dev. branch to main;
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
+ * ver. 1.8.7  2026-05-25 kkossev   (dev. branch) Matter Lock Codes!; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  *
+ *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
  *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
@@ -87,8 +89,8 @@
  */
 
 
-static String version() { '1.8.6' }
-static String timeStamp() { '2026/05/10 7:47 AM' }
+static String version() { '1.8.7' }
+static String timeStamp() { '2026/05/25 10:18 AM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -108,7 +110,7 @@ static String timeStamp() { '2026/05/10 7:47 AM' }
 @Field static final String  UNKNOWN = 'UNKNOWN'
 @Field static final Integer SHORT_TIMEOUT  = 7
 @Field static final Integer LONG_TIMEOUT   = 15
-@Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 1
+@Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 0    // was 1
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT = 600
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL = 0xFFFF
 @Field static final Integer defaultMinReportingTime = 10
@@ -475,7 +477,7 @@ private void processParsedDescription(final Map descMap, final String descriptio
     }
     // 2026-02-11  [callbackType:SubscriptionResult, subscriptionId:3617819414] 
     if (descMap?.callbackType == 'SubscriptionResult') {
-        logDebug "parse: received SubscriptionResult callback with subscriptionId:${descMap.subscriptionId}"
+        logInfo "parse: received SubscriptionResult callback with subscriptionId:${descMap.subscriptionId}"
         return
     }
     // 2026-02-11  [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
@@ -771,6 +773,11 @@ Map newParseCompatibilityPatch(final Map descMap) {
             patchedMap.value = []
             if (settings?.traceEnable) { log.warn "myParseDescriptionAsMap: legacy empty list detected: ${patchedMap} description:${description}" }
         }
+        // Normalize scalar FeatureMap (FFFC) and ClusterRevision (FFFD) to uppercase hex strings
+        // for consistency with list attributes which are already stored as hex string arrays.
+        else if (patchedMap.value instanceof Number && patchedMap.attrId in ['FFFC', 'FFFD']) {
+            patchedMap.value = HexUtils.integerToHexString((patchedMap.value as Integer).intValue(), 2).toUpperCase()
+        }
         //log.trace "newParseCompatibilityPatch: descMap after patch:${patchedMap}"
     }
     else {
@@ -910,8 +917,12 @@ void parseGlobalElements(final Map descMap) {
             logTrace "parseGlobalElements: cluster: <b>${getClusterName(descMap.cluster)}</b> (0x${descMap.cluster}) attr: <b>${attributeName}</b> (0x${descMap.attrId})  value:${descMap.value} <b>-> ${action}</b> [$fingerprintName][$attributeName]"
             //logTrace "parseGlobalElements: state[${fingerprintName}][${attributeName}] = ${state[fingerprintName][attributeName]}"
             
-            // Update child device fingerprint data with cluster-specific data
-            updateChildFingerprintData(fingerprintName, attributeName, descMap.value)
+            // For the Descriptor cluster (001D), only ServerList (0001) is needed in child device
+            // fingerprintData (consumed by getServerList()). All other 001D attributes are used only
+            // by the main driver's state machines via state[fingerprintName], or are not consumed at all.
+            if (!(descMap.cluster == '001D' && descMap.attrId != '0001')) {
+                updateChildFingerprintData(fingerprintName, attributeName, descMap.value)
+            }
             
             // Mark attribute as received for state machine wait logic
             markClusterDataReceived(descMap.endpoint, descMap.cluster, descMap.attrId)
@@ -3642,6 +3653,14 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
     return dw
 }
 
+// Descriptor cluster (001D) keys stored in state[fingerprintName] for the main driver's state machines,
+// but must NOT be copied into child device fingerprintData. ServerList is the only 001D key a child
+// driver reads (via getServerList()); everything else is either constant metadata or used only in
+// the main driver.
+@Field static final Set<String> DESCRIPTOR_ONLY_KEYS = [
+    'DeviceTypeList', 'ClientList', 'PartsList', 'AttributeList', 'AcceptedCommandList', 'GeneratedCommandList', 'FeatureMap', 'ClusterRevision'
+] as Set
+
 /**
  * Copy entire fingerprint data from parent state to child device data
  * This preserves critical configuration even after state.fingerprint* is minimized
@@ -3662,12 +3681,14 @@ void copyEntireFingerprintToChild(String fingerprintName, String dni) {
     }
     
     try {
-        // Store complete fingerprint as JSON string in child device data
-        String fingerprintJson = JsonOutput.toJson(fingerprint)
+        // Exclude Descriptor-cluster-only keys that are stored in state for the main driver's
+        // state machines but are not needed (or would be misleading) in child device data.
+        Map filteredFingerprint = fingerprint.findAll { k, v -> !(k in DESCRIPTOR_ONLY_KEYS) }
+        String fingerprintJson = JsonOutput.toJson(filteredFingerprint)
         childDevice.updateDataValue('fingerprintData', fingerprintJson)
         
         logDebug "copyEntireFingerprintToChild: copied ${fingerprintJson.length()} bytes of fingerprint data to ${childDevice.displayName}"
-        logTrace "copyEntireFingerprintToChild: fingerprint keys = ${fingerprint.keySet()}"
+        logTrace "copyEntireFingerprintToChild: fingerprint keys = ${filteredFingerprint.keySet()}"
     } catch (Exception e) {
         logWarn "copyEntireFingerprintToChild: failed to copy fingerprint ${fingerprintName} to ${dni}: ${e.message}"
     }
@@ -4176,7 +4197,7 @@ def illumEvent( illum, descMap) {
     //def newMap = [:]
     Map statsMap = stringToJsonMap(state.stats2); try {statsMap['illumCtr']++ } catch (e) {statsMap['illumCtr']=1}; state.stats2 = mapToJsonString(statsMap)
     int lux = illum
-    if (lux <= 0) {
+    if (lux < 0) {
         log.warn "ignored invalid illum/lux ${lux}"
         return
     }
