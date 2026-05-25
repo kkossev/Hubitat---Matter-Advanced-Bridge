@@ -46,7 +46,7 @@ import hubitat.matter.DataType
 import groovy.json.JsonOutput
 
 @Field static final String matterComponentLockVersion = '1.4.0'
-@Field static final String matterComponentLockStamp   = '2026/05/25 9:36 AM'
+@Field static final String matterComponentLockStamp   = '2026/05/25 1:45 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true      // disable on production
@@ -527,33 +527,7 @@ void setCode(codePosition, pinCode, name = null) {
     logInfo descriptionText
 
     matterSetCredentialPIN(codePosition, pinCode)
-    // events will be generated when the lock reports the change
-
-    boolean newCode = true
-    Map lockcodes = [:]
-    if (device.currentValue("lockCodes") != null) {
-        if (optEncrypt) {
-            lockcodes = parseJson(decrypt(device.currentValue("lockCodes")))
-        } else {
-            lockcodes = parseJson(device.currentValue("lockCodes"))
-        }
-    }
-    if (lockcodes["${codePosition}"]) { newCode = false }
-    lockcodes["${codePosition}"] = ["code": "${pinCode}", "name": "${name}"]
-    if (optEncrypt) {
-        sendEvent(name: "lockCodes", value: encrypt(JsonOutput.toJson(lockcodes)))
-    } else {
-        sendEvent(name: "lockCodes", value: JsonOutput.toJson(lockcodes), isStateChange: true)
-    }
-    if (newCode) {
-        sendEvent(name: "codeChanged", value: "added")
-    } else {
-        sendEvent(name: "codeChanged", value: "changed")
-    }
-    logDebug "Lock codes: ${lockcodes}"
-
-
-
+    // lockCodes and codeChanged will be updated when the lock confirms via LockUserChange event
 }   
 
 
@@ -1515,62 +1489,115 @@ void processLockOperationErrorEvent(Map eventMap) {
 }
 
 // LockUserChange (0x04) event
+// Observed U200 behavior:
+//   setCode(pos)   → TWO events: PIN Add (DataIndex=codePosition) then UserIndex Add (DataIndex=userSlot)
+//   deleteCode(pos)→ ONE event:  UserIndex Clear (DataIndex=userSlot; codePosition NOT in event)
+//
+// codeChanged deduplication strategy:
+//   - isSettingCode==true   : setCode() already sent codeChanged optimistically → confirm only, no re-fire
+//   - isDeletingCode==true  : deleteCode waiting for confirmation → fire 'deleted' + sync lockCodes
+//   - isPinEvent (type==PIN): external credential change → fire codeChanged
+//   - UserIndex Add/Modify  : follow-up from our setCode or unhandled → suppress codeChanged
+//   - UserIndex Clear (external): external delete → fire 'deleted', warn lockCodes may be out of sync
 void processLockUserChangeEvent(Map description) {
-    // Event fields: lockDataType, dataOperationType, operationSource, userIndex, fabricIndex, sourceNode, dataIndex
-    // descMap = [callbackType:Event, endpointInt:1, clusterInt:257, evtId:4, timestamp:946743149680, priority:1, 
-    // data:[4:STRUCT:[
-    //       0:UINT:6,          // LockDataType -> LockDataTypeEnum
-    //       1:UINT:0,          // DataOperationType -> DataOperationTypeEnum
-    //       2:UINT:7,          // OperationSource -> OperationSourceEnum (Unspecified, Keypad, Remote)
-    //       3:UINT:7,          // UserIndex uint16
-    //       4:UINT:1,          // FabricIndex fabric-idx
-    //       5:UINT:791750490,  // SourceNode node-id
-    //       6:UINT:6           // DataIndex uint16
-    // ]]
-    // value:[6:6, 3:7, 0:6, 1:0, 4:1, 5:791750490, 2:7], 
-    // cluster:0101, endpoint:01]
-    //
     Map values = description.value instanceof Map ? description.value : [:]
 
     Integer lockDataType = values[0] != null && values[0] != 'null' ? safeToInt(values[0]) : null
-    Integer dataOpType = values[1] != null && values[1] != 'null' ? safeToInt(values[1]) : null
-    Integer opSource = values[2] != null && values[2] != 'null' ? safeToInt(values[2]) : null
-    Integer userIndex = values[3] != null && values[3] != 'null' ? safeToInt(values[3]) : null
-    Integer fabricIndex = values[4] != null && values[4] != 'null' ? safeToInt(values[4]) : null
-    Integer sourceNode = values[5] != null && values[5] != 'null' ? safeToInt(values[5]) : null
-    Integer dataIndex = values[6] != null && values[6] != 'null' ? safeToInt(values[6]) : null
+    Integer dataOpType   = values[1] != null && values[1] != 'null' ? safeToInt(values[1]) : null
+    Integer opSource     = values[2] != null && values[2] != 'null' ? safeToInt(values[2]) : null
+    Integer userIndex    = values[3] != null && values[3] != 'null' ? safeToInt(values[3]) : null
+    Integer fabricIndex  = values[4] != null && values[4] != 'null' ? safeToInt(values[4]) : null
+    Integer sourceNode   = values[5] != null && values[5] != 'null' ? safeToInt(values[5]) : null
+    Integer dataIndex    = values[6] != null && values[6] != 'null' ? safeToInt(values[6]) : null
 
-
-    String dataType = DoorLockClusterLockDataType[lockDataType] ?: "Unknown (${lockDataType})"
+    String dataType  = DoorLockClusterLockDataType[lockDataType] ?: "Unknown (${lockDataType})"
     String operation = DoorLockClusterDataOperationType[dataOpType] ?: "Unknown (${dataOpType})"
-    String hubitatOperation = HubitatCodeChangedType[dataOpType] ?: "unknown"
-    String source = DoorLockClusterOperationSource[opSource] ?: "Unknown (${opSource})"
-    String fabricText = fabricIndex != null ? "Fabric ${fabricIndex}" : "Unknown Fabric"
-    String sourceNodeText = sourceNode != null ? "Node ${sourceNode}" : "Unknown Node"
-    String dataIndexText = dataIndex != null ? "Data Index ${dataIndex}" : "Unknown Data Index"
+    String source    = DoorLockClusterOperationSource[opSource] ?: "Unknown (${opSource})"
 
-    String descriptionText = "${device.displayName} ${dataType} ${operation}"
-    if (userIndex != null) {
-        descriptionText += " for User ${userIndex}"
+    logDebug "processLockUserChangeEvent: type=${dataType}(${lockDataType}), op=${operation}, user=${userIndex}, dataIdx=${dataIndex}, source=${source}"
+
+    // Recover Hubitat codePosition where possible:
+    //   PIN events (lockDataType==0x06): DataIndex == credential index == Hubitat codePosition
+    //   UserIndex Clear via deleteCode:  read from state.lastDeleteCode.codePosition
+    boolean isPinEvent = (lockDataType == 0x06)
+    Integer codePosition = null
+    if (isPinEvent) {
+        codePosition = dataIndex   // credential slot == Hubitat codePosition for PIN events
+    } else if (state.isDeletingCode) {
+        codePosition = state.lastDeleteCode?.codePosition
     }
-    if (dataIndex != null) {
-        descriptionText += ", (${dataIndexText})"
-    }
-    if (fabricIndex != null) {
-        descriptionText += ", (${fabricText})"
-    }
-    if (sourceNode != null) {
-        descriptionText += ", (${sourceNodeText})"
-    }
+
+    String posText = codePosition != null ? " [pos=${codePosition}]" : ""
+    String descriptionText = "${device.displayName}${posText} ${dataType} ${operation}"
+    if (userIndex    != null) { descriptionText += " for User ${userIndex}" }
+    if (dataIndex    != null) { descriptionText += ", (Data Index ${dataIndex})" }
+    if (fabricIndex  != null) { descriptionText += ", (Fabric ${fabricIndex})" }
+    if (sourceNode   != null) { descriptionText += ", (Node ${sourceNode})" }
     descriptionText += " (source: ${source})"
 
     logInfo "${descriptionText}"
     sendEvent(name: 'lastUserChange', value: "${operation} ${dataType}", descriptionText: descriptionText, isStateChange: true)
-    sendEvent(name: 'codeChanged', value: hubitatOperation, descriptionText: descriptionText, isStateChange: true)
-    state.isSettingCode = false
-    unschedule('clearSettingCodeFlagOnTimeout')
-    state.isDeletingCode = false
-    unschedule('clearDeletingCodeFlagOnTimeout')
+
+    // --- codeChanged and lockCodes sync ---
+    if (state.isSettingCode == true) {
+        // Lock confirmed setCode — update lockCodes and fire codeChanged now
+        state.isSettingCode = false
+        unschedule('clearSettingCodeFlagOnTimeout')
+        Map entry = (state.lastSetCode != null ? state.lastSetCode["${codePosition}"] : null) ?: [:]
+        String storedPin  = entry?.pinCode ?: ''
+        String storedName = entry?.name    ?: ''
+        Map lockcodes = [:]
+        try { lockcodes = parseJson(device.currentValue('lockCodes') ?: '{}') } catch (Exception e) { logWarn "processLockUserChangeEvent: failed to parse lockCodes: ${e.message}" }
+        boolean newCode = !lockcodes.containsKey("${codePosition}")
+        lockcodes["${codePosition}"] = [code: storedPin, name: storedName]
+        sendEvent(name: 'lockCodes', value: JsonOutput.toJson(lockcodes), isStateChange: true)
+        String codeChangedVal = newCode ? 'added' : 'changed'
+        sendEvent(name: 'codeChanged', value: codeChangedVal, descriptionText: descriptionText, isStateChange: true)
+        logDebug "processLockUserChangeEvent: setCode confirmed — codePosition=${codePosition}, ${codeChangedVal}, lockCodes updated"
+
+    } else if (state.isDeletingCode == true && dataOpType == 1) {
+        // deleteCode confirmation — fire codeChanged='deleted' and remove from lockCodes
+        state.isDeletingCode = false
+        unschedule('clearDeletingCodeFlagOnTimeout')
+        sendEvent(name: 'codeChanged', value: 'deleted', descriptionText: descriptionText, isStateChange: true)
+        if (codePosition != null) { removeLockCode(codePosition) }
+
+    } else if (isPinEvent) {
+        // External PIN credential change (not from our commands)
+        String hubitatOperation = HubitatCodeChangedType[dataOpType] ?: 'unknown'
+        sendEvent(name: 'codeChanged', value: hubitatOperation, descriptionText: descriptionText, isStateChange: true)
+        if (dataOpType == 1 && codePosition != null) {
+            removeLockCode(codePosition)   // external PIN Clear — remove from lockCodes
+        } else {
+            logWarn "processLockUserChangeEvent: external credential change (pos=${codePosition}) — lockCodes attribute not automatically synced"
+        }
+
+    } else if (dataOpType == 1) {
+        // UserIndex Clear with no pending deleteCode — external delete (e.g., keypad or other controller)
+        String posDesc = codePosition != null ? "pos=${codePosition}" : "userIndex=${userIndex}"
+        logWarn "processLockUserChangeEvent: external credential delete (${posDesc}) — lockCodes attribute not automatically synced"
+        sendEvent(name: 'codeChanged', value: 'deleted', descriptionText: descriptionText, isStateChange: true)
+
+    } else {
+        // UserIndex Add/Modify follow-up or other unhandled type — suppress codeChanged
+        logDebug "processLockUserChangeEvent: suppressing codeChanged for non-PIN ${operation} event (type=${dataType})"
+    }
+}
+
+// Remove a code entry from the lockCodes attribute by Hubitat codePosition
+private void removeLockCode(Integer codePosition) {
+    try {
+        String currentCodes = device.currentValue('lockCodes') ?: '{}'
+        Map lockcodes = parseJson(currentCodes)
+        if (lockcodes.remove("${codePosition}") != null) {
+            sendEvent(name: 'lockCodes', value: JsonOutput.toJson(lockcodes), isStateChange: true)
+            logDebug "removeLockCode: removed codePosition=${codePosition} from lockCodes"
+        } else {
+            logDebug "removeLockCode: codePosition=${codePosition} not found in lockCodes (already removed or never added)"
+        }
+    } catch (Exception e) {
+        logWarn "removeLockCode: failed to update lockCodes: ${e.message}"
+    }
 }
 
 // Command to get all supported Door Lock attributes (for info/debugging)
