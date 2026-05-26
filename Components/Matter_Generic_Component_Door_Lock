@@ -23,18 +23,19 @@
   * ver. 1.3.2  2025-01-25 kkossev + GPT-4.1 : newParse: true decoding; use matterCommonLib; capability 'LockCodes' is commented out temporarily: (lock codes still not working)
   * ver. 1.3.3  2025-02-06 kkossev   added events 'locking', 'unlocking' for better UI feedback; experimenting ...
   * ver. 1.3.4  2025-02-19 kkossev   moved common methods to matterCommonLib;
-  * ver. 1.4.0  2026-05-25 kkossev   (dev. branch) capability 'LockCodes' attempt (blind implementation) - TESTING
+  * ver. 1.4.0  2026-05-25 kkossev   capability 'LockCodes' attempt (blind implementation) - first test version.
+  * ver. 1.4.1  2026-05-26 kkossev   (dev. branch) fixed EZ dashboards unhappy face; added unlockWithTimeout command; added UnboltDoor command; 
+  *                                  DuplicateDoorLockEventFilter; added the needed data: Map required by the LCM 
   * 
   *                                  TODO: 
-  *                                  TODO: filter duplicated events
-  *                                  TODO: fingerprintData "AcceptedCommandList is empty !!!
-  *                                  TODO: add driver version to the state variables
+  *                                  TODO: 
+  *                                  TODO: 
   *                                  TODO: add [physical] [digital] event type to events and logs
   *                                  TODO: analyze https://github.com/SmartThingsCommunity/SmartThingsEdgeDrivers/tree/main/drivers/SmartThings/matter-lock 
   *                                  TODO: analyze https://matter-survey.org/cluster/0x0101
   *                                  TODO: update gitHub documentation
   *                                  
-  *   WORKING MATTER COMMANDS     :  identify(), lock(), unlock(), matterSetCredentialPIN (0x22), matterClearCredential (0x26), 
+  *   WORKING MATTER functions       :  identify(), lock(), unlock(), unlockWithTimeout (0x03), unboltDoor (0x27), matterSetCredentialPIN (0x22), matterClearCredential (0x26), 
   *                                  
   *
 */
@@ -46,11 +47,11 @@ import hubitat.matter.DataType
 import groovy.json.JsonOutput
 
 
-@Field static final String matterComponentLockVersion = '1.4.0'
-@Field static final String matterComponentLockStamp   = '2026/05/25 6:33 PM'
+@Field static final String matterComponentLockVersion = '1.4.1'
+@Field static final String matterComponentLockStamp   = '2026/05/26 11:02 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !   
-@Field static final Boolean _DEFAULT_LOG_ENABLE = true      // disable on production
+@Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
 
 @Field static final Integer DELETE_TIMEOUT_SECONDS = 5      // time to wait for lock code deletion confirmation event before removing code from lockCodes attribute (to avoid ghost codes in case of failed deletion)
 @Field static final Integer SET_CODE_TIMEOUT_SECONDS = 45  // time to wait for lock code set confirmation event before clearing 'setting...' status in lockCodes attribute (to avoid stuck 'setting...' status in case of failed set)
@@ -66,9 +67,11 @@ metadata {
 
         command    'identify', [[name: 'Identify the lock device']]
         command    'getInfo', [[name: 'Check the live logs and the device data for additional infoormation on this device']]
+        command    'unlockWithTimeout', [[name: 'timeout*', type: 'NUMBER', description: 'Auto-relock timeout in seconds (1-65535)']]
+        command    'unboltDoor', [[name: 'Unbolt door (latch retraction only, not available on all locks)']]
+        command    'clearStatistics', [[name: 'Clear event statistics counters and duplicate-event cache']]
         /*
         //command    'unlockWithPIN', [[name: 'pin*', type: 'STRING', description: 'unlock with PIN (not available on all locks)']]
-        command    'unboltDoor', [[name: 'Unbolt door (not available on all locks)']]
         
         // LockCodes custom commands with dynamic feature support indication
         command    'setCode', [[name: 'codePosition*', type: 'NUMBER', description: 'Code slot (1-based)'],
@@ -78,7 +81,7 @@ metadata {
         command    'getCodes', [[name: "Retrieve all PIN codes<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
         */
         // TODO - move these to state variables or device data ?
-        attribute 'lock', 'ENUM', ["locked", "unlocked with timeout", "unlocked", "unknown", "locking", "unlocking"]  // added 'locking' and 'unlocking' for better UI feedback during lock/unlock operations
+        // attribute 'lock', 'ENUM', ["locked", "unlocked with timeout", "unlocked", "unknown", "locking", "unlocking"]  // added 'locking' and 'unlocking' for better UI feedback during lock/unlock operations
         // lockType, actuatorEnabled, operatingMode, supportedOperatingModes are stored in state.lockAttr (not Hubitat attributes)
         
         // Event-related attributes
@@ -87,6 +90,7 @@ metadata {
         attribute 'lastOperationSource', 'STRING'
         attribute 'lastLockOperationError', 'STRING'
         attribute 'lastUserChange', 'STRING'
+        attribute 'lastCodeName', 'STRING'
         attribute 'lockAlarm', 'STRING'
         attribute 'doorState', 'STRING'
         
@@ -109,6 +113,7 @@ metadata {
                                            [name: 'name', type: 'STRING', description: "User name (optional)<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
               */
             command 'testInvoke', [[name: 'testInvoke', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
+            command 'testUnlockWithCode', [[name: 'pinCode', type: 'STRING', description: 'Simulate physical unlock with this PIN code', defaultValue: '1234']]
         }
     }
 }
@@ -127,6 +132,7 @@ preferences {
               title: '<b>Enable descriptionText logging</b>',
               required: false,
               defaultValue: true
+        //input name: 'optEncrypt', type: 'bool', title: '<b>Enable lockCode encryption</b>', description: '<i>Encrypt PIN codes stored in lockCodes attribute and codeChanged events</i>', defaultValue: false
         input name: 'advancedOptions', type: 'bool', title: '<b>Advanced Options</b>', description: '<i>These advanced options should be already automatically set in an optimal way for your device...</i>', defaultValue: false
         if (device && advancedOptions == true) {
             input name: 'ignoreCompatibilityChecks', type: 'bool', title: '<b>Ignore Compatibility Checks</b>', description: '<i>Allow executing commands that may not be supported by this lock</i>', defaultValue: false
@@ -180,6 +186,10 @@ void handleLockMessage(Map description) {
 
     // Check if this is an event (has evtId) or an attribute (has attrId)
     if (descMap.evtId != null) {
+        if (isDuplicateDoorLockEvent(descMap)) {
+            logDebug "handleLockMessage: filtered duplicated Door Lock event evtId=${descMap.evtId}, eventSerial=${descMap.eventSerial}"
+            return
+        }
         processDoorLockEvent(descMap)
         return
     }
@@ -518,9 +528,9 @@ void setCode(codePosition, pinCode, name = null) {
     // we need to prevent calling setCode again until the job is done!
     // the timout timer will be stopped and the state.isSettingCode flag will be cleared when we receive the codeChanged event from the lock (in processDoorLockEvent)
     state.isSettingCode = true
-    
-    if (state.lastSetCode == null) { state.lastSetCode = [:] }
-    state.lastSetCode["${codePosition}"] = [operation: "setCode", codePosition: codePosition, pinCode: pinCode, name: name, timestamp: now()]
+    ensureLockCodeStateMaps()
+    // Keep minimal pending request context keyed by credential slot until confirmation event arrives.
+    state.pendingSetByCredential["${codePosition}"] = [requestedAt: now(), pinCode: pinCode, name: name]
 
     runIn(SET_CODE_TIMEOUT_SECONDS, "clearSettingCodeFlagOnTimeout", [overwrite: true])     // 45 seconds !
 
@@ -611,9 +621,16 @@ void clearSettingCodeFlagOnTimeout() {
 void clearDeletingCodeFlagOnTimeout() {
     Integer codePosition = state.lastDeleteCode?.codePosition
     state.isDeletingCode = false
+    Map existingEntry = codePosition != null ? (getLockCodes()["${codePosition}"] ?: [:]) : [:]
     String descriptionText = "${device.displayName} deleteCode: no confirmation event received from lock (position ${codePosition}) — assuming deleted"
-    if (codePosition != null) { removeLockCode(codePosition) }
-    sendEvent(name: 'codeChanged', value: 'deleted', descriptionText: descriptionText, isStateChange: true)
+    if (codePosition != null) {
+        removeLockCode(codePosition)
+        removeCredentialMeta("${codePosition}")
+    }
+    Map codeData = codePosition != null ? ["${codePosition}": existingEntry] : [:]
+    def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
+    logLockCodeEventPayload('codeChanged', 'deleted', codeData)
+    sendEvent(name: 'codeChanged', value: 'deleted', data: eventData, descriptionText: descriptionText, isStateChange: true)
     logWarn descriptionText
 }
 
@@ -637,7 +654,7 @@ void identify() {
 void lock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    sendEvent(name: 'lock', value: 'locking', descriptionText: "${device.displayName} is locking...", type: 'digital')
+    //sendEvent(name: 'lock', value: 'locking', descriptionText: "${device.displayName} is locking...", type: 'digital')
     logInfo "locking..."
     parent?.componentLog(device, 'debug', 'locking...')
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x00, 2000)
@@ -649,14 +666,51 @@ void lock() {
 void unlock() {
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    sendEvent(name: 'lock', value: 'unlocking', descriptionText: "${device.displayName} is unlocking...", type: 'digital')
+    //sendEvent(name: 'lock', value: 'unlocking', descriptionText: "${device.displayName} is unlocking...", type: 'digital')
     logInfo "unlocking..."
     parent?.componentLog(device, 'debug', 'unlocking...')
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x01, 2000)
     parent?.sendToDevice(cmd)
 }
 
-// 5.2.10.3. UnlockWithTimeout Command (0x02) - TODO: implemented it later if needed
+// 5.2.10.3. UnlockWithTimeout Command (0x03)
+// This command causes the lock device to unlock the door, then automatically relock after the given timeout.
+void unlockWithTimeout(BigDecimal timeoutSeconds) {
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+    Integer timeout = timeoutSeconds?.intValue()
+    if (timeout == null || timeout < 1 || timeout > 65535) {
+        logWarn "unlockWithTimeout: timeout must be 1..65535 seconds, got '${timeoutSeconds}'"
+        return
+    }
+    if (!isDoorLockCommandSupported('0003') && settings?.ignoreCompatibilityChecks != true) {
+        logWarn 'unlockWithTimeout: This lock does not support UnlockWithTimeout (0x0003 not in AcceptedCommandList). Enable \'Ignore Compatibility Checks\' to force.'
+        return
+    }
+    String timeoutHexLE = zigbee.swapOctets(HexUtils.integerToHexString(timeout, 2))
+    String tlv = '15' + '25' + '00' + timeoutHexLE + '18'
+    state.lastCmdIsTimeout = true
+    logInfo "unlocking with timeout ${timeout} seconds..."
+    parent?.componentLog(device, 'debug', "unlocking with timeout ${timeout}s...")
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x03, 2000, tlv)
+    parent?.sendToDevice(cmd)
+}
+
+// 5.2.10.4. UnboltDoor Command (0x27)
+// This command causes the lock device to retract the bolt (unlatch) without fully unlocking.
+// Requires the UBOLT feature (FEATURE_UNBOLT bit in FeatureMap).
+void unboltDoor() {
+    Integer deviceNumber = getDeviceNumber()
+    if (deviceNumber == null) return
+    if (!isFeatureEnabled(FEATURE_UNBOLT) && settings?.ignoreCompatibilityChecks != true) {
+        logWarn 'unboltDoor: This lock does not support the Unbolt feature (FEATURE_UNBOLT / bit 12 not set in FeatureMap). Enable \'Ignore Compatibility Checks\' to force.'
+        return
+    }
+    logInfo 'unbolting...'
+    parent?.componentLog(device, 'debug', 'unbolting...')
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x27, 2000)
+    parent?.sendToDevice(cmd)
+}
 
 
 // 5.2.10.42 SetCredential Command (0x22)
@@ -1040,16 +1094,6 @@ void matterClearUser(String userIndex) {
 */
 
 
-// Command to unbolt door (for locks with separate bolt mechanism)
-void unboltDoor() {
-    // TODO: check if the lock supports this feature
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', 'unbolting door...')
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x27, 2000)
-    parent?.sendToDevice(cmd)
-}
 
 
 /*
@@ -1145,7 +1189,7 @@ Boolean isFeatureEnabled(Integer featureBit) {
     // Check if the specific feature bit is set
     boolean enabled = (featureMap & featureBit) != 0
     
-    logDebug "isFeatureEnabled: FeatureMap=0x${Integer.toHexString(featureMap).toUpperCase()}, checking bit 0x${Integer.toHexString(featureBit).toUpperCase()}: ${enabled}"
+    //logDebug "isFeatureEnabled: FeatureMap=0x${Integer.toHexString(featureMap).toUpperCase()}, checking bit 0x${Integer.toHexString(featureBit).toUpperCase()}: ${enabled}"
     
     return enabled
 }
@@ -1246,11 +1290,12 @@ void updated() {
         logDebug settings as String
         runIn(86400, 'logsOff')
     }
+    updateEncryption()
 }
 
 // Clean up old/deprecated state variables
 void clearOldStateVariables() {
-    List<String> oldStateVars = ['warning', 'working', 'Warning', 'Working', 'comment']
+    List<String> oldStateVars = ['warning', 'working', 'Warning', 'Working', 'comment', 'lastSetCode']
     oldStateVars.each { String varName ->
         if (state.containsKey(varName)) {
             logDebug "clearOldStateVariables: removing '${varName}'"
@@ -1274,7 +1319,7 @@ void refresh() {
 
 /**
  * Get the Door Lock cluster AttributeList (0x0101_FFFB)
- * @return List of attribute IDs as hex strings (e.g., ["00", "01", "02", ...])
+ * @return List of attribute IDs as 4-digit hex strings (e.g., ["0000", "0001", "0002", ...])
  */
 List<String> getDoorLockAttributeList() {
     Map fingerprint = getFingerprintData()
@@ -1288,7 +1333,7 @@ List<String> getDoorLockAttributeList() {
 
 /**
  * Check if a specific attribute is supported by the Door Lock cluster
- * @param attrHex Attribute ID as hex string (e.g., "00" for LockState)
+ * @param attrHex Attribute ID as 4-digit hex string (e.g., "0000" for LockState)
  * @return true if attribute is in Door Lock AttributeList
  */
 boolean isDoorLockAttributeSupported(String attrHex) {
@@ -1298,7 +1343,7 @@ boolean isDoorLockAttributeSupported(String attrHex) {
 
 /**
  * Get AcceptedCommandList for Door Lock cluster from fingerprint data
- * @return List of command IDs in hex (e.g., ['00', '01', '02', ...])
+ * @return List of command IDs as 4-digit hex strings (e.g., ['0000', '0001', '0003', ...])
  */
 List<String> getDoorLockAcceptedCommandList() {
     Map fingerprint = getFingerprintData()
@@ -1311,7 +1356,7 @@ List<String> getDoorLockAcceptedCommandList() {
 
 /**
  * Check if a specific Door Lock command is supported
- * @param commandHex The command ID in hex (e.g., '00', '01', etc.)
+ * @param commandHex The command ID as 4-digit hex string (e.g., '0000', '0001', etc.)
  * @return true if command is in the AcceptedCommandList
  */
 Boolean isDoorLockCommandSupported(String commandHex) {
@@ -1452,13 +1497,46 @@ void processLockOperationEvent(Map eventMap) {
 
     String descriptionText = "${operation} by ${source}" + (userIndex != null ? " (User ${userIndex})" : "")
 
-    // Optimized lock state mapping
-    Map lockStateMap = [0: 'locked', 1: 'unlocked']
-    String lockState = lockStateMap.get(lockOpType, 'unknown')
+    // Optimized lock state mapping — handle 'unlocked with timeout' when triggered by unlockWithTimeout()
+    String lockState
+    if (lockOpType == 0) {
+        lockState = 'locked'
+        state.lastCmdIsTimeout = false
+    } else if (lockOpType == 1 && state.lastCmdIsTimeout == true) {
+        lockState = 'unlocked with timeout'
+    } else if (lockOpType == 1) {
+        lockState = 'unlocked'
+    } else if (lockOpType == 4) {
+        lockState = 'unlocked'   // Unlatch (unboltDoor); Hubitat Lock has no 'unlatched' state
+    } else {
+        lockState = 'unknown'
+    }
     String lockDesc = "${device.displayName} is ${lockState} (${descriptionText})"
-    sendEvent(name: 'lock', value: lockState, descriptionText: lockDesc, isStateChange: true)
 
-    logInfo descriptionText
+    // When userIndex is present (keypad/code unlock), resolve credential slot for LCM data matching.
+    if (userIndex != null) {
+        String credentialKey = resolveCredentialKeyFromUserIndex(userIndex) ?: "${userIndex}"
+        Map codeEntry = getLockCodes()[credentialKey] ?: [name: "code #${credentialKey}"]
+        lockDesc = "${device.displayName} is ${lockState} by ${source.toLowerCase()} (${codeEntry.name})"
+        Map codeData = [(credentialKey): codeEntry]
+        def lockEventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
+        logLockCodeEventPayload('lock', lockState, codeData)
+        sendEvent(name: 'lock', value: lockState, data: lockEventData, descriptionText: lockDesc, isStateChange: true)
+        if (codeEntry.name != "code #${credentialKey}") {  // only send lastCodeName if we found the actual code
+            sendEvent(name: 'lastCodeName', value: codeEntry.name, descriptionText: "${device.displayName} operated by ${codeEntry.name}", isStateChange: true)
+        }
+        upsertCredentialMeta(credentialKey, [
+            userIndex: userIndex,
+            credentialIndex: safeToInt(credentialKey),
+            operationSource: opSource,
+            operationSourceName: source
+        ])
+        logDebug "processLockOperationEvent: userIndex=${userIndex} -> credential=${credentialKey}, codeName='${codeEntry.name}'"
+    } else {
+        sendEvent(name: 'lock', value: lockState, descriptionText: lockDesc, isStateChange: true)
+    }
+
+    logInfo lockDesc
     sendEvent(name: 'lastLockOperation', value: operation, descriptionText: descriptionText, isStateChange: true)
     sendEvent(name: 'lastOperationSource', value: source, descriptionText: descriptionText, isStateChange: true)
 }
@@ -1517,15 +1595,36 @@ void processLockUserChangeEvent(Map description) {
 
     logDebug "processLockUserChangeEvent: type=${dataType}(${lockDataType}), op=${operation}, user=${userIndex}, dataIdx=${dataIndex}, source=${source}"
 
-    // Recover Hubitat codePosition where possible:
-    //   PIN events (lockDataType==0x06): DataIndex == credential index == Hubitat codePosition
-    //   UserIndex Clear via deleteCode:  read from state.lastDeleteCode.codePosition
+    // Recover Hubitat credential slot where possible.
     boolean isPinEvent = (lockDataType == 0x06)
-    Integer codePosition = null
-    if (isPinEvent) {
-        codePosition = dataIndex   // credential slot == Hubitat codePosition for PIN events
-    } else if (state.isDeletingCode) {
-        codePosition = state.lastDeleteCode?.codePosition
+    String credentialKey = null
+    if (isPinEvent && dataIndex != null) {
+        credentialKey = "${dataIndex}"   // PIN events carry credential index in DataIndex
+    } else if (state.isDeletingCode && state.lastDeleteCode?.codePosition != null) {
+        credentialKey = "${state.lastDeleteCode.codePosition}" // command correlation for deleteCode()
+    } else if (dataOpType == 1 && userIndex != null) {
+        // External UserIndex Clear: try resolving slot from metadata learned from prior events.
+        credentialKey = resolveCredentialKeyFromUserIndex(userIndex)
+    }
+    ensureLockCodeStateMaps()
+    if (credentialKey == null && state.isSettingCode == true && state.pendingSetByCredential?.size() == 1) {
+        // Fallback when lock omits expected slot fields for set confirmation.
+        credentialKey = state.pendingSetByCredential.keySet().first()
+    }
+    Integer codePosition = credentialKey != null ? safeToInt(credentialKey) : null
+
+    if (credentialKey != null) {
+        upsertCredentialMeta(credentialKey, [
+            userIndex: userIndex,
+            credentialIndex: codePosition,
+            lastDataIndex: dataIndex,
+            lastDataType: lockDataType,
+            lastDataOperationType: dataOpType,
+            lastSource: opSource,
+            lastSourceName: source,
+            fabricIndex: fabricIndex,
+            sourceNode: sourceNode
+        ])
     }
 
     String posText = codePosition != null ? " [pos=${codePosition}]" : ""
@@ -1544,41 +1643,73 @@ void processLockUserChangeEvent(Map description) {
         // Lock confirmed setCode — update lockCodes and fire codeChanged now
         state.isSettingCode = false
         unschedule('clearSettingCodeFlagOnTimeout')
-        Map entry = (state.lastSetCode != null ? state.lastSetCode["${codePosition}"] : null) ?: [:]
+        Map entry = credentialKey != null ? (state.pendingSetByCredential?.get(credentialKey) ?: [:]) : [:]
         String storedPin  = entry?.pinCode ?: ''
-        String storedName = entry?.name    ?: ''
-        Map lockcodes = [:]
-        try { lockcodes = parseJson(device.currentValue('lockCodes') ?: '{}') } catch (Exception e) { logWarn "processLockUserChangeEvent: failed to parse lockCodes: ${e.message}" }
-        boolean newCode = !lockcodes.containsKey("${codePosition}")
-        lockcodes["${codePosition}"] = [code: storedPin, name: storedName]
-        sendEvent(name: 'lockCodes', value: JsonOutput.toJson(lockcodes), isStateChange: true)
+        String storedName = entry?.name    ?: (credentialKey != null ? (getLockCodes()[credentialKey]?.name ?: "code #${credentialKey}") : '')
+        Map lockcodes = getLockCodes()
+        boolean newCode = credentialKey != null ? !lockcodes.containsKey(credentialKey) : false
+        if (credentialKey != null) {
+            lockcodes[credentialKey] = [code: storedPin, name: storedName]
+        }
+        updateLockCodes(lockcodes)
         String codeChangedVal = newCode ? 'added' : 'changed'
-        sendEvent(name: 'codeChanged', value: codeChangedVal, descriptionText: descriptionText, isStateChange: true)
-        if (state.lastSetCode != null) { state.lastSetCode.remove("${codePosition}") }
-        logDebug "processLockUserChangeEvent: setCode confirmed — codePosition=${codePosition}, ${codeChangedVal}, lockCodes updated"
+        Map codeData = credentialKey != null ? [(credentialKey): [code: storedPin, name: storedName]] : [:]
+        def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
+        logLockCodeEventPayload('codeChanged', codeChangedVal, codeData)
+        sendEvent(name: 'codeChanged', value: codeChangedVal, data: eventData, descriptionText: descriptionText, isStateChange: true)
+        if (credentialKey != null) { state.pendingSetByCredential?.remove(credentialKey) }
+        logDebug "processLockUserChangeEvent: setCode confirmed - credential=${credentialKey}, ${codeChangedVal}, lockCodes updated"
 
     } else if (state.isDeletingCode == true && dataOpType == 1) {
         // deleteCode confirmation — fire codeChanged='deleted' and remove from lockCodes
         state.isDeletingCode = false
         unschedule('clearDeletingCodeFlagOnTimeout')
-        sendEvent(name: 'codeChanged', value: 'deleted', descriptionText: descriptionText, isStateChange: true)
-        if (codePosition != null) { removeLockCode(codePosition) }
+        Map existingEntry = credentialKey != null ? (getLockCodes()[credentialKey] ?: [:]) : [:]
+        Map codeData = credentialKey != null ? [(credentialKey): existingEntry] : [:]
+        def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
+        logLockCodeEventPayload('codeChanged', 'deleted', codeData)
+        sendEvent(name: 'codeChanged', value: 'deleted', data: eventData, descriptionText: descriptionText, isStateChange: true)
+        if (codePosition != null) {
+            removeLockCode(codePosition)
+            removeCredentialMeta("${codePosition}")
+        }
 
     } else if (isPinEvent) {
         // External PIN credential change (not from our commands)
         String hubitatOperation = HubitatCodeChangedType[dataOpType] ?: 'unknown'
-        sendEvent(name: 'codeChanged', value: hubitatOperation, descriptionText: descriptionText, isStateChange: true)
+        Map extPinData
+        if (dataOpType == 1 && credentialKey != null) {
+            extPinData = [(credentialKey): getLockCodes()[credentialKey] ?: [:]]
+        } else {
+            extPinData = credentialKey != null ? [(credentialKey): [name: "code #${credentialKey}"]] : [:]
+        }
+        def extPinEventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(extPinData)) : extPinData
+        logLockCodeEventPayload('codeChanged', hubitatOperation, extPinData)
+        sendEvent(name: 'codeChanged', value: hubitatOperation, data: extPinEventData, descriptionText: descriptionText, isStateChange: true)
         if (dataOpType == 1 && codePosition != null) {
             removeLockCode(codePosition)   // external PIN Clear — remove from lockCodes
+            removeCredentialMeta("${codePosition}")
         } else {
             logWarn "processLockUserChangeEvent: external credential change (pos=${codePosition}) — lockCodes attribute not automatically synced"
         }
 
     } else if (dataOpType == 1) {
-        // UserIndex Clear with no pending deleteCode — external delete (e.g., keypad or other controller)
-        String posDesc = codePosition != null ? "pos=${codePosition}" : "userIndex=${userIndex}"
-        logWarn "processLockUserChangeEvent: external credential delete (${posDesc}) — lockCodes attribute not automatically synced"
-        sendEvent(name: 'codeChanged', value: 'deleted', descriptionText: descriptionText, isStateChange: true)
+        // UserIndex Clear with no pending deleteCode — external delete; try metadata mapping.
+        String posDesc = credentialKey != null ? "pos=${credentialKey}" : "userIndex=${userIndex}"
+        if (credentialKey == null) {
+            logWarn "processLockUserChangeEvent: external credential delete (${posDesc}) — lockCodes attribute not automatically synced"
+        } else {
+            logInfo "processLockUserChangeEvent: external credential delete resolved (${posDesc})"
+        }
+        Map extDelEntry = credentialKey != null ? (getLockCodes()[credentialKey] ?: [:]) : [:]
+        Map extDelData = credentialKey != null ? [(credentialKey): extDelEntry] : [:]
+        def extDelEventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(extDelData)) : extDelData
+        logLockCodeEventPayload('codeChanged', 'deleted', extDelData)
+        sendEvent(name: 'codeChanged', value: 'deleted', data: extDelEventData, descriptionText: descriptionText, isStateChange: true)
+        if (credentialKey != null && codePosition != null) {
+            removeLockCode(codePosition)
+            removeCredentialMeta("${codePosition}")
+        }
 
     } else {
         // UserIndex Add/Modify follow-up or other unhandled type — suppress codeChanged
@@ -1588,19 +1719,161 @@ void processLockUserChangeEvent(Map description) {
 
 // Remove a code entry from the lockCodes attribute by Hubitat codePosition
 private void removeLockCode(Integer codePosition) {
-    try {
-        String currentCodes = device.currentValue('lockCodes') ?: '{}'
-        Map lockcodes = new HashMap(parseJson(currentCodes))   // copy into mutable HashMap to avoid LazyMap.remove() issues
-        String key = "${codePosition}"
-        if (lockcodes.containsKey(key)) {
-            lockcodes.remove(key)
-            sendEvent(name: 'lockCodes', value: JsonOutput.toJson(lockcodes), isStateChange: true)
-            logDebug "removeLockCode: removed codePosition=${codePosition} from lockCodes"
+    Map lockcodes = new HashMap(getLockCodes())   // copy into mutable HashMap to avoid LazyMap.remove() issues
+    String key = "${codePosition}"
+    if (lockcodes.containsKey(key)) {
+        lockcodes.remove(key)
+        updateLockCodes(lockcodes)
+        logDebug "removeLockCode: removed codePosition=${codePosition} from lockCodes"
+    } else {
+        logDebug "removeLockCode: codePosition=${codePosition} not found in lockCodes (already removed or never added)"
+    }
+}
+
+// ---- Lock code helpers (Hubitat Lock Code Manager compatibility) ----
+
+private void ensureLockCodeStateMaps() {
+    if (state.pendingSetByCredential == null) { state.pendingSetByCredential = [:] }
+    if (state.codeMetaByCredential == null) { state.codeMetaByCredential = [:] }
+    if (state.lastProcessedEventSerialById == null) { state.lastProcessedEventSerialById = [:] }
+}
+
+private void ensureStats() {
+    if (state.stats == null) { state.stats = [:] }
+    if (state.stats.totalEvents    == null) { state.stats.totalEvents    = 0 }
+    if (state.stats.duplicateEvents == null) { state.stats.duplicateEvents = 0 }
+    if (state.stats.outOfOrderEvents == null) { state.stats.outOfOrderEvents = 0 }
+    if (state.stats.lastSerialByStream == null) { state.stats.lastSerialByStream = [:] }
+}
+
+void clearStatistics() {
+    state.stats = [totalEvents: 0, duplicateEvents: 0, outOfOrderEvents: 0, lastSerialByStream: [:]]
+    state.seenDoorLockEvents = [:]
+    logInfo 'clearStatistics: event statistics and duplicate-event cache cleared'
+}
+
+private Boolean isDuplicateDoorLockEvent(Map descMap) {
+    if (descMap?.callbackType != "Event") return false
+    if ((descMap.clusterInt as Integer) != 0x0101) return false
+    if (descMap.eventSerial == null) return false
+
+    ensureStats()
+    state.stats.totalEvents = (state.stats.totalEvents as Integer) + 1
+
+    // Out-of-order detection: compare serial against highest seen for this stream
+    String streamKey = "${descMap.endpointInt}:${descMap.clusterInt}:${descMap.evtId}"
+    Long currentSerial = descMap.eventSerial as Long
+    Long lastSerial = state.stats.lastSerialByStream[streamKey] != null ? (state.stats.lastSerialByStream[streamKey] as Long) : null
+    if (lastSerial != null && currentSerial < lastSerial) {
+        state.stats.outOfOrderEvents = (state.stats.outOfOrderEvents as Integer) + 1
+        logDebug "isDuplicateDoorLockEvent: out-of-order event detected stream=${streamKey}, serial=${currentSerial} < lastSeen=${lastSerial}"
+    }
+    if (lastSerial == null || currentSerial > lastSerial) {
+        state.stats.lastSerialByStream[streamKey] = currentSerial
+    }
+
+    String key = "${descMap.endpointInt}:${descMap.clusterInt}:${descMap.evtId}:${descMap.eventSerial}"
+    Long nowMs = now()
+
+    Map seen = state.seenDoorLockEvents ?: [:]
+
+    // Keep only recent events
+    seen = seen.findAll { k, v ->
+        (nowMs - ((v ?: 0L) as Long)) < 10000L
+    }
+
+    if (seen.containsKey(key)) {
+        state.stats.duplicateEvents = (state.stats.duplicateEvents as Integer) + 1
+        logDebug "Duplicate DoorLock event suppressed: ${key}"
+        state.seenDoorLockEvents = seen
+        return true
+    }
+
+    seen[key] = nowMs
+    state.seenDoorLockEvents = seen
+    return false
+}
+
+private String resolveCredentialKeyFromUserIndex(Integer userIndex) {
+    if (userIndex == null) return null
+    ensureLockCodeStateMaps()
+    String direct = "${userIndex}"
+    if (getLockCodes().containsKey(direct)) {
+        return direct
+    }
+    def found = state.codeMetaByCredential.find { String k, def v ->
+        safeToInt(v?.userIndex) == userIndex
+    }
+    return found?.key
+}
+
+private void upsertCredentialMeta(String credentialKey, Map patch) {
+    if (credentialKey == null) return
+    ensureLockCodeStateMaps()
+    Map cur = state.codeMetaByCredential[credentialKey] instanceof Map ? state.codeMetaByCredential[credentialKey] : [:]
+    Map merged = [:] + cur + (patch ?: [:])
+    merged.updatedAt = now()
+    state.codeMetaByCredential[credentialKey] = merged
+}
+
+private void removeCredentialMeta(String credentialKey) {
+    if (credentialKey == null) return
+    ensureLockCodeStateMaps()
+    state.codeMetaByCredential.remove(credentialKey)
+}
+
+private Map redactLockCodePayload(Map payload) {
+    Map redacted = [:]
+    (payload ?: [:]).each { String slot, def entry ->
+        if (entry instanceof Map) {
+            Map copy = [:] + (Map) entry
+            if (copy.containsKey('code')) {
+                String codeString = copy.code != null ? "${copy.code}" : ''
+                copy.code = codeString ? ('*' * codeString.length()) : ''
+                copy.codeLength = codeString.length()
+            }
+            redacted[slot] = copy
         } else {
-            logDebug "removeLockCode: codePosition=${codePosition} not found in lockCodes (already removed or never added)"
+            redacted[slot] = entry
         }
+    }
+    return redacted
+}
+
+private void logLockCodeEventPayload(String eventName, String eventValue, Map payload) {
+    Map redacted = redactLockCodePayload(payload)
+    String mode = settings?.optEncrypt ? 'encrypted' : 'plain'
+    logDebug "sendEvent payload: name=${eventName}, value=${eventValue}, mode=${mode}, data=${redacted}"
+}
+
+// Read the lockCodes attribute and return as a Map; handles optional encryption transparently.
+private Map getLockCodes() {
+    String current = device.currentValue('lockCodes') ?: '{}'
+    try {
+        if (current[0] != '{') { current = decrypt(current) }  // encrypted strings don\'t start with '{'
+        return parseJson(current) ?: [:]
     } catch (Exception e) {
-        logWarn "removeLockCode: failed to update lockCodes: ${e.message}"
+        logWarn "getLockCodes: failed to parse lockCodes: ${e.message}"
+        return [:]
+    }
+}
+
+// Serialize lockCodes Map and send as the lockCodes attribute, encrypting if optEncrypt is set.
+private void updateLockCodes(Map lockcodes) {
+    String json = JsonOutput.toJson(lockcodes ?: [:])
+    String value = settings?.optEncrypt ? encrypt(json) : json
+    logLockCodeEventPayload('lockCodes', 'updated', lockcodes ?: [:])
+    sendEvent(name: 'lockCodes', value: value, isStateChange: true)
+}
+
+// Re-encrypt or decrypt the stored lockCodes attribute when the optEncrypt preference changes.
+private void updateEncryption() {
+    String current = device.currentValue('lockCodes')
+    if (!current) return
+    if (settings?.optEncrypt && current[0] == '{') {        // currently plain — re-send encrypted
+        sendEvent(name: 'lockCodes', value: encrypt(current), isStateChange: true)
+    } else if (!settings?.optEncrypt && current[0] != '{') {  // currently encrypted — re-send plain
+        sendEvent(name: 'lockCodes', value: decrypt(current), isStateChange: true)
     }
 }
 
@@ -2179,6 +2452,24 @@ def testInvoke(params) {
     parent?.sendToDevice(cmd)
 
 
+}
+
+void testUnlockWithCode(code = null) {
+    if (logEnable) log.debug "testUnlockWithCode: ${code}"
+    // getLockCodes() is the Hubitat-standard helper; in the virtual lock reference this is the implicit 'lockCodes' property
+    Map lockCodesMap = getLockCodes()
+    Object lockCode = lockCodesMap.find { it.value.code == "${code}" }
+    if (lockCode) {
+        Map payloadData = ["${lockCode.key}": lockCode.value]
+        String descriptionText = "${device.displayName} was unlocked by ${lockCode.value.name}"
+        if (txtEnable) log.info "${descriptionText}"
+        def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(payloadData)) : payloadData
+        logLockCodeEventPayload('lock', 'unlocked', payloadData)
+        sendEvent(name: 'lock', value: 'unlocked', descriptionText: descriptionText, type: 'physical', data: eventData, isStateChange: true)
+        sendEvent(name: 'lastCodeName', value: lockCode.value.name, descriptionText: descriptionText, isStateChange: true)
+    } else {
+        if (txtEnable) log.debug "testUnlockWithCode: no matching code found for '${code}'"
+    }
 }
 
 // --------- common matter libraries included below --------

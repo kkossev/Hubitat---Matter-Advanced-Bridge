@@ -65,7 +65,8 @@
  *                                  setRefreshRequest() window is now scaled proportionally to the number of chunks;
  * ver. 1.8.5  2026-05-08 kkossev   merged dev. branch to main;
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
- * ver. 1.8.7  2026-05-25 kkossev   (dev. branch) Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
+ * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
+ * ver. 1.8.8  2026-05-26 kkossev   (dev. branch) Matter Lock Codes - improvements; changed the default timeout to be x2;
  *
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -89,8 +90,8 @@
  */
 
 
-static String version() { '1.8.7' }
-static String timeStamp() { '2026/05/25 6:34 PM' }
+static String version() { '1.8.8' }
+static String timeStamp() { '2026/05/26 11:02 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -98,7 +99,7 @@ static String timeStamp() { '2026/05/25 6:34 PM' }
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = true        // make it FALSE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = false        // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
@@ -183,7 +184,7 @@ metadata {
         if (device && advancedOptions == true) {
             input name: 'healthCheckMethod', type: 'enum', title: '<b>Healthcheck Method</b>', options: HealthcheckMethodOpts.options, defaultValue: HealthcheckMethodOpts.defaultValue, required: true, description: '<i>Method to check device online/offline status.</i>'
             input name: 'healthCheckInterval', type: 'enum', title: '<b>Healthcheck Interval</b>', options: HealthcheckIntervalOpts.options, defaultValue: HealthcheckIntervalOpts.defaultValue, required: true, description: '<i>How often the hub will check the device health.<br>3 consecutive failures will result in status "offline"</i>'
-            input name: 'discoveryTimeoutScale', type: 'enum', title: '<b>Discovery timeout scale</b>', options: ['1':'1x (default)', '2':'2x', '3':'3x (slow/battery bridges)'], defaultValue: '1', required: true, description: '<i>Scales discovery/state-machine retry timeouts and discovery scheduling delays.</i>'
+            input name: 'discoveryTimeoutScale', type: 'enum', title: '<b>Discovery timeout scale</b>', options: ['1':'1x (default)', '2':'2x', '3':'3x (slow/battery bridges)'], defaultValue: '2', required: true, description: '<i>Scales discovery/state-machine retry timeouts and discovery scheduling delays.</i>'
             input name: 'traceEnable', type: 'bool', title: '<b>Enable trace logging</b>', defaultValue: false, description: '<i>Turns on detailed extra trace logging for 30 minutes.</i>'
             input name: 'minimizeStateVariables', type: 'bool', title: '<b>Minimize State Variables</b>', defaultValue: MINIMIZE_STATE_VARIABLES_DEFAULT, description: '<i>Minimize the state variables size.</i>'
             input name: 'newParse', type: 'bool', title: '<b>Use new parse(Map) handler</b>', defaultValue: true, description: '<i>Enable Hubitat"s new parse(Map) callback instead of the legacy description text.</i>'
