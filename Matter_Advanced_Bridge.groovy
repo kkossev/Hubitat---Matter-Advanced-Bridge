@@ -66,7 +66,7 @@
  * ver. 1.8.5  2026-05-08 kkossev   merged dev. branch to main;
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
- * ver. 1.8.8  2026-05-26 kkossev   (dev. branch) Matter Lock Codes - improvements; changed the default timeout to be x2;
+ * ver. 1.8.8  2026-05-27 kkossev   (dev. branch) Matter Lock Codes - improvements; changed the default timeout to be x2;
  *
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -91,7 +91,7 @@
 
 
 static String version() { '1.8.8' }
-static String timeStamp() { '2026/05/26 11:02 PM' }
+static String timeStamp() { '2026/05/27 7:28 AM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -1593,6 +1593,7 @@ void parseHumidityMeasurement(final Map descMap) { // 0405
 
 void parseDoorLock(final Map descMap) { // 0101
     if (descMap.cluster != '0101') { logWarn "parseDoorLock: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    /*
     if (descMap.attrId == '0000') { // LockState
         boolean isLocked = ((descMap.value?.toString()?.trim()?.toLowerCase()) in ['1', '01', 'true', 'on'])
         String lockState = isLocked ? 'locked' : 'unlocked'
@@ -1601,16 +1602,15 @@ void parseDoorLock(final Map descMap) { // 0101
             value: lockState,
             descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} is ${lockState}"
         ], descMap)
-    } else {
-        // we handle both Reports and Events in the child driver
+    } /*else { */
+        // we handle all Reports and Events in the child driver
         logDebug "parseDoorLock: handling cluster ${descMap.cluster} ${descMap.callbackType == 'Event' ? "Event ${descMap.evtId}" : "Report ${descMap.attrId}"} in the child driver"
         sendHubitatEvent([
             name: 'handleInChildDriver',
-            //value: descMap.toString(),
             value: descMap,                 // since version 1.7.0 we are sending the full descMap to the child driver
             descriptionText: "<i>(to be re-processed in the child driver!)</i>"
         ], descMap, ignoreDuplicates = false)
-    }
+    /*   }  */
 }
 
 
