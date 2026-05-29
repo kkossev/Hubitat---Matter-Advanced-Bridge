@@ -66,7 +66,7 @@
  * ver. 1.8.5  2026-05-08 kkossev   merged dev. branch to main;
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
- * ver. 1.8.8  2026-05-27 kkossev   (dev. branch) Matter Lock Codes - improvements; changed the default timeout to be x2;
+ * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
  *
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -91,7 +91,7 @@
 
 
 static String version() { '1.8.8' }
-static String timeStamp() { '2026/05/27 11:42 PM' }
+static String timeStamp() { '2026/05/29 07:01 AM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -2772,9 +2772,13 @@ void fingerprintsToSubscriptionsList() {
 }
 
 void setSwitch(String commandPar, String deviceNumberPar/*, extraPar = null*/) {
-    String command = commandPar.strip()
+    if (commandPar == null || commandPar.trim().isEmpty()) {
+        logWarn 'setSwitch(): commandPar is null or empty!'
+        return
+    }
+    String command = commandPar.trim()
     Integer deviceNumber
-    logDebug "setSwitch() command: ${command}, deviceNumber:${deviceNumberPar}, extraPar:${extraPar}"
+    logDebug "setSwitch() command: ${command}, deviceNumber:${deviceNumberPar}"
     deviceNumber = safeNumberToInt(deviceNumberPar)
     if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) {
         logWarn "setSwitch(): deviceNumber ${deviceNumberPar} is not valid!"

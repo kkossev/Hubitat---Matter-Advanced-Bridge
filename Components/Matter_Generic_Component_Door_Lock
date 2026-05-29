@@ -24,7 +24,7 @@
   * ver. 1.3.3  2025-02-06 kkossev   added events 'locking', 'unlocking' for better UI feedback; experimenting ...
   * ver. 1.3.4  2025-02-19 kkossev   moved common methods to matterCommonLib;
   * ver. 1.4.0  2026-05-25 kkossev   capability 'LockCodes' attempt (blind implementation) - first test version.
-  * ver. 1.4.1  2026-05-27 kkossev   (dev. branch) fixed EZ dashboards unhappy face; added unlockWithTimeout command; added UnboltDoor command; 
+  * ver. 1.4.1  2026-05-27 kkossev   fixed EZ dashboards unhappy face; added unlockWithTimeout command; added UnboltDoor command; 
   *                                  DuplicateDoorLockEventFilter; added the needed data: Map required by the LCM; added overwriteCodes option; getInfo improvements; 
   *                                  added operation source 'Aliro' (UWB/Apple Watch); added auto discovery for new lock codes reported by the lock;
   * 
