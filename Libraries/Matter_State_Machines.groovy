@@ -191,8 +191,7 @@ void readSingeAttrStateMachine(Map data = null) {
 
 // Helper method to check if child device for this endpoint exists and is disabled
 private boolean isEndpointDisabled(Integer endpoint) {
-    String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-    ChildDeviceWrapper childDevice = getChildDevice(dni)
+    ChildDeviceWrapper childDevice = findChildByEndpoint(endpoint)
     if (childDevice == null) {
         // Device doesn't exist yet - not disabled, allow discovery
         return false
@@ -864,7 +863,7 @@ void discoverAllStateMachine(Map data = null) {
                 String fingerprintName = getFingerprintName(partEndpointInt)
                 // Normalize endpoint to 2 characters for DNI (e.g., "0001" -> "01")
                 String normalizedEndpoint = HexUtils.integerToHexString(partEndpointInt, 1).toUpperCase()
-                String dni = "${device.id}-${normalizedEndpoint}"
+                String dni = childDniForEndpoint(normalizedEndpoint)
                 logDebug "discoverAllStateMachine: st:${st} - copying COMPLETE fingerprint ${fingerprintName} to child device ${dni}"
                 copyEntireFingerprintToChild(fingerprintName, dni)
                 // Log what was copied for verification
