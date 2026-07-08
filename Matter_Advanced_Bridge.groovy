@@ -67,6 +67,7 @@
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
+ * ver. 1.8.9  2026-07-07 kkossev   (def. branch)
  *
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -90,16 +91,16 @@
  */
 
 
-static String version() { '1.8.8' }
-static String timeStamp() { '2026/05/29 07:01 AM' }
+static String version() { '1.9.0' }
+static String timeStamp() { '2026/07/07 11:07 PM' }
 
 
-@Field static final Boolean _DEBUG = false                   // make it FALSE for production!
+@Field static final Boolean _DEBUG = true                   // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = false        // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
@@ -793,9 +794,7 @@ boolean isDeviceDisabled(final Map descMap) {
     if (descMap.endpoint == '00') {
         return false
     }
-    // get device dni
-    String dni = "${device.id}-${descMap.endpoint}"
-    ChildDeviceWrapper dw = getChildDevice(dni)
+    ChildDeviceWrapper dw = findChildByEndpoint(descMap.endpoint)
     if (dw == null) {
         return false
     }
@@ -831,6 +830,54 @@ String getAttributeName(final String cluster, String attrId) { return getAttribu
 String getFingerprintName(final Map descMap) { return descMap.endpoint == '00' ? 'bridgeDescriptor' : "fingerprint${descMap.endpoint}" }
 String getFingerprintName(final Integer endpoint) { return getFingerprintName([endpoint: HexUtils.integerToHexString(endpoint, 1)]) }
 
+String normalizeChildEndpoint(final Object endpoint) {
+    if (endpoint == null) { return null }
+    if (endpoint instanceof Number) {
+        return HexUtils.integerToHexString((endpoint as Number).intValue(), 1).toUpperCase()
+    }
+    String endpointText = endpoint.toString().trim()
+    if (!endpointText) { return null }
+    try {
+        return HexUtils.integerToHexString(HexUtils.hexStringToInt(endpointText), 1).toUpperCase()
+    }
+    catch (Exception ignored) {
+        return endpointText.toUpperCase()
+    }
+}
+
+String stockChildDni(final Object endpoint) {
+    String endpointHex = normalizeChildEndpoint(endpoint)
+    if (!endpointHex) { return null }
+    return "${device.deviceNetworkId ?: device.id}-${endpointHex}"
+}
+
+String legacyMabChildDni(final Object endpoint) {
+    String endpointHex = normalizeChildEndpoint(endpoint)
+    if (!endpointHex) { return null }
+    return "${device.id}-${endpointHex}"
+}
+
+List<String> childDnisForEndpoint(final Object endpoint) {
+    return [stockChildDni(endpoint), legacyMabChildDni(endpoint)].findAll { it }.unique()
+}
+
+ChildDeviceWrapper findChildByEndpoint(final Object endpoint) {
+    for (String dni : childDnisForEndpoint(endpoint)) {
+        ChildDeviceWrapper child = getChildDevice(dni)
+        if (child != null) { return child }
+    }
+    return null
+}
+
+String childDniForEndpoint(final Object endpoint) {
+    ChildDeviceWrapper child = findChildByEndpoint(endpoint)
+    return child?.deviceNetworkId ?: stockChildDni(endpoint) ?: legacyMabChildDni(endpoint)
+}
+
+String endpointFromFingerprintName(final String fingerprintName) {
+    return normalizeChildEndpoint(fingerprintName?.replaceFirst('fingerprint', ''))
+}
+
 String getStateClusterName(final Map descMap) {
     String clusterMapName = ''
     if (descMap.cluster == '001D') {
@@ -855,8 +902,9 @@ String getDeviceDisplayName(final Integer endpoint) { return getDeviceDisplayNam
  */
 String getDeviceDisplayName(final String endpoint) {
     // if a child device exists, use its endpoint to get the ${device.displayName}
-    if (getChildDevice("${device.id}-${endpoint}") != null) {
-        return getChildDevice("${device.id}-${endpoint}")?.displayName
+    ChildDeviceWrapper child = findChildByEndpoint(endpoint)
+    if (child != null) {
+        return child.displayName
     }
     String label = "Bridge#${device.id} Device#${endpoint} "
     String fingerprintName = getFingerprintName([endpoint: endpoint])
@@ -1855,8 +1903,8 @@ void parseColorControl(final Map descMap) { // 0300
                 
                 // If AttributeList has hue + saturation, check if child device needs upgrading
                 if (hasHue && hasSaturation) {
-                    String dni = "${device.id}-${descMap.endpoint}"
-                    def child = getChildDevice(dni)
+                    def child = findChildByEndpoint(descMap.endpoint)
+                    String dni = child?.deviceNetworkId ?: childDniForEndpoint(descMap.endpoint)
                     if (child && child.typeName?.contains('CT') && !child.typeName?.contains('RGBW')) {
                         String oldName = child.displayName
                         String oldLabel = child.label
@@ -1901,7 +1949,7 @@ void parseColorControl(final Map descMap) { // 0300
 
 ChildDeviceWrapper getDw(descMap) {
     String id = descMap?.endpoint ?: '00'
-    return getChildDevice("${device.id}-${id}")
+    return findChildByEndpoint(id)
 }
 
 void sendColorNameEvent(final Map descMap, final Integer huePar=null, final Integer saturationPar=null) {
@@ -2060,14 +2108,15 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
     }
 
     String dni = ''
-    // get the dni from the descMap eddpoint
+    ChildDeviceWrapper dw = null
+    // get the child from the descMap endpoint
     if (descMap != [:]) {
-        dni = "${device.id}-${descMap.endpoint}"
+        dw = findChildByEndpoint(descMap.endpoint)
+        dni = dw?.deviceNetworkId ?: childDniForEndpoint(descMap.endpoint) ?: ''
     }
     if (descriptionText == null) {
         descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} ${name} is ${value}"
     }
-    ChildDeviceWrapper dw = getChildDevice(dni) // null if dni is null for the parent device
     Map eventMap = [name: name, value: value, descriptionText: descriptionText, unit: unit, type: 'physical']
     if (state.states['isRefresh'] == true) {
         eventMap.descriptionText += ' [refresh]'
@@ -2547,8 +2596,7 @@ String cleanSubscribeCmd() {
     // Filter out attribute subscriptions for disabled child devices
     List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
         Integer endpoint = sub[0] as Integer
-        String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-        ChildDeviceWrapper childDevice = getChildDevice(dni)
+        ChildDeviceWrapper childDevice = findChildByEndpoint(endpoint)
         if (childDevice?.disabled == true) {
             logDebug "cleanSubscribeCmd(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
             return false
@@ -2576,8 +2624,7 @@ String cleanSubscribeCmd() {
             Set<Integer> clusterEndpoints = endpointsList*.get(0) as Set<Integer>
             // Build event paths for each endpoint (skip disabled devices)
             clusterEndpoints.each { Integer endpoint ->
-                String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-                ChildDeviceWrapper childDevice = getChildDevice(dni)
+                ChildDeviceWrapper childDevice = findChildByEndpoint(endpoint)
                 if (childDevice?.disabled == true) {
                     logDebug "cleanSubscribeCmd(): skipping disabled device events for endpoint ${endpoint} (${childDevice.displayName})"
                     return  // continue to next endpoint
@@ -2823,8 +2870,7 @@ void refresh() {
     List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
         Integer endpoint = sub[0] as Integer
         if (endpoint == 0) { return true }          // always include bridge endpoint (0) attributes
-        String dni = "${device.id}-${HexUtils.integerToHexString(endpoint, 1).toUpperCase()}"
-        ChildDeviceWrapper childDevice = getChildDevice(dni)
+        ChildDeviceWrapper childDevice = findChildByEndpoint(endpoint)
         if (childDevice?.disabled == true) {
             logDebug "refresh(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
             return false
@@ -3609,9 +3655,10 @@ private boolean createChildDevices(Map d) {
     logDebug "createChildDevices(Map d): product_name ${d.product_name} driver ${mapping}"
 
     if (mapping.driver != null) {
-        logDebug "createChildDevices(Map d): mapping.driver is ${mapping.driver}, device.id is ${device.id}"
-        logDebug "createChildDevices(Map d): createChildDevice '${device.id}-${d.id}' ${mapping} ${d}   "
-        createChildDevice("${device.id}-${d.id}", mapping, d)
+        String childDni = childDniForEndpoint(d.id)
+        logDebug "createChildDevices(Map d): mapping.driver is ${mapping.driver}, childDni is ${childDni}"
+        logDebug "createChildDevices(Map d): createChildDevice '${childDni}' ${mapping} ${d}   "
+        createChildDevice(childDni, mapping, d)
     } else {
         logWarn "createChildDevices(Map d): mapping.driver is ${mapping.driver} !"
     }
@@ -3619,7 +3666,7 @@ private boolean createChildDevices(Map d) {
 }
 
 private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
-    ChildDeviceWrapper dw = getChildDevice(dni)
+    ChildDeviceWrapper dw = getChildDevice(dni) ?: findChildByEndpoint(d?.id)
     logDebug "createChildDevice(String dni, Map mapping, Map d): dni:${dni} mapping:${mapping} d:${d} dw:${dw}"
 
     if (dw == null) {
@@ -3673,9 +3720,12 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
  * @param dni The child device network ID
  */
 void copyEntireFingerprintToChild(String fingerprintName, String dni) {
-    ChildDeviceWrapper childDevice = getChildDevice(dni)
+    String endpointHex = endpointFromFingerprintName(fingerprintName)
+    ChildDeviceWrapper childDevice = findChildByEndpoint(endpointHex)
+    if (childDevice == null && dni) { childDevice = getChildDevice(dni) }
+    String effectiveDni = childDevice?.deviceNetworkId ?: dni ?: childDniForEndpoint(endpointHex)
     if (childDevice == null) {
-        logWarn "copyEntireFingerprintToChild: child device ${dni} not found"
+        logWarn "copyEntireFingerprintToChild: child device ${effectiveDni} not found"
         return
     }
     
@@ -3695,7 +3745,7 @@ void copyEntireFingerprintToChild(String fingerprintName, String dni) {
         logDebug "copyEntireFingerprintToChild: copied ${fingerprintJson.length()} bytes of fingerprint data to ${childDevice.displayName}"
         logTrace "copyEntireFingerprintToChild: fingerprint keys = ${filteredFingerprint.keySet()}"
     } catch (Exception e) {
-        logWarn "copyEntireFingerprintToChild: failed to copy fingerprint ${fingerprintName} to ${dni}: ${e.message}"
+        logWarn "copyEntireFingerprintToChild: failed to copy fingerprint ${fingerprintName} to ${effectiveDni}: ${e.message}"
     }
 }
 
@@ -3708,10 +3758,9 @@ void copyEntireFingerprintToChild(String fingerprintName, String dni) {
  */
 void updateChildFingerprintData(String fingerprintName, String attributeName, Object value) {
     // Get the endpoint from fingerprintName (e.g., 'fingerprint08' -> '08')
-    String endpointHex = fingerprintName.replaceFirst('fingerprint', '')
-    String dni = "${device.id}-${endpointHex.toUpperCase()}"
-    
-    ChildDeviceWrapper childDevice = getChildDevice(dni)
+    String endpointHex = endpointFromFingerprintName(fingerprintName)
+    ChildDeviceWrapper childDevice = findChildByEndpoint(endpointHex)
+    String dni = childDevice?.deviceNetworkId ?: childDniForEndpoint(endpointHex)
     if (childDevice == null) {
         // Child device doesn't exist or not created yet
         return
