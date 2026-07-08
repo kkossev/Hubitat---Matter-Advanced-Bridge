@@ -67,7 +67,9 @@
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
+ * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
  *
+ *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
@@ -80,7 +82,6 @@
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
  *                                   TODO: decode [0013] CapabilityMinima = 1524000324010318 [0012] UniqueID = 4A6A0276A1834629
- *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: reset statistics on Hub reboot
  *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
@@ -90,16 +91,16 @@
  */
 
 
-static String version() { '1.8.8' }
-static String timeStamp() { '2026/05/29 07:01 AM' }
+static String version() { '1.8.9' }
+static String timeStamp() { '2026/05/30 11:24 AM' }
 
 
-@Field static final Boolean _DEBUG = false                   // make it FALSE for production!
+@Field static final Boolean _DEBUG = true                   // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
-@Field static final Boolean DEFAULT_LOG_ENABLE = false       // make it FALSE for production!
+@Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = false        // make it  TRUE for production! (don't trace the FFFx global attributes)
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
@@ -366,7 +367,19 @@ metadata {
     // PM25ConcentrationMeasurement Cluster
     0x042A : [attributes: 'ConcentrationMeasurementClustersAttributes', parser: 'parseConcentrationMeasurement',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
-    ],    
+    ],
+    // Camera AV Stream Management Cluster (Matter 1.3+)
+    0x0551 : [attributes: 'CameraAvStreamManagementClusterAttributes', parser: 'parseCameraAvStreamManagement',
+              subscriptions : [[0x0016: [min: 0, max: 0xFFFF, delta: 0]],   // NightVision
+                               [0x0019: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerMuted
+                               [0x001A: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerVolumeLevel
+                               [0x001B: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerMaxLevel
+                               [0x001C: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerMinLevel
+                               [0x001D: [min: 0, max: 0xFFFF, delta: 0]],   // MicrophoneMuted
+                               [0x001E: [min: 0, max: 0xFFFF, delta: 0]],   // MicrophoneVolumeLevel
+                               [0x001F: [min: 0, max: 0xFFFF, delta: 0]],   // MicrophoneMaxLevel
+                               [0x0020: [min: 0, max: 0xFFFF, delta: 0]]]   // MicrophoneMinLevel
+    ],
 ]
 
 @Field static final Map<Integer, String> ParsedMatterClusters = [
@@ -394,7 +407,8 @@ metadata {
     0x0405 : 'parseHumidityMeasurement',
     0x0406 : 'parseOccupancySensing',
     0x040D : 'parseCarbonDioxideConcentrationMeasurement',
-    0x042A : 'parseConcentrationMeasurement'
+    0x042A : 'parseConcentrationMeasurement',
+    0x0551 : 'parseCameraAvStreamManagement'           // Camera AV Stream Management (Matter 1.3+)
 ]
 
 // Json Parsing Cache
@@ -1666,6 +1680,16 @@ void parseCarbonDioxideConcentrationMeasurement(final Map descMap) { // 040D
         value: descMap.toString(),
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = true)
+}
+
+void parseCameraAvStreamManagement(final Map descMap) { // 0551 - Camera AV Stream Management (Matter 1.3+)
+    if (descMap.cluster != '0551') { logWarn "parseCameraAvStreamManagement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    logDebug "parseCameraAvStreamManagement: routing cluster 0x0551 attr ${descMap.attrId} to child driver"
+    sendHubitatEvent([
+        name: 'handleInChildDriver',
+        value: descMap,
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} Camera AV Stream Management cluster 0x0551 attr ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = false)
 }
 
 
@@ -2991,6 +3015,9 @@ Map mapMatterCategory(Map d) {
     }
     if ('002F' in d.ServerList) {   // Power Source
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Battery', product_name: 'Battery' ]
+    }
+    if ('0551' in d.ServerList) {   // Camera AV Stream Management (Matter 1.3+)
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Camera AV Stream', product_name: 'Camera' ]
     }
 
     return [ driver: 'Generic Component Switch', product_name: 'Unknown' ]
