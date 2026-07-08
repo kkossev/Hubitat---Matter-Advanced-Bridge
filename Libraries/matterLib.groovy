@@ -6,7 +6,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterLib.groovy',
-    version: '1.4.2',
+    version: '1.4.4',
     documentationLink: ''
 )
 /*
@@ -31,15 +31,16 @@ library(
   * ver. 1.4.0  2025-04-02 kkossev  - added 0x0091 : 'Electrical Energy Measuremen'; adding 0x0090 : 'Electrical Power Measurement'
   * ver. 1.4.1  2026-01-15 kkossev  - added tagsList, added more attributes to BridgedDeviceBasicClusterAttributes
   * ver. 1.4.2  2026-02-15 kkossev  - minor fixes and improvements
-  * ver. 1.4.3  2026-02-16 kkossev  - (dev. branch) added BooleanStateConfiguration
+  * ver. 1.4.3  2026-02-16 kkossev  - added BooleanStateConfiguration
+  * ver. 1.4.4  2026-02-16 kkossev  - (dev. branch) added Camera AV Stream Management cluster attributes
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.4.3'
-@Field static final String matterLibStamp   = '2026/02/16 10:45 AM'
+@Field static final String matterLibVersion = '1.4.4'
+@Field static final String matterLibStamp   = '2026/05/30 2:03 PM'
 
 // no metadata section for matterLib
 
@@ -191,6 +192,7 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0405') { return RelativeHumidityMeasurementClusterAttributes }
     if (cluster == '0406') { return OccupancySensingClusterAttributes }
     if (cluster == '042A') { return ConcentrationMeasurementClustersAttributes }    // used for PM2.5 and others!
+    if (cluster == '0551') { return CameraAvStreamManagementClusterAttributes }     // Camera AV Stream Management (Matter 1.3+)
     /* groovylint-disable-next-line ReturnsNullInsteadOfEmptyCollection */
     return null
 }
@@ -614,6 +616,21 @@ Map getEventsMapByClusterId(String cluster) {
     0x0003  : 'DoorState',          // enum8
     0x0025  : 'OperatingMode',      // enum8
     0x0026  : 'SupportedOperatingModes'// bitmap8
+]
+
+// Camera AV Stream Management Cluster 0x0551 (Matter 1.3+)
+// Only the 9 subscribed attributes are listed here (for parent-side getAttributeName() resolution).
+// The full 28-entry attribute map lives in the child driver.
+@Field static final Map<Integer, String> CameraAvStreamManagementClusterAttributes = [
+    0x0016  : 'NightVision',
+    0x0019  : 'SpeakerMuted',
+    0x001A  : 'SpeakerVolumeLevel',
+    0x001B  : 'SpeakerMaxLevel',
+    0x001C  : 'SpeakerMinLevel',
+    0x001D  : 'MicrophoneMuted',
+    0x001E  : 'MicrophoneVolumeLevel',
+    0x001F  : 'MicrophoneMaxLevel',
+    0x0020  : 'MicrophoneMinLevel'
 ]
 
 @Field static final Map<Integer, String> DoorLockClusterEvents = [
