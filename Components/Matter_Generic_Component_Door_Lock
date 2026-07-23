@@ -27,6 +27,7 @@
   * ver. 1.4.1  2026-05-27 kkossev   fixed EZ dashboards unhappy face; added unlockWithTimeout command; added UnboltDoor command; 
   *                                  DuplicateDoorLockEventFilter; added the needed data: Map required by the LCM; added overwriteCodes option; getInfo improvements; 
   *                                  added operation source 'Aliro' (UWB/Apple Watch); added auto discovery for new lock codes reported by the lock;
+  * ver. 1.5.0  2026-07-22 kkossev  (dev.branch) callbackType:Invoke handling;
   * 
   *                                  TODO: 
   *                                  TODO: 
@@ -48,15 +49,19 @@ import hubitat.matter.DataType
 import groovy.json.JsonOutput
 
 
-@Field static final String matterComponentLockVersion = '1.4.1'
-@Field static final String matterComponentLockStamp   = '2026/05/27 11:40 PM'
+@Field static final String matterComponentLockVersion = '1.5.0'
+@Field static final String matterComponentLockStamp   = '2026/07/22 10:12 PM'
 
-@Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !   
-@Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
+@Field static final Boolean _DEBUG_LOCK = true             // MAKE IT false for PRODUCTION !   
+@Field static final Boolean _DEFAULT_LOG_ENABLE = true     // disable on production
 
 @Field static final Integer DELETE_TIMEOUT_SECONDS = 5      // time to wait for lock code deletion confirmation event before removing code from lockCodes attribute (to avoid ghost codes in case of failed deletion)
 @Field static final Integer SET_CODE_TIMEOUT_SECONDS = 45   // time to wait for lock code set confirmation event before clearing 'setting' status in lockCodes attribute (to avoid stuck 'setting' status in case of failed set)
 @Field static final Integer OVERWRITE_CLEAR_TIMEOUT_SECONDS = 6  // fallback: if no LockUserChange(Clear) arrives (slot was empty), proceed with Add after this many seconds
+@Field static final Long SET_CREDENTIAL_CONFIRMATION_DEDUP_MS = 30000L
+@Field static final Long CLEAR_CREDENTIAL_CONFIRMATION_DEDUP_MS = 30000L
+@Field static final Integer GET_USER_SCAN_TIMEOUT_SECONDS = 10
+@Field static final Integer GET_CREDENTIAL_STATUS_TIMEOUT_SECONDS = 10
 
 metadata {
     definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Door_Lock') {
@@ -103,11 +108,14 @@ metadata {
               command  'matterSetCredentialPIN' , [[name:'credentialIndex*', type: 'NUMBER', description: 'Credential Index (1-255)', defaultValue: '1'],
                                            [name:'pinCode*', type: 'STRING', description: 'PIN code (4-8 digits)', defaultValue: '1234'],
                                            [name:'userIndex', type: 'NUMBER', description: 'User Index (1-65534)', defaultValue: '1']]
-              command 'matterClearCredential', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type (0:ProgrammingPIN,1:PIN,2:RFID,3:Fingerprint,4:FingerVein,5:Face)', defaultValue: '1'],
-                                     [name:'credentialIndex', type: 'NUMBER', description: 'Credential Index (0 to clear all)', defaultValue: '9']]
+              command 'matterClearCredential', [[name:'credentialType', type: 'NUMBER', description: 'Credential Type (1=PIN, 2=RFID, 3=Fingerprint, 4=FingerVein, 5=Face, 6-8=Aliro); leave both fields blank to clear all'],
+                                     [name:'credentialIndex', type: 'NUMBER', description: 'Credential Index (1-65533); leave blank to clear all of the selected type']]
 
-              //command 'matterGetCredentialStatus', [[name:'pinIndex*', type: 'STRING', description: 'PIN Index (1-255)', defaultValue: '1']]
-              //command 'matterGetUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
+              command 'matterGetCredentialStatus', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type (0-8)', defaultValue: '1'],
+                                                    [name:'credentialIndex*', type: 'NUMBER', description: 'Credential Index (1-65534)', defaultValue: '1']]
+              command 'matterScanCredentials', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type to scan (0-8)', defaultValue: '1']]
+              command 'matterGetUser', [[name:'userIndex*', type: 'NUMBER', description: 'User Index (1-65534)', defaultValue: '1']]
+              command 'matterScanUsers', [[name:'Scan occupied Matter users by following NextUserIndex']]
               //command 'matterClearUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
               /*
               command 'matterSetUser', [[name: 'codePosition*', type: 'NUMBER', description: 'Code slot (1-based)'],
@@ -147,6 +155,15 @@ preferences {
 
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
+// Hubitat platform 2.5.1.132+ Invoke callback. The parent passes this Map unchanged.
+void parse(Map descMap) {
+    if (descMap?.callbackType != 'Invoke') {
+        logDebug "parse(Map): ignored non-Invoke callback: ${descMap}"
+        return
+    }
+    handleDoorLockInvokeResponse(descMap)
+}
+
 // parse commands from parent
 void parse(List<Map> parsedEvents) {
     //if (logEnable) { log.debug "${parsedEvents}" }
@@ -174,6 +191,119 @@ void parse(List<Map> parsedEvents) {
     }
 }
 
+void handleDoorLockInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+    String commandName = (commandInt != null) ? (DoorLockClusterCommands[commandInt] ?: 'UNKNOWN') : 'UNKNOWN'
+
+    if (commandInt == 0x25 || "${descMap.cmdId}".equalsIgnoreCase('25')) {
+        logDebug "handleDoorLockInvokeResponse: command=${commandName} (${commandInt}) status=${invokeStatus} data=[redacted] value=${redactGetCredentialStatusValue(descMap.value)}"
+    } else {
+        logDebug "handleDoorLockInvokeResponse: command=${commandName} (${commandInt}) status=${invokeStatus} data=${descMap.data} value=${descMap.value}"
+    }
+
+    // The parent logs Interaction Model failures; the child also terminates matching local
+    // pending operations immediately because no successful cluster response will follow.
+    if (invokeStatus != 0) {
+        handleDoorLockInvokeFailure(commandInt, invokeStatus)
+        return
+    }
+
+    switch (commandInt) {
+        case 0x1C: // GetUserResponse
+            processGetUserResponse(descMap)
+            break
+        case 0x23: // SetCredentialResponse
+            processSetCredentialResponse(descMap)
+            break
+        case 0x25: // GetCredentialStatusResponse
+            processGetCredentialStatusResponse(descMap)
+            break
+        case 0x26: // ClearCredential (status-only success)
+            processClearCredentialInvokeSuccess()
+            break
+        default:
+            // Commands such as LockDoor, UnlockDoor and UnboltDoor return
+            // only the successful Invoke status. Attribute reports/events confirm device state.
+            logDebug "handleDoorLockInvokeResponse: ${commandName} completed with no cluster response payload to process"
+            break
+    }
+}
+
+private void processClearCredentialInvokeSuccess() {
+    if (state.isDeletingCode == true) {
+        completePendingDeleteCode('ClearCredential Invoke response', true, null)
+    } else {
+        logDebug 'handleDoorLockInvokeResponse: ClearCredential completed with no pending deleteCode operation'
+    }
+}
+
+private void handleDoorLockInvokeFailure(Integer commandInt, Integer invokeStatus) {
+    String statusText = invokeStatus != null ? String.format('0x%02X', invokeStatus) : 'unknown'
+
+    switch (commandInt) {
+        case 0x1B: // GetUser request
+        case 0x1C: // Defensive: some platforms may identify the expected response command
+            if (state.userScan?.active == true) {
+                finishMatterUserScan("GetUser invoke failed with status ${statusText}", false)
+            }
+            break
+
+        case 0x24: // GetCredentialStatus request
+        case 0x25: // Defensive: some platforms may identify the expected response command
+            Map pending = state.pendingGetCredentialStatus instanceof Map ? state.pendingGetCredentialStatus as Map : null
+            unschedule('matterGetCredentialStatusTimeout')
+            state.remove('pendingGetCredentialStatus')
+            if (pending != null) {
+                Boolean scanMatches = state.credentialScan?.active == true &&
+                    safeNumberToInt(state.credentialScan.credentialType, null) == safeNumberToInt(pending.credentialType, null) &&
+                    safeNumberToInt(state.credentialScan.pendingCredentialIndex, null) == safeNumberToInt(pending.credentialIndex, null)
+                if (scanMatches) {
+                    finishMatterCredentialScan("${pending.credentialTypeName ?: 'credential'} #${pending.credentialIndex} failed with Invoke status ${statusText}", false)
+                } else {
+                    logWarn "matterGetCredentialStatus: ${pending.credentialTypeName ?: 'credential'} #${pending.credentialIndex} failed with Invoke status ${statusText}"
+                }
+            }
+            break
+
+        case 0x22: // SetCredential request
+        case 0x23: // Defensive: expected response command
+            Map pendingSet = state.pendingSetCredentialInvoke instanceof Map ? state.pendingSetCredentialInvoke as Map : null
+            if (pendingSet != null) {
+                String credentialKey = pendingSet.credentialKey != null ? "${pendingSet.credentialKey}" : null
+                if (pendingSet.fromSetCode == true) {
+                    clearSetCodeOperationState(credentialKey, true)
+                    String descriptionText = "${device.displayName} setCode position ${credentialKey} failed with Matter Invoke status ${statusText}"
+                    sendEvent(name: 'codeChanged', value: 'failed', descriptionText: descriptionText, isStateChange: true)
+                    logWarn descriptionText
+                } else {
+                    state.remove('pendingSetCredentialInvoke')
+                    logWarn "matterSetCredentialPIN: request failed with Matter Invoke status ${statusText}"
+                }
+            }
+            break
+
+        case 0x26: // ClearCredential request
+            if (state.isDeletingCode == true) {
+                Integer codePosition = safeToInt(state.lastDeleteCode?.codePosition)
+                state.isDeletingCode = false
+                unschedule('clearDeletingCodeFlagOnTimeout')
+                state.remove('lastDeleteCode')
+                state.remove('recentClearCredentialConfirmation')
+                String descriptionText = "${device.displayName} deleteCode position ${codePosition} failed with Matter Invoke status ${statusText}"
+                sendEvent(name: 'codeChanged', value: 'failed', descriptionText: descriptionText, isStateChange: true)
+                logWarn descriptionText
+            } else if (state.isOverwritingCode == true) {
+                Integer codePosition = safeToInt(state.overwriteSlot)
+                clearSetCodeOperationState("${codePosition}", true)
+                String descriptionText = "${device.displayName} setCode overwrite at position ${codePosition} failed while clearing the old credential (Matter Invoke status ${statusText})"
+                sendEvent(name: 'codeChanged', value: 'failed', descriptionText: descriptionText, isStateChange: true)
+                logWarn descriptionText
+            }
+            break
+    }
+}
+
 void handleLockMessage(Map description) {
     //logDebug "handleLockMessage: description = ${description}"
     Map descMap =[:]
@@ -184,7 +314,11 @@ void handleLockMessage(Map description) {
         logWarn "handleLockMessage: exception ${e} while parsing description.value = ${description.value}"
         return
     }
-    logDebug "handleLockMessage: parsed descMap = ${descMap}"
+    if (safeNumberToInt(descMap.commandInt, null) == 0x25 || "${descMap.cmdId}".equalsIgnoreCase('25')) {
+        logDebug "handleLockMessage: parsed GetCredentialStatusResponse data=[redacted] value=${redactGetCredentialStatusValue(descMap.value)}"
+    } else {
+        logDebug "handleLockMessage: parsed descMap = ${descMap}"
+    }
     if (descMap.cluster != '0101') { logWarn "handleLockMessage: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
 
     // Check if this is an event (has evtId) or an attribute (has attrId)
@@ -480,9 +614,10 @@ void processDoorLockAttributeReport(Map descMap) {
             break
         default:
             // Check for command responses
-            if (descMap.cmdId == '25' || descMap.value?.contains('credentialExists')) {
+            Map responseValues = (descMap.value instanceof Map) ? (descMap.value as Map) : [:]
+            if (descMap.cmdId == '25' || descMap.commandInt == 0x25 || responseValues.containsKey('credentialExists')) {
                 processGetCredentialStatusResponse(descMap)
-            } else if (descMap.cmdId == '28' || descMap.value?.contains('userName')) {
+            } else if (descMap.cmdId == '1C' || descMap.commandInt == 0x1C || responseValues.containsKey('userName')) {
                 processGetUserResponse(descMap)
             } else {
                 logWarn "handleLockMessage: unexpected attrId:${descMap.attrId}"
@@ -541,10 +676,11 @@ void setCode(codePosition, pinCode, name = null) {
     // Hubitat Lock Code Manager app will call setCode with codePosition, pinCode and name, and expects to see the result in the device attributes.
     // setCode() will be called up to 10 times, 4 second apart!
     // we need to prevent calling setCode again until the job is done!
-    // the timout timer will be stopped and the state.isSettingCode flag will be cleared when we receive the codeChanged event from the lock (in processDoorLockEvent)
+    // The timeout is cancelled when SetCredentialResponse or LockUserChange confirms the operation.
     state.isSettingCode = true
     ensureLockCodeStateMaps()
-    // Keep minimal pending request context keyed by credential slot until confirmation event arrives.
+    state.remove('recentSetCredentialConfirmation')
+    // Keep the requested PIN/name keyed by credential slot until a response or event confirms it.
     state.pendingSetByCredential["${codePosition}"] = [requestedAt: now(), pinCode: pinCode, name: name]
 
     runIn(SET_CODE_TIMEOUT_SECONDS, "clearSettingCodeFlagOnTimeout", [overwrite: true])     // 45 seconds !
@@ -563,7 +699,7 @@ void setCode(codePosition, pinCode, name = null) {
     } else {
         matterSetCredentialPIN(codePosition, pinCode)
     }
-    // lockCodes and codeChanged will be updated when the lock confirms via LockUserChange event
+    // lockCodes and codeChanged are updated from SetCredentialResponse, with LockUserChange as fallback.
 }   
 
 
@@ -581,16 +717,17 @@ void deleteCode(codePosition) {
     }
     
     state.isDeletingCode = true
+    state.remove('recentClearCredentialConfirmation')
     state.lastDeleteCode = [codePosition: codePosition, timestamp: now()]
-    runIn(DELETE_TIMEOUT_SECONDS, 'clearDeletingCodeFlagOnTimeout', [overwrite: true])  // 5 seconds should be enough to receive the confirmation event from the lock
+    runIn(DELETE_TIMEOUT_SECONDS, 'clearDeletingCodeFlagOnTimeout', [overwrite: true])
 
     String descriptionText = "${device.displayName} deleteCode: deleting code at position ${codePosition}"
     logInfo descriptionText
     sendEvent(name: 'codeChanged', value: 'deleting', descriptionText: descriptionText, isStateChange: true)
 
     matterClearCredential(1, codePosition)
-    // confirmation will arrive as LockUserChange event (evtId:4) with dataOpType=1 (Clear)
-    // if no confirmation within 5, clearDeletingCodeFlagOnTimeout() fires
+    // The successful Invoke callback normally confirms this immediately. LockUserChange remains
+    // a fallback for platforms without callbacks, and the timeout handles locks that emit neither.
 }
 
 
@@ -646,8 +783,7 @@ void proceedWithOverwriteAdd() {
         matterSetCredentialPIN(slot as BigDecimal, pendingEntry.pinCode)
     } else {
         logWarn "proceedWithOverwriteAdd: no pending data for slot ${slot} — aborting overwrite"
-        state.isSettingCode = false
-        unschedule('clearSettingCodeFlagOnTimeout')
+        clearSetCodeOperationState(slotKey, true)
         sendEvent(name: 'codeChanged', value: 'failed', descriptionText: "${device.displayName} setCode overwrite: no pending data for slot ${slot}", isStateChange: true)
     }
 }
@@ -657,6 +793,8 @@ void clearSettingCodeFlagOnTimeout() {
     state.isOverwritingCode = false
     unschedule('proceedWithOverwriteAdd')
     state.pendingSetByCredential = [:]   // clear stale entries so they don't interfere with the next setCode operation
+    state.remove('pendingSetCredentialInvoke')
+    state.remove('overwriteSlot')
     logDebug "clearSettingCodeFlagOnTimeout: isSettingCode flag cleared (timed out after ${SET_CODE_TIMEOUT_SECONDS} seconds)"
     String descriptionText = "${device.displayName} setCode operation timed out without confirmation from lock (no codeChanged event received)"
     sendEvent(name: 'codeChanged', value: "failed", descriptionText: descriptionText, isStateChange: true)
@@ -664,19 +802,49 @@ void clearSettingCodeFlagOnTimeout() {
 }
 
 void clearDeletingCodeFlagOnTimeout() {
-    Integer codePosition = state.lastDeleteCode?.codePosition
+    if (state.isDeletingCode != true) { return }
+    completePendingDeleteCode('timeout fallback', false, null)
+}
+
+private void completePendingDeleteCode(String source, Boolean confirmed, String eventDescription) {
+    if (state.isDeletingCode != true) { return }
+
+    Integer codePosition = safeToInt(state.lastDeleteCode?.codePosition)
+    String credentialKey = codePosition != null ? "${codePosition}" : null
+    Map existingEntry = credentialKey != null ? (getLockCodes()[credentialKey] ?: [:]) : [:]
+    ensureLockCodeStateMaps()
+    Map existingMeta = credentialKey != null && state.codeMetaByCredential[credentialKey] instanceof Map ?
+        new HashMap(state.codeMetaByCredential[credentialKey] as Map) : [:]
+    Integer userIndex = safeToInt(existingMeta.userIndex, null)
+
     state.isDeletingCode = false
-    Map existingEntry = codePosition != null ? (getLockCodes()["${codePosition}"] ?: [:]) : [:]
-    String descriptionText = "${device.displayName} deleteCode: no confirmation event received from lock (position ${codePosition}) — assuming deleted"
+    unschedule('clearDeletingCodeFlagOnTimeout')
+    state.remove('lastDeleteCode')
+
     if (codePosition != null) {
         removeLockCode(codePosition)
-        removeCredentialMeta("${codePosition}")
+        removeCredentialMeta(credentialKey)
     }
-    Map codeData = codePosition != null ? ["${codePosition}": existingEntry] : [:]
+
+    Map codeData = credentialKey != null ? [(credentialKey): existingEntry] : [:]
     def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
+    String descriptionText = eventDescription ?: (confirmed ?
+        "${device.displayName} deleteCode position ${codePosition} confirmed by ${source}" :
+        "${device.displayName} deleteCode: no confirmation received from lock (position ${codePosition}) — assuming deleted")
     logLockCodeEventPayload('codeChanged', 'deleted', codeData)
     sendEvent(name: 'codeChanged', value: 'deleted', data: eventData, descriptionText: descriptionText, isStateChange: true)
-    logWarn descriptionText
+
+    state.recentClearCredentialConfirmation = [
+        credentialKey: credentialKey,
+        userIndex: userIndex,
+        confirmedAt: now(),
+        source: source
+    ]
+    if (confirmed) {
+        logInfo "deleteCode: position ${codePosition} confirmed by ${source}"
+    } else {
+        logWarn descriptionText
+    }
 }
 
 // ------- Matter command implementations -------
@@ -879,11 +1047,25 @@ void matterSetCredentialPIN(BigDecimal credentialIndexPar, String pinCode, BigDe
 
     logDebug "matterSetCredentialPIN: credIndex=${credentialIndex}, userIndex=${userIndex}, pinLen=${pinLen}, credIndexHexLE=${credIndexHexLE}, tlv=${tlv}, cmd=${cmd}"
     parent?.componentLog(device, 'debug', "setting PIN credential slot ${credentialIndex}..." + (userIndex != null ? " (user ${userIndex})" : ""))
+
+    ensureLockCodeStateMaps()
+    String credentialKey = "${credentialIndex}"
+    Boolean fromSetCode = state.isSettingCode == true && state.pendingSetByCredential?.containsKey(credentialKey)
+    if (state.isSettingCode == true && !fromSetCode) {
+        logWarn "matterSetCredentialPIN: another setCode operation is active; direct request for slot ${credentialIndex} ignored"
+        return
+    }
+    state.pendingSetCredentialInvoke = [
+        credentialKey: credentialKey,
+        userIndex: userIndex,
+        operationType: 0,
+        sentAt: now(),
+        fromSetCode: fromSetCode
+    ]
     parent?.sendToDevice(cmd)
 
-    // The response will be in SetCredentialResponse 0x23, however it is not exposed by Hubitat as an event, so we won't receive it in parse() and can't correlate it with the request
-    // However, the lock will send later [callbackType:Event, endpointInt:1, clusterInt:257, evtId:4, timestamp:1779534535384, timestampType:1, priority:1, eventSerial:18153577, data:[4:STRUCT:[6:UINT:8, 3:UINT:3, 0:UINT:6, 1:UINT:0, 4:UINT:3, 5:UINT:112233, 2:UINT:7]], value:[6:8, 3:3, 0:6, 1:0, 4:3, 5:112233, 2:7], cluster:0101, endpoint:01]
-    // this will result in sendEvent(name: 'codeChanged', value: "${credentialIndex} set", descriptionText: "SetCredential sent for slot ${credentialIndex}", isStateChange: true)
+    // Hubitat platform 2.5.1.132+ exposes SetCredentialResponse 0x23 through callbackType:Invoke.
+    // Older platforms continue to complete setCode from the later LockUserChange event.
 } // matterSetCredentialPIN
 
 
@@ -905,46 +1087,75 @@ void matterSetCredentialPIN(BigDecimal credentialIndexPar, String pinCode, BigDe
 // **** seems to work! :)
 //
 void matterClearCredential(BigDecimal credentialTypePar = null, BigDecimal credentialIndexPar = null) {
-    logDebug "matterClearCredential: type=${credentialTypePar}, index=${credentialIndexPar}"
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn 'matterClearCredential: This lock does not support User management'
+        return
+    }
+    List<String> acceptedCommands = getDoorLockAcceptedCommandList()
+    if (settings?.ignoreCompatibilityChecks != true && !acceptedCommands.isEmpty() && !acceptedCommands.contains('0026')) {
+        logWarn "matterClearCredential: command 0x26 is not present in this lock's AcceptedCommandList"
+        return
+    }
+
     Integer credentialType = credentialTypePar != null ? credentialTypePar.intValue() : null
     Integer credentialIndex = credentialIndexPar != null ? credentialIndexPar.intValue() : null
+    if (credentialTypePar != null && credentialTypePar.compareTo(new BigDecimal(credentialType)) != 0) {
+        logWarn "matterClearCredential: credential type must be a whole number, got '${credentialTypePar}'"
+        return
+    }
+    if (credentialIndexPar != null && credentialIndexPar.compareTo(new BigDecimal(credentialIndex)) != 0) {
+        logWarn "matterClearCredential: credential index must be a whole number, got '${credentialIndexPar}'"
+        return
+    }
+    if (credentialType == 0) {
+        logWarn 'matterClearCredential: ProgrammingPIN cannot be cleared'
+        return
+    }
+    if (credentialType != null && (credentialType < 1 || credentialType > 8)) {
+        logWarn "matterClearCredential: credential type must be 1-8, got '${credentialTypePar}'"
+        return
+    }
+    if (credentialType == null && credentialIndex != null) {
+        logWarn 'matterClearCredential: credential index cannot be supplied without a credential type'
+        return
+    }
+    if (credentialIndex != null && (credentialIndex < 1 || credentialIndex > 65533)) {
+        logWarn "matterClearCredential: credential index must be 1-65533, got '${credentialIndexPar}'"
+        return
+    }
+
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
 
-    if (credentialType == null && credentialIndex == null) {
-        // Clear all credentials of all types (Credential field SHALL be null)
-        logInfo 'matterClearCredential: clearing all credentials of all types'
-        String cmd = matter.invoke(deviceNumber, 0x0101, 0x26)
-        parent?.sendToDevice(cmd)
-        return
+    String tlv
+    String scopeText
+    if (credentialType == null) {
+        // Nullable mandatory Credential field = null: clear every credential except ProgrammingPIN.
+        tlv = '15' + '34' + '00' + '18'
+        scopeText = 'all credentials of all types'
+    } else {
+        // CredentialIndex 0xFFFE means every credential of the selected type.
+        Integer encodedIndex = credentialIndex != null ? credentialIndex : 0xFFFE
+        String typeHex = HexUtils.integerToHexString(credentialType, 1)
+        String indexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(encodedIndex, 2))
+        tlv =
+            '15' +
+                '35' + '00' +
+                    '24' + '00' + typeHex +
+                    '25' + '01' + indexHexLE +
+                '18' +
+            '18'
+        String typeName = CredentialTypeEnum[credentialType] ?: "Unknown (${credentialType})"
+        scopeText = credentialIndex != null
+            ? "${typeName} credential #${credentialIndex}"
+            : "all ${typeName} credentials"
     }
-
-    if (credentialType == 0) {
-        logWarn 'matterClearCredential: ProgrammingPIN cannot be cleared.'
-        return
-    }
-
-    int index = (credentialIndex != null) ? credentialIndex : 1
-
-    String typeHex  = HexUtils.integerToHexString(credentialType, 1)             // e.g. "01"
-    String indexHex = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))  // e.g. "0900"
-
-    // Build TLV dynamically
-    String tlv =
-            "15" +            // start outer struct
-            "35" + "00" +     // context tag 0, STRUCTURE (CredentialStruct)
-            "24" + "00" + typeHex +     // tag 0: uint8 credentialType
-            "25" + "01" + indexHex +    // tag 1: uint16 credentialIndex (LE)
-            "18" +            // end inner struct
-            "18"              // end outer struct
-
 
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x0026, 2000, tlv)
-
-    logDebug "matterClearCredential: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
+    logInfo "matterClearCredential: clearing ${scopeText}"
+    logDebug "matterClearCredential: type=${credentialType}, index=${credentialIndex}, tlv=${tlv}, cmd=${cmd}"
     parent?.sendToDevice(cmd)
 }
-
 
 /*
 
@@ -1054,45 +1265,264 @@ String userUniqueIdTlv = "26" + "02" + userUniqueIdHexLE
 
 */
 
-/*
-
-// TODO
 // 5.2.10.35. GetUser Command (0x1B)
-// Retrieve user.
-void matterGetUser(String userIndex) {
+// Retrieve one user. GetUserResponse does not include PIN or other credential secret data.
+void matterGetUser(BigDecimal userIndexPar) {
     if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
         logWarn "matterGetUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
         return
     }
-    
-    if (!userIndex) { logWarn "matterGetUser: User index is required" ; return }
 
-    Integer index = userIndex as Integer
-    // TODO: use device data "Number Of Total Users Supported" to validate index ! ( U200 supports up to 10 users )
-    if (index < 1 || index > 10) {
-        logWarn "matterGetUser: User index must be 1-10, got '${userIndex}'"
+    List<String> acceptedCommands = getDoorLockAcceptedCommandList()
+    if (settings?.ignoreCompatibilityChecks != true && !acceptedCommands.isEmpty() && !acceptedCommands.contains('001B')) {
+        logWarn "matterGetUser: GetUser command 0x1B is not present in this lock's AcceptedCommandList"
         return
     }
-    
+
+    if (userIndexPar == null) {
+        logWarn 'matterGetUser: User index is required'
+        return
+    }
+    Integer userIndex = userIndexPar.intValue()
+    if (userIndexPar.compareTo(new BigDecimal(userIndex)) != 0) {
+        logWarn "matterGetUser: User index must be a whole number, got '${userIndexPar}'"
+        return
+    }
+    Integer maxUserIndex = safeNumberToInt(state.lockAttr?.numberOfTotalUsers, 65534)
+    if (maxUserIndex == null || maxUserIndex < 1 || maxUserIndex > 65534) { maxUserIndex = 65534 }
+    if (userIndex < 1 || userIndex > maxUserIndex) {
+        logWarn "matterGetUser: User index must be 1-${maxUserIndex}, got '${userIndexPar}'"
+        return
+    }
+
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    
-
-    // cmdFields: ID:0, Name:UserIndex, Type:uint16, Constraint: 1 to NumberOfTotalUsersSupported, Conformance:Mandatory
-    // An InvokeResponse command SHALL be sent with an appropriate error (e.g. FAILURE, INVALID COMMAND, etc.) as needed otherwise the GetUserResponse Command SHALL be sent implying a status of SUCCESS
-    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(DataType.UINT16, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
+    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
+    cmdFields.add(matter.cmdField(DataType.UINT16, 0x00, userIndexHexLE))
 
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, 2000, cmdFields)
-    logDebug "matterGetUser: cmd=${cmd}"
-    parent?.componentLog(device, 'debug', "querying user information for index ${index}...")
+    // GetUser is not a timed command. GetUserResponse 0x1C is returned through callbackType:Invoke.
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, cmdFields)
+    logDebug "matterGetUser: userIndex=${userIndex}, userIndexHexLE=${userIndexHexLE}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "querying user information for index ${userIndex}...")
     parent?.sendToDevice(cmd)
 }
 
-*/
+// Diagnostic occupied-user scan. Kept separate from getCodes() until live traversal is validated.
+void matterScanUsers() {
+    if (state.userScan?.active == true) {
+        Long lastRequestAt = state.userScan.lastRequestAt != null ? state.userScan.lastRequestAt as Long : 0L
+        if (lastRequestAt > 0L && (now() - lastRequestAt) <= (GET_USER_SCAN_TIMEOUT_SECONDS * 2000L)) {
+            logWarn "matterScanUsers: a scan is already active for user ${state.userScan.pendingUserIndex}"
+            return
+        }
+        logWarn 'matterScanUsers: replacing stale scan state'
+        unschedule('matterUserScanTimeout')
+    }
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn "matterScanUsers: This lock <b>does not</b> support User management"
+        return
+    }
 
+    List<String> acceptedCommands = getDoorLockAcceptedCommandList()
+    if (settings?.ignoreCompatibilityChecks != true && !acceptedCommands.isEmpty() && !acceptedCommands.contains('001B')) {
+        logWarn "matterScanUsers: GetUser command 0x1B is not present in this lock's AcceptedCommandList"
+        return
+    }
+    if (getDeviceNumber() == null) return
+
+    Integer maxUserIndex = safeNumberToInt(state.lockAttr?.numberOfTotalUsers, 65534)
+    if (maxUserIndex == null || maxUserIndex < 1 || maxUserIndex > 65534) { maxUserIndex = 65534 }
+    state.userScan = [
+        active: true,
+        startedAt: now(),
+        maxUserIndex: maxUserIndex,
+        pendingUserIndex: null,
+        visitedUserIndexes: [],
+        requestCount: 0,
+        occupiedUsers: 0,
+        credentialCounts: [:],
+        users: []
+    ]
+    logInfo "matterScanUsers: starting occupied-user scan (maximum user index ${maxUserIndex})"
+    requestMatterUserScanIndex(1)
+}
+
+private void requestMatterUserScanIndex(Integer userIndex) {
+    Map scan = state.userScan instanceof Map ? state.userScan as Map : null
+    if (scan?.active != true) return
+
+    Integer maxUserIndex = safeNumberToInt(scan.maxUserIndex, 65534)
+    List<Integer> visited = scan.visitedUserIndexes instanceof List
+        ? (scan.visitedUserIndexes as List).collect { Object value -> safeNumberToInt(value, null) }.findAll { it != null }
+        : []
+    if (userIndex == null || userIndex < 1 || userIndex > maxUserIndex) {
+        finishMatterUserScan("invalid NextUserIndex ${userIndex}", false)
+        return
+    }
+    if (visited.contains(userIndex)) {
+        finishMatterUserScan("cycle detected at user ${userIndex}", false)
+        return
+    }
+
+    scan.pendingUserIndex = userIndex
+    scan.lastRequestAt = now()
+    scan.requestCount = safeNumberToInt(scan.requestCount, 0) + 1
+    state.userScan = scan
+    runIn(GET_USER_SCAN_TIMEOUT_SECONDS, 'matterUserScanTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
+    logDebug "matterScanUsers: requesting user ${userIndex} (request ${scan.requestCount})"
+    matterGetUser(userIndex as BigDecimal)
+}
+
+void matterUserScanTimeout(Map data) {
+    Map scan = state.userScan instanceof Map ? state.userScan as Map : null
+    if (scan?.active != true) return
+
+    Integer expectedUserIndex = safeNumberToInt(data?.expectedUserIndex, null)
+    Integer pendingUserIndex = safeNumberToInt(scan.pendingUserIndex, null)
+    if (expectedUserIndex != null && pendingUserIndex != expectedUserIndex) return
+    finishMatterUserScan("timeout waiting for user ${pendingUserIndex}", false)
+}
+
+private void handleMatterUserScanResponse(Map userMeta) {
+    Map scan = state.userScan instanceof Map ? state.userScan as Map : null
+    if (scan?.active != true) return
+
+    Integer userIndex = responseInt(userMeta.userIndex)
+    Integer pendingUserIndex = safeNumberToInt(scan.pendingUserIndex, null)
+    if (userIndex != pendingUserIndex) {
+        logDebug "matterScanUsers: ignoring user ${userIndex} response while waiting for user ${pendingUserIndex}"
+        return
+    }
+
+    unschedule('matterUserScanTimeout')
+    List<Integer> visited = scan.visitedUserIndexes instanceof List
+        ? (scan.visitedUserIndexes as List).collect { Object value -> safeNumberToInt(value, null) }.findAll { it != null }
+        : []
+    if (!visited.contains(userIndex)) { visited.add(userIndex) }
+    scan.visitedUserIndexes = visited
+    scan.pendingUserIndex = null
+
+    Integer userStatus = responseInt(userMeta.userStatus)
+    if (userStatus in [1, 3]) {
+        scan.occupiedUsers = safeNumberToInt(scan.occupiedUsers, 0) + 1
+    }
+    Map<String, Integer> credentialCounts = scan.credentialCounts instanceof Map
+        ? new HashMap(scan.credentialCounts as Map)
+        : [:]
+    List<Map> credentials = userMeta.credentials instanceof List ? userMeta.credentials as List<Map> : []
+    credentials.each { Map credential ->
+        String typeName = credential.credentialTypeName ?: 'Unknown'
+        credentialCounts[typeName] = (credentialCounts[typeName] ?: 0) + 1
+    }
+    scan.credentialCounts = credentialCounts
+    List<Map> users = scan.users instanceof List ? new ArrayList(scan.users as List) : []
+    users.removeAll { Map existingUser -> responseInt(existingUser.userIndex) == userIndex }
+    users.add(new HashMap(userMeta))
+    scan.users = users
+    state.userScan = scan
+
+    Integer nextUserIndex = responseInt(userMeta.nextUserIndex)
+    if (nextUserIndex == null) {
+        finishMatterUserScan('complete', true)
+        return
+    }
+    Integer maxUserIndex = safeNumberToInt(scan.maxUserIndex, 65534)
+    if (nextUserIndex < 1 || nextUserIndex > maxUserIndex) {
+        finishMatterUserScan("invalid NextUserIndex ${nextUserIndex}", false)
+        return
+    }
+    if (visited.contains(nextUserIndex)) {
+        finishMatterUserScan("cycle detected at user ${nextUserIndex}", false)
+        return
+    }
+    if (visited.size() >= maxUserIndex) {
+        finishMatterUserScan("response limit ${maxUserIndex} reached before terminal NextUserIndex", false)
+        return
+    }
+
+    requestMatterUserScanIndex(nextUserIndex)
+}
+
+private void finishMatterUserScan(String reason, Boolean completed) {
+    Map scan = state.userScan instanceof Map ? state.userScan as Map : [:]
+    unschedule('matterUserScanTimeout')
+
+    List<Integer> visited = scan.visitedUserIndexes instanceof List
+        ? (scan.visitedUserIndexes as List).collect { Object value -> safeNumberToInt(value, null) }.findAll { it != null }
+        : []
+    Integer occupiedUsers = safeNumberToInt(scan.occupiedUsers, 0)
+    Map<String, Integer> credentialCounts = scan.credentialCounts instanceof Map
+        ? new HashMap(scan.credentialCounts as Map)
+        : [:]
+    List<Map> users = scan.users instanceof List ? new ArrayList(scan.users as List) : []
+
+    Long startedAt = scan.startedAt != null ? scan.startedAt as Long : now()
+    Long durationMs = Math.max(0L, now() - startedAt)
+    state.userScan = [
+        active: false,
+        completed: completed,
+        reason: reason,
+        startedAt: startedAt,
+        finishedAt: now(),
+        durationMs: durationMs,
+        visitedUserIndexes: visited,
+        occupiedUsers: occupiedUsers,
+        credentialCounts: credentialCounts,
+        users: users
+    ]
+
+    String credentialSummary = credentialCounts.isEmpty()
+        ? 'no credentials'
+        : credentialCounts.keySet().sort().collect { String typeName -> "${typeName}=${credentialCounts[typeName]}" }.join(', ')
+    String message = "matterScanUsers: ${completed ? 'completed' : 'stopped'} after ${visited.size()} responses (${occupiedUsers} occupied users; ${credentialSummary}; ${durationMs} ms)${reason == 'complete' ? '' : "; reason: ${reason}"}"
+    String userDetails = formatMatterUserScanDetails(users)
+    if (userDetails) { message += "<br><b>Matter users</b><br>${userDetails}" }
+    if (completed) { logInfo message } else { logWarn message }
+}
+
+private String formatMatterUserScanDetails(List<Map> scannedUsers) {
+    List<String> userLines = []
+    List<Map> sortedUsers = scannedUsers ? new ArrayList(scannedUsers) : []
+    sortedUsers.sort { Map left, Map right -> responseInt(left.userIndex) <=> responseInt(right.userIndex) }
+    sortedUsers.each { Map userMeta ->
+        Integer userIndex = responseInt(userMeta.userIndex)
+        String userName = userMeta.userName ? htmlEscapeLogValue(userMeta.userName) : '<i>unnamed</i>'
+        String statusName = htmlEscapeLogValue(userMeta.userStatusName ?: 'not reported')
+        String typeName = htmlEscapeLogValue(userMeta.userTypeName ?: 'not reported')
+        String ruleName = htmlEscapeLogValue(userMeta.credentialRuleName ?: 'not reported')
+        String uniqueID = userMeta.userUniqueID != null ? htmlEscapeLogValue(userMeta.userUniqueID) : 'not reported'
+        String creatorFabric = userMeta.creatorFabricIndex != null ? htmlEscapeLogValue(userMeta.creatorFabricIndex) : 'not reported'
+        String modifiedFabric = userMeta.lastModifiedFabricIndex != null ? htmlEscapeLogValue(userMeta.lastModifiedFabricIndex) : 'not reported'
+        List<Map> credentials = userMeta.credentials instanceof List ? userMeta.credentials as List<Map> : []
+        String credentialText = credentials.isEmpty()
+            ? 'none'
+            : credentials.collect { Map credential ->
+                String credentialType = htmlEscapeLogValue(credential.credentialTypeName ?: "type ${credential.credentialType}")
+                String credentialIndex = htmlEscapeLogValue(credential.credentialIndex)
+                return "${credentialType} #${credentialIndex}"
+            }.join(', ')
+
+        userLines.add(
+            "<b>User ${userIndex}</b> &mdash; ${userName}" +
+            "<br>&nbsp;&nbsp;Status: ${statusName} &middot; Type: ${typeName} &middot; Rule: ${ruleName}" +
+            "<br>&nbsp;&nbsp;Credentials: ${credentialText} &middot; Unique ID: ${uniqueID}" +
+            " &middot; Fabrics: creator ${creatorFabric}, modified ${modifiedFabric}"
+        )
+    }
+    return userLines.join('<br>')
+}
+
+private String htmlEscapeLogValue(Object value) {
+    if (value == null) return ''
+    return "${value}"
+        .replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+        .replace('"', '&quot;')
+        .replace("'", '&#39;')
+}
 
 /*
 // 5.2.10.37. ClearUser Command (0x1D) - WORKING ! :) 
@@ -1134,65 +1564,291 @@ void matterClearUser(String userIndex) {
 
 
 
-/*
+// 5.2.10.42. GetCredentialStatus Command (0x24)
+// Queries one credential reference. The response may contain sensitive CredentialData;
+// only its presence and byte length are retained or logged.
+void matterGetCredentialStatus(BigDecimal credentialTypePar, BigDecimal credentialIndexPar) {
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn 'matterGetCredentialStatus: This lock does not support User management'
+        return
+    }
 
-// Command to query PIN credential status
-void matterGetCredentialStatus(String pinIndex) {
-    if (!supportsLockCodes()) {
-        logWarn "matterGetCredentialStatus: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
+    List<String> acceptedCommands = getDoorLockAcceptedCommandList()
+    if (settings?.ignoreCompatibilityChecks != true && !acceptedCommands.isEmpty() && !acceptedCommands.contains('0024')) {
+        logWarn "matterGetCredentialStatus: command 0x24 is not present in this lock's AcceptedCommandList"
         return
     }
-    
-    if (!pinIndex) {
-        logWarn "matterGetCredentialStatus: PIN index is required"
+    if (credentialTypePar == null || credentialIndexPar == null) {
+        logWarn 'matterGetCredentialStatus: credential type and index are required'
         return
     }
-    Integer index = pinIndex as Integer
-    if (index < 1 || index > 255) {
-        logWarn "matterGetCredentialStatus: PIN index must be 1-255, got '${pinIndex}'"
+
+    Integer credentialType = credentialTypePar.intValue()
+    Integer credentialIndex = credentialIndexPar.intValue()
+    if (credentialTypePar.compareTo(new BigDecimal(credentialType)) != 0 || credentialType < 0 || credentialType > 8) {
+        logWarn "matterGetCredentialStatus: credential type must be a whole number from 0 to 8, got '${credentialTypePar}'"
         return
     }
-    
+    if (credentialIndexPar.compareTo(new BigDecimal(credentialIndex)) != 0 || credentialIndex < 1 || credentialIndex > 65534) {
+        logWarn "matterGetCredentialStatus: credential index must be a whole number from 1 to 65534, got '${credentialIndexPar}'"
+        return
+    }
+
+    Map pending = state.pendingGetCredentialStatus instanceof Map ? state.pendingGetCredentialStatus as Map : null
+    if (pending != null) {
+        Long sentAt = pending.sentAt != null ? pending.sentAt as Long : 0L
+        if (sentAt > 0L && (now() - sentAt) <= (GET_CREDENTIAL_STATUS_TIMEOUT_SECONDS * 2000L)) {
+            logWarn "matterGetCredentialStatus: already waiting for ${pending.credentialTypeName ?: 'credential'} #${pending.credentialIndex}"
+            return
+        }
+        logWarn 'matterGetCredentialStatus: replacing stale pending query state'
+        unschedule('matterGetCredentialStatusTimeout')
+    }
+
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "querying PIN credential status for index ${index}...")
 
-    // Build TLV using the SAME pattern as matterClearCredential() (known-good)
-    // Outer struct:
-    //   tag 0: CredentialStruct (struct)
-    //        tag 0: credentialType (uint8/enum8)
-    //        tag 1: credentialIndex (uint16 LE)
-
-    int credentialType = 1  // PIN
-
-    String typeHex    = HexUtils.integerToHexString(credentialType, 1)                 // 01
-    String indexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(index, 2))       // 3 -> 0300
-
-    // IMPORTANT: follow the SAME encoding pattern as matterClearCredential()
-    // outer struct:
-    //   tag0: CredentialStruct (struct)
-    //      tag0: type (uint8/enum8)
-    //      tag1: index (uint16 LE)
+    String typeHex = HexUtils.integerToHexString(credentialType, 1)
+    String indexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(credentialIndex, 2))
     String tlv =
-            "15" +
-              "35" + "00" +
-                "24" + "00" + typeHex +
-                "25" + "01" + indexHexLE +
-              "18" +
-            "18"
+        '15' +
+            '35' + '00' +
+                '24' + '00' + typeHex +
+                '25' + '01' + indexHexLE +
+            '18' +
+        '18'
 
+    String typeName = CredentialTypeEnum[credentialType] ?: "Unknown (${credentialType})"
+    state.pendingGetCredentialStatus = [
+        credentialType: credentialType,
+        credentialTypeName: typeName,
+        credentialIndex: credentialIndex,
+        sentAt: now()
+    ]
+    runIn(GET_CREDENTIAL_STATUS_TIMEOUT_SECONDS, 'matterGetCredentialStatusTimeout', [
+        overwrite: true,
+        data: [credentialType: credentialType, credentialIndex: credentialIndex]
+    ])
+
+    // Hubitat's raw-TLV overload requires the timed-invoke timeout argument.
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x0024, 2000, tlv)
-
-    logDebug "matterGetCredentialStatus: type=${credentialType}, index=${index}, tlv=${tlv}, cmd=${cmd}"
-    parent?.componentLog(device, 'debug', "querying credential status: type=${credentialType}, index=${index}...")
+    logDebug "matterGetCredentialStatus: type=${typeName} (${credentialType}), index=${credentialIndex}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "querying ${typeName} credential status for index ${credentialIndex}...")
     parent?.sendToDevice(cmd)
-
 }
 
-*/
+void matterGetCredentialStatusTimeout(Map data) {
+    Map pending = state.pendingGetCredentialStatus instanceof Map ? state.pendingGetCredentialStatus as Map : null
+    if (pending == null) return
+    Integer expectedType = safeNumberToInt(data?.credentialType, null)
+    Integer expectedIndex = safeNumberToInt(data?.credentialIndex, null)
+    if (safeNumberToInt(pending.credentialType, null) != expectedType || safeNumberToInt(pending.credentialIndex, null) != expectedIndex) return
+
+    state.remove('pendingGetCredentialStatus')
+    Boolean scanMatches = state.credentialScan?.active == true &&
+        safeNumberToInt(state.credentialScan.credentialType, null) == expectedType &&
+        safeNumberToInt(state.credentialScan.pendingCredentialIndex, null) == expectedIndex
+    if (scanMatches) {
+        finishMatterCredentialScan("timeout waiting for ${pending.credentialTypeName ?: 'credential'} #${pending.credentialIndex}", false)
+    } else {
+        logWarn "matterGetCredentialStatus: timeout waiting for ${pending.credentialTypeName ?: 'credential'} #${pending.credentialIndex}"
+    }
+}
 
 
+// Diagnostic credential scan. Starts at index 1 and follows NextCredentialIndex.
+void matterScanCredentials(BigDecimal credentialTypePar) {
+    if (credentialTypePar == null) {
+        logWarn 'matterScanCredentials: credential type is required'
+        return
+    }
+    Integer credentialType = credentialTypePar.intValue()
+    if (credentialTypePar.compareTo(new BigDecimal(credentialType)) != 0 || credentialType < 0 || credentialType > 8) {
+        logWarn "matterScanCredentials: credential type must be a whole number from 0 to 8, got '${credentialTypePar}'"
+        return
+    }
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn 'matterScanCredentials: This lock does not support User management'
+        return
+    }
+    List<String> acceptedCommands = getDoorLockAcceptedCommandList()
+    if (settings?.ignoreCompatibilityChecks != true && !acceptedCommands.isEmpty() && !acceptedCommands.contains('0024')) {
+        logWarn "matterScanCredentials: GetCredentialStatus command 0x24 is not present in this lock's AcceptedCommandList"
+        return
+    }
+    if (getDeviceNumber() == null) return
+
+    if (state.credentialScan?.active == true) {
+        Long lastRequestAt = state.credentialScan.lastRequestAt != null ? state.credentialScan.lastRequestAt as Long : 0L
+        if (lastRequestAt > 0L && (now() - lastRequestAt) <= (GET_CREDENTIAL_STATUS_TIMEOUT_SECONDS * 2000L)) {
+            logWarn "matterScanCredentials: a scan is already active for ${state.credentialScan.credentialTypeName} #${state.credentialScan.pendingCredentialIndex}"
+            return
+        }
+        logWarn 'matterScanCredentials: replacing stale scan state'
+        unschedule('matterGetCredentialStatusTimeout')
+        state.remove('pendingGetCredentialStatus')
+    }
+
+    Map pending = state.pendingGetCredentialStatus instanceof Map ? state.pendingGetCredentialStatus as Map : null
+    if (pending != null) {
+        Long sentAt = pending.sentAt != null ? pending.sentAt as Long : 0L
+        if (sentAt > 0L && (now() - sentAt) <= (GET_CREDENTIAL_STATUS_TIMEOUT_SECONDS * 2000L)) {
+            logWarn "matterScanCredentials: cannot start while waiting for ${pending.credentialTypeName ?: 'credential'} #${pending.credentialIndex}"
+            return
+        }
+        unschedule('matterGetCredentialStatusTimeout')
+        state.remove('pendingGetCredentialStatus')
+    }
+
+    String typeName = CredentialTypeEnum[credentialType] ?: "Unknown (${credentialType})"
+    Integer maxResponses = credentialScanResponseLimit(credentialType)
+    state.credentialScan = [
+        active: true,
+        startedAt: now(),
+        credentialType: credentialType,
+        credentialTypeName: typeName,
+        maxResponses: maxResponses,
+        pendingCredentialIndex: null,
+        visitedCredentialIndexes: [],
+        requestCount: 0,
+        occupiedCredentials: 0,
+        credentials: []
+    ]
+    logInfo "matterScanCredentials: starting ${typeName} credential scan (response limit ${maxResponses})"
+    requestMatterCredentialScanIndex(1)
+}
+
+private Integer credentialScanResponseLimit(Integer credentialType) {
+    Object configuredLimit
+    switch (credentialType) {
+        case 1: configuredLimit = state.lockAttr?.numberOfPINUsers; break
+        case 2: configuredLimit = state.lockAttr?.numberOfRFIDUsers; break
+        default: configuredLimit = state.lockAttr?.numberOfTotalUsers; break
+    }
+    Integer limit = safeNumberToInt(configuredLimit, 65534)
+    return (limit != null && limit >= 1 && limit <= 65534) ? limit : 65534
+}
+
+private void requestMatterCredentialScanIndex(Integer credentialIndex) {
+    Map scan = state.credentialScan instanceof Map ? state.credentialScan as Map : null
+    if (scan?.active != true) return
+    if (credentialIndex == null || credentialIndex < 1 || credentialIndex > 65534) {
+        finishMatterCredentialScan("invalid NextCredentialIndex ${credentialIndex}", false)
+        return
+    }
+
+    List<Integer> visited = scan.visitedCredentialIndexes instanceof List
+        ? (scan.visitedCredentialIndexes as List).collect { Object value -> safeNumberToInt(value, null) }.findAll { it != null }
+        : []
+    if (visited.contains(credentialIndex)) {
+        finishMatterCredentialScan("cycle detected at credential ${credentialIndex}", false)
+        return
+    }
+
+    scan.pendingCredentialIndex = credentialIndex
+    scan.lastRequestAt = now()
+    scan.requestCount = safeNumberToInt(scan.requestCount, 0) + 1
+    state.credentialScan = scan
+    logDebug "matterScanCredentials: requesting ${scan.credentialTypeName} #${credentialIndex} (request ${scan.requestCount})"
+    matterGetCredentialStatus(safeNumberToInt(scan.credentialType, 0) as BigDecimal, credentialIndex as BigDecimal)
+}
+
+private void handleMatterCredentialScanResponse(Map credentialMeta) {
+    Map scan = state.credentialScan instanceof Map ? state.credentialScan as Map : null
+    if (scan?.active != true) return
+
+    Integer credentialType = responseInt(credentialMeta.credentialType)
+    Integer credentialIndex = responseInt(credentialMeta.credentialIndex)
+    Integer pendingType = safeNumberToInt(scan.credentialType, null)
+    Integer pendingIndex = safeNumberToInt(scan.pendingCredentialIndex, null)
+    if (credentialType != pendingType || credentialIndex != pendingIndex) {
+        logDebug "matterScanCredentials: ignoring response for type ${credentialType} index ${credentialIndex} while waiting for type ${pendingType} index ${pendingIndex}"
+        return
+    }
+
+    List<Integer> visited = scan.visitedCredentialIndexes instanceof List
+        ? (scan.visitedCredentialIndexes as List).collect { Object value -> safeNumberToInt(value, null) }.findAll { it != null }
+        : []
+    if (!visited.contains(credentialIndex)) visited.add(credentialIndex)
+    scan.visitedCredentialIndexes = visited
+    if (credentialMeta.credentialExists == true) {
+        scan.occupiedCredentials = safeNumberToInt(scan.occupiedCredentials, 0) + 1
+    }
+    List<Map> credentials = scan.credentials instanceof List ? new ArrayList(scan.credentials as List) : []
+    credentials.removeAll { Map existing -> responseInt(existing.credentialIndex) == credentialIndex }
+    credentials.add(new HashMap(credentialMeta))
+    scan.credentials = credentials
+    state.credentialScan = scan
+
+    Integer nextCredentialIndex = responseInt(credentialMeta.nextCredentialIndex)
+    if (nextCredentialIndex == null) {
+        finishMatterCredentialScan('complete', true)
+        return
+    }
+    if (nextCredentialIndex < 1 || nextCredentialIndex > 65534) {
+        finishMatterCredentialScan("invalid NextCredentialIndex ${nextCredentialIndex}", false)
+        return
+    }
+    if (visited.contains(nextCredentialIndex)) {
+        finishMatterCredentialScan("cycle detected at credential ${nextCredentialIndex}", false)
+        return
+    }
+    Integer maxResponses = safeNumberToInt(scan.maxResponses, 65534)
+    if (visited.size() >= maxResponses) {
+        finishMatterCredentialScan("response limit ${maxResponses} reached before terminal NextCredentialIndex", false)
+        return
+    }
+
+    requestMatterCredentialScanIndex(nextCredentialIndex)
+}
+
+private void finishMatterCredentialScan(String reason, Boolean completed) {
+    Map scan = state.credentialScan instanceof Map ? state.credentialScan as Map : [:]
+    unschedule('matterGetCredentialStatusTimeout')
+    state.remove('pendingGetCredentialStatus')
+
+    List<Integer> visited = scan.visitedCredentialIndexes instanceof List
+        ? (scan.visitedCredentialIndexes as List).collect { Object value -> safeNumberToInt(value, null) }.findAll { it != null }
+        : []
+    List<Map> credentials = scan.credentials instanceof List ? new ArrayList(scan.credentials as List) : []
+    Integer occupiedCredentials = safeNumberToInt(scan.occupiedCredentials, 0)
+    Long startedAt = scan.startedAt != null ? scan.startedAt as Long : now()
+    Long durationMs = Math.max(0L, now() - startedAt)
+    String typeName = scan.credentialTypeName ?: 'Credential'
+
+    state.credentialScan = [
+        active: false,
+        completed: completed,
+        reason: reason,
+        startedAt: startedAt,
+        finishedAt: now(),
+        durationMs: durationMs,
+        credentialType: scan.credentialType,
+        credentialTypeName: typeName,
+        visitedCredentialIndexes: visited,
+        occupiedCredentials: occupiedCredentials,
+        credentials: credentials
+    ]
+
+    String message = "matterScanCredentials: ${completed ? 'completed' : 'stopped'} after ${visited.size()} responses (${occupiedCredentials} occupied ${typeName} credentials; ${durationMs} ms)${reason == 'complete' ? '' : "; reason: ${reason}"}"
+    String details = formatMatterCredentialScanDetails(credentials)
+    if (details) message += "<br><b>${htmlEscapeLogValue(typeName)} credentials</b><br>${details}"
+    if (completed) logInfo message else logWarn message
+}
+
+private String formatMatterCredentialScanDetails(List<Map> scannedCredentials) {
+    List<Map> sorted = scannedCredentials ? new ArrayList(scannedCredentials) : []
+    sorted.sort { Map left, Map right -> responseInt(left.credentialIndex) <=> responseInt(right.credentialIndex) }
+    return sorted.collect { Map credential ->
+        Integer index = responseInt(credential.credentialIndex)
+        String status = credential.credentialExists == true ? '<b>occupied</b>' : 'available'
+        String user = credential.userIndex != null ? "User ${htmlEscapeLogValue(credential.userIndex)}" : 'User not reported'
+        String fabrics = "creator ${htmlEscapeLogValue(credential.creatorFabricIndex ?: 'not reported')}, modified ${htmlEscapeLogValue(credential.lastModifiedFabricIndex ?: 'not reported')}"
+        String next = credential.nextCredentialIndex != null ? htmlEscapeLogValue(credential.nextCredentialIndex) : 'none'
+        String data = credential.credentialDataPresent == true ? "redacted (${htmlEscapeLogValue(credential.credentialDataLength ?: 'unknown')} bytes)" : 'not returned'
+        "<b>${htmlEscapeLogValue(credential.credentialTypeName)} #${index}</b> &mdash; ${status}<br>&nbsp;&nbsp;${user} &middot; Fabrics: ${fabrics} &middot; Next: ${next} &middot; Data: ${data}"
+    }.join('<br>')
+}
 // Helper function to check if setCodeLength is supported by this lock
 Boolean isSetCodeLengthEnabled() {
     // TODO: Check FeatureMap or device capabilities to determine support
@@ -1433,26 +2089,466 @@ String processNumericAttribute(String attrName, Map descMap) {
 
 
 
+void processSetCredentialResponse(Map descMap) {
+    if (!(descMap.value instanceof Map)) {
+        logWarn "processSetCredentialResponse: malformed response value=${descMap.value}; waiting for LockUserChange or timeout"
+        return
+    }
+    Map values = descMap.value as Map
+    Object statusRaw = values.containsKey(0) ? values[0] : values['0']
+    Object userIndexRaw = values.containsKey(1) ? values[1] : values['1']
+    Object nextCredentialIndexRaw = values.containsKey(2) ? values[2] : values['2']
+
+    Integer credentialStatus = safeNumberToInt(statusRaw, null)
+    Integer userIndex = safeNumberToInt(userIndexRaw, null)
+    Integer nextCredentialIndex = safeNumberToInt(nextCredentialIndexRaw, null)
+    if (credentialStatus == null) {
+        logWarn "processSetCredentialResponse: missing or invalid DlStatus in value=${descMap.value}; waiting for LockUserChange or timeout"
+        return
+    }
+
+    handleDecodedSetCredentialResponse(credentialStatus, userIndex, nextCredentialIndex)
+}
+
+private void handleDecodedSetCredentialResponse(Integer credentialStatus, Integer userIndex, Integer nextCredentialIndex) {
+    String statusName = DoorLockClusterDlStatus[credentialStatus] ?: 'Unknown'
+    String statusHex = String.format('0x%02X', credentialStatus)
+    logDebug "processSetCredentialResponse: status=${statusName} (${statusHex}) userIndex=${userIndex} nextCredentialIndex=${nextCredentialIndex}"
+
+    Map pendingInvoke = state.pendingSetCredentialInvoke instanceof Map ? state.pendingSetCredentialInvoke as Map : null
+    if (pendingInvoke == null) {
+        Map recent = getRecentSetCredentialConfirmation()
+        if (credentialStatus == 0 && recent != null) {
+            logDebug "processSetCredentialResponse: setCode slot ${recent.credentialKey} was already confirmed by ${recent.source}; duplicate success ignored"
+        } else {
+            logWarn "processSetCredentialResponse: ${statusName} (${statusHex}) response has no pending SetCredential request; state not changed"
+        }
+        return
+    }
+
+    String credentialKey = pendingInvoke.credentialKey != null ? "${pendingInvoke.credentialKey}" : null
+    Boolean fromSetCode = pendingInvoke.fromSetCode == true
+    if (credentialStatus == 0) {
+        if (!fromSetCode) {
+            state.remove('pendingSetCredentialInvoke')
+            logDebug 'processSetCredentialResponse: direct SetCredential command succeeded; lockCodes not changed'
+            return
+        }
+        String descriptionText = "${device.displayName} setCode position ${credentialKey} confirmed by SetCredentialResponse"
+        if (userIndex != null) { descriptionText += " for User ${userIndex}" }
+        if (!completePendingSetCode(credentialKey, userIndex, descriptionText, 'SetCredentialResponse')) {
+            logWarn "processSetCredentialResponse: Success received but pending setCode data for slot ${credentialKey} is unavailable; lockCodes not changed"
+        }
+        return
+    }
+
+    String failureReason = setCredentialFailureReason(credentialStatus)
+    String nextText = nextCredentialIndex != null ? "; next available credential slot reported by the lock is ${nextCredentialIndex}" : ''
+    if (!fromSetCode) {
+        state.remove('pendingSetCredentialInvoke')
+        logWarn "SetCredential failed: ${statusName} (${statusHex}) - ${failureReason}${nextText}"
+        return
+    }
+
+    clearSetCodeOperationState(credentialKey, true)
+    String descriptionText = "${device.displayName} setCode position ${credentialKey} failed: ${statusName} (${statusHex}) - ${failureReason}${nextText}"
+    sendEvent(name: 'codeChanged', value: 'failed', descriptionText: descriptionText, isStateChange: true)
+    logWarn descriptionText
+}
+
+private String setCredentialFailureReason(Integer status) {
+    switch (status) {
+        case 0x01: return 'lock reported a general failure'
+        case 0x02: return 'credential data is already assigned to another slot'
+        case 0x03: return 'credential slot is occupied'
+        case 0x85: return 'lock rejected an invalid command field'
+        case 0x89: return 'lock credential or user resources are exhausted'
+        case 0x8B: return 'referenced credential or user was not found'
+        default:   return "lock returned unknown DlStatus ${status}"
+    }
+}
+
+private Boolean completePendingSetCode(String credentialKey, Integer userIndex, String descriptionText, String source) {
+    ensureLockCodeStateMaps()
+    if (credentialKey == null) { return false }
+    Map entry = state.pendingSetByCredential?.get(credentialKey) instanceof Map ? state.pendingSetByCredential.get(credentialKey) as Map : null
+    if (entry == null) { return false }
+
+    String storedPin = entry.pinCode != null ? "${entry.pinCode}" : ''
+    String storedName = entry.name ?: (getLockCodes()[credentialKey]?.name ?: "Code ${credentialKey}")
+    Map lockcodes = getLockCodes()
+    Boolean newCode = !lockcodes.containsKey(credentialKey)
+    lockcodes[credentialKey] = [code: storedPin, name: storedName]
+    updateLockCodes(lockcodes)
+
+    Map metaPatch = [credentialIndex: safeToInt(credentialKey), lastSetConfirmationSource: source]
+    if (userIndex != null) { metaPatch.userIndex = userIndex }
+    upsertCredentialMeta(credentialKey, metaPatch)
+
+    String codeChangedValue = newCode ? 'added' : 'changed'
+    Map codeData = [(credentialKey): [code: storedPin, name: storedName]]
+    def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
+    logLockCodeEventPayload('codeChanged', codeChangedValue, codeData)
+    sendEvent(name: 'codeChanged', value: codeChangedValue, data: eventData, descriptionText: descriptionText, isStateChange: true)
+
+    state.recentSetCredentialConfirmation = [credentialKey: credentialKey, userIndex: userIndex, confirmedAt: now(), source: source]
+    clearSetCodeOperationState(credentialKey, true)
+    logDebug "completePendingSetCode: slot=${credentialKey}, result=${codeChangedValue}, source=${source}, lockCodes updated"
+    return true
+}
+
+private void clearSetCodeOperationState(String credentialKey, Boolean clearPendingEntry) {
+    state.isSettingCode = false
+    state.isOverwritingCode = false
+    unschedule('clearSettingCodeFlagOnTimeout')
+    unschedule('proceedWithOverwriteAdd')
+    if (clearPendingEntry && credentialKey != null) {
+        state.pendingSetByCredential?.remove(credentialKey)
+    }
+    state.remove('pendingSetCredentialInvoke')
+    state.remove('overwriteSlot')
+}
+
+private Map getRecentSetCredentialConfirmation() {
+    Map recent = state.recentSetCredentialConfirmation instanceof Map ? state.recentSetCredentialConfirmation as Map : null
+    if (recent == null) { return null }
+    Long confirmedAt = recent.confirmedAt != null ? (recent.confirmedAt as Long) : 0L
+    if (confirmedAt <= 0L || (now() - confirmedAt) > SET_CREDENTIAL_CONFIRMATION_DEDUP_MS) {
+        state.remove('recentSetCredentialConfirmation')
+        return null
+    }
+    return recent
+}
+
+private Boolean isRecentSetCredentialEvent(String credentialKey, Integer userIndex, Integer dataOperationType) {
+    if (!(dataOperationType in [0, 2])) { return false }
+    Map recent = getRecentSetCredentialConfirmation()
+    if (recent == null) { return false }
+
+    Boolean credentialMatches = credentialKey != null && "${recent.credentialKey}" == credentialKey
+    Boolean userMatches = userIndex != null && recent.userIndex != null && safeToInt(recent.userIndex) == userIndex
+    return credentialMatches || userMatches
+}
+
+private Map getRecentClearCredentialConfirmation() {
+    Map recent = state.recentClearCredentialConfirmation instanceof Map ? state.recentClearCredentialConfirmation as Map : null
+    if (recent == null) { return null }
+    Long confirmedAt = recent.confirmedAt != null ? (recent.confirmedAt as Long) : 0L
+    if (confirmedAt <= 0L || (now() - confirmedAt) > CLEAR_CREDENTIAL_CONFIRMATION_DEDUP_MS) {
+        state.remove('recentClearCredentialConfirmation')
+        return null
+    }
+    return recent
+}
+
+private Boolean isRecentClearCredentialEvent(String credentialKey, Integer userIndex, Integer dataIndex, Integer dataOperationType) {
+    if (dataOperationType != 1) { return false }
+    Map recent = getRecentClearCredentialConfirmation()
+    if (recent == null) { return false }
+
+    Boolean credentialMatches = credentialKey != null && recent.credentialKey != null && "${recent.credentialKey}" == credentialKey
+    Integer recentUserIndex = safeToInt(recent.userIndex, null)
+    Boolean userMatches = recentUserIndex != null && (userIndex == recentUserIndex || dataIndex == recentUserIndex)
+    return credentialMatches || userMatches
+}
+
 void processGetCredentialStatusResponse(Map descMap) {
-    logDebug "processGetCredentialStatusResponse: descMap=${descMap}"
-    
-    // Response fields: credentialExists, userIndex, creatorFabricIndex, lastModifiedFabricIndex, nextCredentialIndex
-    // For now, just log the raw response to see the format
-    logInfo "GetCredentialStatus Response: ${descMap}"
-    
-    // TODO: Parse TLV response structure once we see the actual format
-    // Expected structure: {credentialExists: bool, userIndex: uint16, ...}
+    Map pending = state.pendingGetCredentialStatus instanceof Map ? new HashMap(state.pendingGetCredentialStatus as Map) : null
+    unschedule('matterGetCredentialStatusTimeout')
+    state.remove('pendingGetCredentialStatus')
+
+    Object decodedValue = unwrapMatterValue(descMap.value)
+    if (!(decodedValue instanceof Map)) {
+        if (state.credentialScan?.active == true) {
+            finishMatterCredentialScan('malformed GetCredentialStatusResponse payload', false)
+        } else {
+            logWarn 'processGetCredentialStatusResponse: malformed response (payload redacted)'
+        }
+        return
+    }
+
+    Map values = decodedValue as Map
+    Boolean credentialExists = responseBool(responseField(values, 0, 'credentialExists'))
+    Integer userIndex = responseInt(responseField(values, 1, 'userIndex'))
+    Integer creatorFabricIndex = responseInt(responseField(values, 2, 'creatorFabricIndex'))
+    Integer lastModifiedFabricIndex = responseInt(responseField(values, 3, 'lastModifiedFabricIndex'))
+    Integer nextCredentialIndex = responseInt(responseField(values, 4, 'nextCredentialIndex'))
+    Object credentialDataRaw = responseField(values, 5, 'credentialData')
+    Boolean credentialDataPresent = !isMatterNull(unwrapMatterValue(credentialDataRaw))
+    Integer credentialDataLength = credentialDataPresent ? responseOctetLength(credentialDataRaw) : null
+
+    if (credentialExists == null) {
+        if (state.credentialScan?.active == true) {
+            finishMatterCredentialScan('GetCredentialStatusResponse missing CredentialExists', false)
+        } else {
+            logWarn 'processGetCredentialStatusResponse: missing or invalid CredentialExists (payload redacted)'
+        }
+        return
+    }
+
+    Integer credentialType = responseInt(pending?.credentialType)
+    Integer credentialIndex = responseInt(pending?.credentialIndex)
+    String credentialTypeName = pending?.credentialTypeName ?: (credentialType != null ? (CredentialTypeEnum[credentialType] ?: "Unknown (${credentialType})") : 'unknown credential')
+    Map credentialMeta = [
+        credentialType: credentialType,
+        credentialTypeName: credentialTypeName,
+        credentialIndex: credentialIndex,
+        credentialExists: credentialExists,
+        userIndex: userIndex,
+        creatorFabricIndex: creatorFabricIndex,
+        lastModifiedFabricIndex: lastModifiedFabricIndex,
+        nextCredentialIndex: nextCredentialIndex,
+        credentialDataPresent: credentialDataPresent,
+        credentialDataLength: credentialDataLength,
+        updatedAt: now()
+    ]
+    state.lastCredentialStatusResponse = credentialMeta
+
+    if (credentialType != null && credentialIndex != null) {
+        String metadataKey = "${credentialType}:${credentialIndex}"
+        Map credentialMetadata = state.credentialMetaByTypeAndIndex instanceof Map
+            ? new HashMap(state.credentialMetaByTypeAndIndex as Map)
+            : [:]
+        Map previous = credentialMetadata[metadataKey] instanceof Map ? credentialMetadata[metadataKey] as Map : [:]
+        credentialMetadata[metadataKey] = [:] + previous + credentialMeta
+        state.credentialMetaByTypeAndIndex = credentialMetadata
+
+        if (credentialType == 1) {
+            upsertCredentialMeta("${credentialIndex}", [
+                credentialType: credentialType,
+                credentialExists: credentialExists,
+                userIndex: userIndex,
+                creatorFabricIndex: creatorFabricIndex,
+                lastModifiedFabricIndex: lastModifiedFabricIndex,
+                updatedAt: now()
+            ])
+        }
+    } else {
+        logWarn 'processGetCredentialStatusResponse: response has no matching pending request; stored only as lastCredentialStatusResponse'
+    }
+
+    String credentialLabel = credentialIndex != null ? "${credentialTypeName} #${credentialIndex}" : credentialTypeName
+    String dataSummary = credentialDataPresent ? "redacted (${credentialDataLength != null ? credentialDataLength : 'unknown'} bytes)" : 'not returned'
+    logInfo "GetCredentialStatus Response: ${credentialLabel}, exists=${credentialExists}, userIndex=${userIndex ?: 'not reported'}, creatorFabric=${creatorFabricIndex ?: 'not reported'}, modifiedFabric=${lastModifiedFabricIndex ?: 'not reported'}, nextCredentialIndex=${nextCredentialIndex ?: 'none'}, credentialData=${dataSummary}"
+    handleMatterCredentialScanResponse(credentialMeta)
+}
+
+private Object redactGetCredentialStatusValue(Object rawValue) {
+    return '[redacted GetCredentialStatusResponse]'
+}
+private Boolean responseBool(Object rawValue) {
+    Object value = unwrapMatterValue(rawValue)
+    if (isMatterNull(value)) return null
+    if (value instanceof Boolean) return value as Boolean
+    if (value instanceof Number) return (value as Number).intValue() != 0
+    String normalized = "${value}".trim().toLowerCase()
+    if (normalized in ['true', '1']) return true
+    if (normalized in ['false', '0']) return false
+    return null
+}
+
+private Integer responseOctetLength(Object rawValue) {
+    Object value = unwrapMatterValue(rawValue)
+    if (isMatterNull(value)) return null
+    if (value instanceof byte[]) return (value as byte[]).length
+    if (value instanceof Collection) return (value as Collection).size()
+    String stringValue = "${value}"
+    String hexValue = stringValue.startsWith('0x') ? stringValue.substring(2) : stringValue
+    if (hexValue ==~ /(?i)[0-9a-f]+/ && (hexValue.length() % 2) == 0) return hexValue.length() / 2
+    return stringValue.getBytes('UTF-8').length
 }
 
 void processGetUserResponse(Map descMap) {
-    logDebug "processGetUserResponse: descMap=${descMap}"
-    
-    // Response fields: userIndex, userName, userUniqueID, userStatus, userType, credentialRule, credentials, creatorFabricIndex, lastModifiedFabricIndex
-    // For now, just log the raw response to see the format
-    logInfo "GetUser Response: ${descMap}"
-    
-    // TODO: Parse TLV response structure once we see the actual format
-    // Expected structure: {userIndex: uint16, userName: string, userStatus: enum8, userType: enum8, ...}
+    if (!(descMap.value instanceof Map)) {
+        logWarn "processGetUserResponse: malformed response value=${descMap.value}"
+        return
+    }
+
+    Map values = descMap.value as Map
+    Integer userIndex = responseInt(responseField(values, 0, 'userIndex'))
+    if (userIndex == null || userIndex < 1 || userIndex > 65534) {
+        logWarn "processGetUserResponse: missing or invalid UserIndex in value=${descMap.value}"
+        return
+    }
+
+    String userName = responseString(responseField(values, 1, 'userName'))
+    Long userUniqueID = responseLong(responseField(values, 2, 'userUniqueID'))
+    Integer userStatus = responseInt(responseField(values, 3, 'userStatus'))
+    Integer userType = responseInt(responseField(values, 4, 'userType'))
+    Integer credentialRule = responseInt(responseField(values, 5, 'credentialRule'))
+    List<Map> credentials = decodeGetUserCredentials(responseField(values, 6, 'credentials'))
+    Integer creatorFabricIndex = responseInt(responseField(values, 7, 'creatorFabricIndex'))
+    Integer lastModifiedFabricIndex = responseInt(responseField(values, 8, 'lastModifiedFabricIndex'))
+    Integer nextUserIndex = responseInt(responseField(values, 9, 'nextUserIndex'))
+
+    Map userMeta = [
+        userIndex: userIndex,
+        userName: userName,
+        userUniqueID: userUniqueID,
+        userStatus: userStatus,
+        userStatusName: DoorLockClusterUserStatus[userStatus] ?: (userStatus != null ? "Unknown (${userStatus})" : null),
+        userType: userType,
+        userTypeName: DoorLockClusterUserType[userType] ?: (userType != null ? "Unknown (${userType})" : null),
+        credentialRule: credentialRule,
+        credentialRuleName: DoorLockClusterCredentialRule[credentialRule] ?: (credentialRule != null ? "Unknown (${credentialRule})" : null),
+        credentials: credentials,
+        creatorFabricIndex: creatorFabricIndex,
+        lastModifiedFabricIndex: lastModifiedFabricIndex,
+        nextUserIndex: nextUserIndex,
+        updatedAt: now()
+    ]
+
+    Map userMetaByIndex = state.userMetaByIndex instanceof Map ? new HashMap(state.userMetaByIndex as Map) : [:]
+    userMetaByIndex["${userIndex}"] = userMeta
+    state.userMetaByIndex = userMetaByIndex
+    syncGetUserCredentialMetadata(userMeta)
+
+    String statusText = userMeta.userStatusName ?: 'null'
+    String typeText = userMeta.userTypeName ?: 'null'
+    String ruleText = userMeta.credentialRuleName ?: 'null'
+    String credentialText = credentials.isEmpty()
+        ? 'none'
+        : credentials.collect { Map credential -> "${credential.credentialTypeName}#${credential.credentialIndex}" }.join(', ')
+    logInfo "GetUser Response: userIndex=${userIndex}, userName=${userName ?: 'null'}, status=${statusText}, type=${typeText}, rule=${ruleText}, credentials=${credentialText}, nextUserIndex=${nextUserIndex}"
+    handleMatterUserScanResponse(userMeta)
+}
+
+private Object responseField(Map values, Integer fieldId, String fieldName = null) {
+    if (values == null) return null
+    if (values.containsKey(fieldId)) return values[fieldId]
+    String stringKey = "${fieldId}"
+    if (values.containsKey(stringKey)) return values[stringKey]
+    if (fieldName != null && values.containsKey(fieldName)) return values[fieldName]
+    if (fieldName != null) {
+        Object namedKey = values.keySet().find { Object key -> "${key}".equalsIgnoreCase(fieldName) }
+        if (namedKey != null) return values[namedKey]
+    }
+    return null
+}
+
+private Boolean isMatterNull(Object value) {
+    return value == null || "${value}".trim().equalsIgnoreCase('null')
+}
+
+private Integer responseInt(Object rawValue) {
+    Object value = unwrapMatterValue(rawValue)
+    return isMatterNull(value) ? null : safeNumberToInt(value, null)
+}
+
+private Long responseLong(Object rawValue) {
+    Object value = unwrapMatterValue(rawValue)
+    if (isMatterNull(value)) return null
+    try {
+        String stringValue = "${value}"
+        return stringValue.startsWith('0x')
+            ? Long.parseLong(stringValue.substring(2), 16)
+            : Long.parseLong(stringValue)
+    }
+    catch (NumberFormatException ignored) {
+        return null
+    }
+}
+
+private String responseString(Object rawValue) {
+    Object value = unwrapMatterValue(rawValue)
+    if (isMatterNull(value)) return null
+    return "${value}"
+}
+
+private Object unwrapMatterValue(Object value) {
+    Object current = value
+    List<String> wrapperNames = ['UINT', 'INT', 'ENUM', 'BOOL', 'STRING', 'UTF8', 'OCTET_STRING', 'OCTETSTRING', 'BYTE_STRING', 'BYTES', 'STRUCT', 'ARRAY', 'LIST']
+    while (current instanceof Map && (current as Map).size() == 1) {
+        Map wrapper = current as Map
+        Object wrapperKey = wrapper.keySet().first()
+        if (!wrapperNames.contains("${wrapperKey}".toUpperCase())) break
+        current = wrapper[wrapperKey]
+    }
+    return current
+}
+
+private List<Map> decodeGetUserCredentials(Object rawCredentials) {
+    List<Map> credentials = []
+    appendGetUserCredentials(rawCredentials, credentials)
+    return credentials
+}
+
+private void appendGetUserCredentials(Object rawValue, List<Map> credentials) {
+    Object value = unwrapMatterValue(rawValue)
+    if (isMatterNull(value)) return
+
+    if (value instanceof Collection) {
+        (value as Collection).each { Object item -> appendGetUserCredentials(item, credentials) }
+        return
+    }
+    if (!(value instanceof Map)) {
+        logWarn "processGetUserResponse: ignored malformed credential entry ${value}"
+        return
+    }
+
+    Map credentialMap = value as Map
+    Integer credentialType = responseInt(responseField(credentialMap, 0, 'credentialType'))
+    Integer credentialIndex = responseInt(responseField(credentialMap, 1, 'credentialIndex'))
+    if (credentialType != null && credentialIndex != null) {
+        credentials.add([
+            credentialType: credentialType,
+            credentialTypeName: CredentialTypeEnum[credentialType] ?: "Unknown (${credentialType})",
+            credentialIndex: credentialIndex
+        ])
+        return
+    }
+
+    // Hubitat may expose an ARRAY as a map of element indexes containing STRUCT wrappers.
+    credentialMap.values().each { Object item -> appendGetUserCredentials(item, credentials) }
+}
+
+private void syncGetUserCredentialMetadata(Map userMeta) {
+    Map credentialMetadata = state.credentialMetaByTypeAndIndex instanceof Map
+        ? new HashMap(state.credentialMetaByTypeAndIndex as Map)
+        : [:]
+    ensureLockCodeStateMaps()
+
+    Integer userIndex = responseInt(userMeta.userIndex)
+    String userName = userMeta.userName != null ? "${userMeta.userName}" : null
+    List<Map> credentials = userMeta.credentials instanceof List ? userMeta.credentials as List<Map> : []
+    Map lockCodes = new HashMap(getLockCodes())
+    Boolean lockCodesChanged = false
+
+    credentials.each { Map credential ->
+        Integer credentialType = responseInt(credential.credentialType)
+        Integer credentialIndex = responseInt(credential.credentialIndex)
+        if (credentialType == null || credentialIndex == null) return
+
+        String metadataKey = "${credentialType}:${credentialIndex}"
+        Map currentMetadata = credentialMetadata[metadataKey] instanceof Map
+            ? credentialMetadata[metadataKey] as Map
+            : [:]
+        credentialMetadata[metadataKey] = [:] + currentMetadata + [
+            credentialType: credentialType,
+            credentialTypeName: CredentialTypeEnum[credentialType] ?: "Unknown (${credentialType})",
+            credentialIndex: credentialIndex,
+            userIndex: userIndex,
+            userName: userName,
+            updatedAt: now()
+        ]
+
+        // Hubitat lockCodes slots correspond to PIN credential indexes. Preserve the stored PIN;
+        // GetUserResponse contains only CredentialStruct references and cannot retrieve PIN data.
+        if (credentialType == 1) {
+            String credentialKey = "${credentialIndex}"
+            upsertCredentialMeta(credentialKey, [credentialType: credentialType, userIndex: userIndex, userName: userName])
+            if (userName && lockCodes.containsKey(credentialKey)) {
+                Map currentCode = lockCodes[credentialKey] instanceof Map ? lockCodes[credentialKey] as Map : [:]
+                if (currentCode.name != userName) {
+                    lockCodes[credentialKey] = [:] + currentCode + [name: userName]
+                    lockCodesChanged = true
+                }
+            }
+        }
+    }
+
+    state.credentialMetaByTypeAndIndex = credentialMetadata
+    if (lockCodesChanged) { updateLockCodes(lockCodes) }
 }
 
 // 5.2.11. Events 
@@ -1619,7 +2715,8 @@ void processLockOperationErrorEvent(Map eventMap) {
 //   deleteCode(pos)→ ONE event:  UserIndex Clear (DataIndex=userSlot; codePosition NOT in event)
 //
 // codeChanged deduplication strategy:
-//   - isSettingCode==true   : setCode() already sent codeChanged optimistically → confirm only, no re-fire
+//   - recent command confirmation: response/event counterpart updates metadata but does not re-fire codeChanged
+//   - isSettingCode==true   : LockUserChange arrived first or Invoke callbacks are unavailable → complete setCode
 //   - isDeletingCode==true  : deleteCode waiting for confirmation → fire 'deleted' + sync lockCodes
 //   - isPinEvent (type==PIN): external credential change → fire codeChanged
 //   - UserIndex Add/Modify  : follow-up from our setCode or unhandled → suppress codeChanged
@@ -1643,12 +2740,19 @@ void processLockUserChangeEvent(Map description) {
 
     // Recover Hubitat credential slot where possible.
     boolean isPinEvent = (lockDataType == 0x06)
+    Map recentClearConfirmation = getRecentClearCredentialConfirmation()
     String credentialKey = null
     if (isPinEvent && dataIndex != null) {
         credentialKey = "${dataIndex}"   // PIN events carry credential index in DataIndex
     } else if (state.isDeletingCode && state.lastDeleteCode?.codePosition != null) {
         credentialKey = "${state.lastDeleteCode.codePosition}" // command correlation for deleteCode()
-    } else if (dataOpType == 1 && userIndex != null) {
+    } else if (dataOpType == 1 && recentClearConfirmation != null) {
+        Integer recentUserIndex = safeToInt(recentClearConfirmation.userIndex, null)
+        if (recentUserIndex != null && (userIndex == recentUserIndex || dataIndex == recentUserIndex)) {
+            credentialKey = recentClearConfirmation.credentialKey != null ? "${recentClearConfirmation.credentialKey}" : null
+        }
+    }
+    if (credentialKey == null && dataOpType == 1 && userIndex != null) {
         // External UserIndex Clear: try resolving slot from metadata learned from prior events.
         credentialKey = resolveCredentialKeyFromUserIndex(userIndex)
     }
@@ -1658,8 +2762,9 @@ void processLockUserChangeEvent(Map description) {
         credentialKey = state.pendingSetByCredential.keySet().first()
     }
     Integer codePosition = credentialKey != null ? safeToInt(credentialKey) : null
+    Boolean recentClearEvent = isRecentClearCredentialEvent(credentialKey, userIndex, dataIndex, dataOpType)
 
-    if (credentialKey != null) {
+    if (credentialKey != null && !recentClearEvent) {
         upsertCredentialMeta(credentialKey, [
             userIndex: userIndex,
             credentialIndex: codePosition,
@@ -1685,6 +2790,12 @@ void processLockUserChangeEvent(Map description) {
     sendEvent(name: 'lastUserChange', value: "${operation} ${dataType}", descriptionText: descriptionText, isStateChange: true)
 
     // --- codeChanged and lockCodes sync ---
+    if (recentClearEvent) {
+        String matchedCredentialKey = credentialKey ?: (recentClearConfirmation?.credentialKey != null ? "${recentClearConfirmation.credentialKey}" : 'unknown')
+        logDebug "processLockUserChangeEvent: deleteCode slot ${matchedCredentialKey} was already completed from ${recentClearConfirmation?.source}; duplicate codeChanged suppressed"
+        return
+    }
+
     // Overwrite mode: intercept the Clear confirmation and proceed with the Add step
     if (state.isOverwritingCode == true && dataOpType == 1) {
         state.isOverwritingCode = false
@@ -1698,46 +2809,26 @@ void processLockUserChangeEvent(Map description) {
             matterSetCredentialPIN(overwriteSlot as BigDecimal, pendingEntry.pinCode)
         } else {
             logWarn "setCode: overwrite clear received but no pending entry for slot ${overwriteSlot} — aborting"
-            state.isSettingCode = false
-            unschedule('clearSettingCodeFlagOnTimeout')
+            clearSetCodeOperationState(overwriteKey, true)
             sendEvent(name: 'codeChanged', value: 'failed', descriptionText: "${device.displayName} setCode overwrite failed: no pending data for slot ${overwriteSlot}", isStateChange: true)
         }
         return
     }
+    if (isRecentSetCredentialEvent(credentialKey, userIndex, dataOpType)) {
+        Map recentConfirmation = getRecentSetCredentialConfirmation()
+        String matchedCredentialKey = credentialKey ?: (recentConfirmation?.credentialKey != null ? "${recentConfirmation.credentialKey}" : 'unknown')
+        logDebug "processLockUserChangeEvent: setCode slot ${matchedCredentialKey} was already completed from SetCredentialResponse; duplicate codeChanged suppressed"
+        return
+    }
     if (state.isSettingCode == true) {
-        // Lock confirmed setCode — update lockCodes and fire codeChanged now
-        state.isSettingCode = false
-        unschedule('clearSettingCodeFlagOnTimeout')
-        Map entry = credentialKey != null ? (state.pendingSetByCredential?.get(credentialKey) ?: [:]) : [:]
-        String storedPin  = entry?.pinCode ?: ''
-        String storedName = entry?.name    ?: (credentialKey != null ? (getLockCodes()[credentialKey]?.name ?: "Code ${credentialKey}") : '')
-        Map lockcodes = getLockCodes()
-        boolean newCode = credentialKey != null ? !lockcodes.containsKey(credentialKey) : false
-        if (credentialKey != null) {
-            lockcodes[credentialKey] = [code: storedPin, name: storedName]
+        // Legacy fallback for Hubitat versions without Invoke callbacks, and for locks that emit the event first.
+        if (!completePendingSetCode(credentialKey, userIndex, descriptionText, 'LockUserChange')) {
+            logWarn "processLockUserChangeEvent: setCode confirmation received but pending data for slot ${credentialKey} is unavailable"
         }
-        updateLockCodes(lockcodes)
-        String codeChangedVal = newCode ? 'added' : 'changed'
-        Map codeData = credentialKey != null ? [(credentialKey): [code: storedPin, name: storedName]] : [:]
-        def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
-        logLockCodeEventPayload('codeChanged', codeChangedVal, codeData)
-        sendEvent(name: 'codeChanged', value: codeChangedVal, data: eventData, descriptionText: descriptionText, isStateChange: true)
-        if (credentialKey != null) { state.pendingSetByCredential?.remove(credentialKey) }
-        logDebug "processLockUserChangeEvent: setCode confirmed - credential=${credentialKey}, ${codeChangedVal}, lockCodes updated"
 
     } else if (state.isDeletingCode == true && dataOpType == 1) {
-        // deleteCode confirmation — fire codeChanged='deleted' and remove from lockCodes
-        state.isDeletingCode = false
-        unschedule('clearDeletingCodeFlagOnTimeout')
-        Map existingEntry = credentialKey != null ? (getLockCodes()[credentialKey] ?: [:]) : [:]
-        Map codeData = credentialKey != null ? [(credentialKey): existingEntry] : [:]
-        def eventData = settings?.optEncrypt ? encrypt(JsonOutput.toJson(codeData)) : codeData
-        logLockCodeEventPayload('codeChanged', 'deleted', codeData)
-        sendEvent(name: 'codeChanged', value: 'deleted', data: eventData, descriptionText: descriptionText, isStateChange: true)
-        if (codePosition != null) {
-            removeLockCode(codePosition)
-            removeCredentialMeta("${codePosition}")
-        }
+        // Legacy fallback when LockUserChange arrives before (or instead of) the Invoke callback.
+        completePendingDeleteCode('LockUserChange event', true, descriptionText)
 
     } else if (isPinEvent) {
         // External PIN credential change (not from our commands)
@@ -1745,6 +2836,17 @@ void processLockUserChangeEvent(Map description) {
         Map extPinData
         if (dataOpType == 1 && credentialKey != null) {
             extPinData = [(credentialKey): getLockCodes()[credentialKey] ?: [:]]
+        } else if (dataOpType == 0 && credentialKey != null) {
+            Map lockcodes = getLockCodes()
+            Map codeEntry = lockcodes[credentialKey]
+            if (codeEntry == null) {
+                String autoPin = String.valueOf(new Random().nextInt(900000) + 100000)
+                codeEntry = [code: autoPin, name: "Code ${credentialKey}"]
+                lockcodes[credentialKey] = codeEntry
+                updateLockCodes(lockcodes)
+                logInfo "processLockUserChangeEvent: external PIN Add at slot ${credentialKey} registered in lockCodes with a placeholder PIN"
+            }
+            extPinData = [(credentialKey): codeEntry]
         } else {
             extPinData = credentialKey != null ? [(credentialKey): [name: "Code ${credentialKey}"]] : [:]
         }
@@ -1754,6 +2856,8 @@ void processLockUserChangeEvent(Map description) {
         if (dataOpType == 1 && codePosition != null) {
             removeLockCode(codePosition)   // external PIN Clear — remove from lockCodes
             removeCredentialMeta("${codePosition}")
+        } else if (dataOpType == 0 && credentialKey != null) {
+            logDebug "processLockUserChangeEvent: external PIN Add at slot ${credentialKey} is now tracked in lockCodes"
         } else {
             logWarn "processLockUserChangeEvent: external credential change (pos=${codePosition}) — lockCodes attribute not automatically synced"
         }
@@ -1875,16 +2979,20 @@ private String resolveCredentialKeyFromUserIndex(Integer userIndex) {
 private void upsertCredentialMeta(String credentialKey, Map patch) {
     if (credentialKey == null) return
     ensureLockCodeStateMaps()
-    Map cur = state.codeMetaByCredential[credentialKey] instanceof Map ? state.codeMetaByCredential[credentialKey] : [:]
+    Map credentialMetadata = new HashMap(state.codeMetaByCredential as Map)
+    Map cur = credentialMetadata[credentialKey] instanceof Map ? credentialMetadata[credentialKey] as Map : [:]
     Map merged = [:] + cur + (patch ?: [:])
     merged.updatedAt = now()
-    state.codeMetaByCredential[credentialKey] = merged
+    credentialMetadata[credentialKey] = merged
+    state.codeMetaByCredential = credentialMetadata
 }
 
 private void removeCredentialMeta(String credentialKey) {
     if (credentialKey == null) return
     ensureLockCodeStateMaps()
-    state.codeMetaByCredential.remove(credentialKey)
+    Map credentialMetadata = new HashMap(state.codeMetaByCredential as Map)
+    credentialMetadata.remove(credentialKey)
+    state.codeMetaByCredential = credentialMetadata
 }
 
 private Map redactLockCodePayload(Map payload) {
@@ -2106,6 +3214,17 @@ void clearInfoMode() {
 
 
 
+// 5.2.10.37 SetCredentialResponse status field (DlStatus)
+@Field static final Map<Integer, String> DoorLockClusterDlStatus = [
+    0x00    : 'Success',
+    0x01    : 'Failure',
+    0x02    : 'Duplicate',
+    0x03    : 'Occupied',
+    0x85    : 'InvalidField',
+    0x89    : 'ResourceExhausted',
+    0x8B    : 'NotFound'
+]
+
 // 5.2.6.2. LockState Attribute (0x0000)
 @Field static final Map<Integer, String> DoorLockClusterLockState = [
     0x00    : 'NotFullyLocked',
@@ -2239,7 +3358,35 @@ Boolean Value Summary
     2: 'RFID',           // RFID identifier credential type (RID)
     3: 'Fingerprint',    // Fingerprint identifier credential type (FGP)
     4: 'FingerVein',     // Finger vein identifier credential type (FGP)
-    5: 'Face'            // Face identifier credential type (FACE)
+    5: 'Face',           // Face identifier credential type (FACE)
+    6: 'AliroCredentialIssuerKey',
+    7: 'AliroEvictableEndpointKey',
+    8: 'AliroNonEvictableEndpointKey'
+]
+
+@Field static final Map<Integer, String> DoorLockClusterUserStatus = [
+    0: 'Available',
+    1: 'OccupiedEnabled',
+    3: 'OccupiedDisabled'
+]
+
+@Field static final Map<Integer, String> DoorLockClusterUserType = [
+    0: 'UnrestrictedUser',
+    1: 'YearDayScheduleUser',
+    2: 'WeekDayScheduleUser',
+    3: 'ProgrammingUser',
+    4: 'NonAccessUser',
+    5: 'ForcedUser',
+    6: 'DisposableUser',
+    7: 'ExpiringUser',
+    8: 'ScheduleRestrictedUser',
+    9: 'RemoteOnlyUser'
+]
+
+@Field static final Map<Integer, String> DoorLockClusterCredentialRule = [
+    0: 'Single',
+    1: 'Dual',
+    2: 'Tri'
 ]
 
 @Field static final Map<Integer, String> DataOperationTypeEnum = [

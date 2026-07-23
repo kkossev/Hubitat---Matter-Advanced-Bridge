@@ -68,7 +68,7 @@
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
  * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
- * ver. 1.9.0  2026-07-07 kkossev   (def. branch)
+ * ver. 1.9.0  2026-07-22 kkossev   (dev. branch) callbackType:Invoke handling
  *
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
@@ -93,7 +93,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/07 11:07 PM' }
+static String timeStamp() { '2026/07/22 10:13 PM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -384,6 +384,7 @@ metadata {
 ]
 
 @Field static final Map<Integer, String> ParsedMatterClusters = [
+    0x0003 : 'parseIdentifyCluster',
     0x0006 : 'parseOnOffCluster',
     0x0008 : 'parseLevelControlCluster',
     0x001D : 'parseDescriptorCluster',
@@ -455,7 +456,7 @@ void parse(Map msg) {
         return
     }
     Map pacthedNewParseMap = [:]
-    logTrace "parse(Map) called with msg: ${msg}"
+    logTrace "parse(Map) called with msg: ${redactInvokeCallbackForLog(msg)}"
     pacthedNewParseMap = newParseCompatibilityPatch(msg)
     prepareForParse()
     processParsedDescription(pacthedNewParseMap, "new Parse/Map payload: ${pacthedNewParseMap}")
@@ -479,13 +480,13 @@ private void processParsedDescription(final Map descMap, final String descriptio
     checkStateMachineConfirmation(descMap)
 
     if (isDeviceDisabled(descMap)) {
-        if (traceEnable) { logWarn "parse: device is disabled: ${descMap}" }
+        if (traceEnable) { logWarn "parse: device is disabled: ${redactInvokeCallbackForLog(descMap)}" }
         return
     }
 
     if (!(((descMap.attrId in ['FFF8', 'FFF9', 'FFFA', 'FFFC', 'FFFD', '00FE']) && DO_NOT_TRACE_FFFX) || state['states']['isDiscovery'] == true)) {
         //logDebug "parse: descMap:${descMap}  description:${description}"
-        logDebug "parse: descMap:${descMap}"
+        logDebug "parse: descMap:${redactInvokeCallbackForLog(descMap)}"
     }
     // Additional debug for Matter events (especially Switch/buttons)
     if (descMap?.evtId != null && descMap?.cluster == '003B' && settings?.logEnable) {
@@ -501,13 +502,32 @@ private void processParsedDescription(final Map descMap, final String descriptio
         logDebug "parse: received WriteAttributes callback for endpoint:${descMap.endpoint} cluster:${descMap.cluster} attrId:${descMap.attrId} success:${descMap.sucess}"
         return
     }
-    
-    // Check for child devices ping responses before normal parsing
-    checkChildDevicePingResponse(descMap)
-    
-    parseGlobalElements(descMap)
 
-    gatherAttributesValuesInfo(descMap)
+    boolean isInvokeCallback = (descMap?.callbackType == 'Invoke')
+    if (isInvokeCallback) {
+        Map invokeLogMap = redactInvokeCallbackForLog(descMap)
+        Integer invokeStatus = safeNumberToInt(descMap.status, null)
+        String commandHex = (descMap.commandInt instanceof Number)
+            ? HexUtils.integerToHexString((descMap.commandInt as Number).intValue(), 2).toUpperCase()
+            : UNKNOWN
+        String invokeMessage = "parse: received Invoke callback for endpoint:${descMap.endpoint} cluster:${descMap.cluster} command:0x${commandHex} status:${descMap.status}" +
+            (invokeLogMap.value != null ? " value:${invokeLogMap.value}" : '')
+        if (invokeStatus == 0) {
+            logDebug invokeMessage
+        }
+        else {
+            logWarn invokeMessage
+        }
+    }
+
+    // Invoke callbacks are command responses, not attribute reports. They still continue to
+    // the registered cluster parser, but must bypass attribute-only processing.
+    if (!isInvokeCallback) {
+        // Check for child devices ping responses before normal parsing
+        checkChildDevicePingResponse(descMap)
+        parseGlobalElements(descMap)
+        gatherAttributesValuesInfo(descMap)
+    }
 
     Integer clusterInt = (descMap.clusterInt != null) ? safeToInt(descMap.clusterInt, null) : safeHexToInt(descMap.cluster, null)
     String parserFunc = (clusterInt != null) ? ParsedMatterClusters[clusterInt] : null
@@ -732,6 +752,14 @@ Map newParseCompatibilityPatch(final Map descMap) {
     }
     if (patchedMap.endpoint?.length() > 2) {
         patchedMap.endpoint = patchedMap.endpoint[-2..-1]
+    }
+
+    // callbackType:Invoke (available since Hubitat platform 2.5.1.132)
+    // Preserve status, commandInt, data and value exactly as supplied by Hubitat. Invoke
+    // callbacks do not have an attrId and response payload Maps may contain numeric keys/nulls.
+    if (descMap.callbackType == 'Invoke') {
+        logTrace "newParseCompatibilityPatch: <b>Invoke</b> descMap after endpoint/cluster normalization:${redactInvokeCallbackForLog(patchedMap)}"
+        return patchedMap
     }
 
     // callbackType:Event 
@@ -1099,6 +1127,65 @@ void gatherAttributesValuesInfo(final Map descMap) {
     }
 }
 
+/**
+ * Pass an Invoke callback unchanged to a custom Matter component driver.
+ *
+ * @return true when descMap is an Invoke callback and normal attribute/event parsing must stop.
+ */
+private boolean routeInvokeToCustomChild(final Map descMap) {
+    if (descMap?.callbackType != 'Invoke') { return false }
+
+    ChildDeviceWrapper dw = findChildByEndpoint(descMap.endpoint)
+    if (dw == null) {
+        logDebug "routeInvokeToCustomChild: no child device for endpoint:${descMap.endpoint}; callback handled by parent only"
+        return true
+    }
+
+    // Hubitat stock component drivers cannot be updated with our parse(Map) callback contract.
+    if (!(dw.typeName?.startsWith('Matter '))) {
+        logDebug "routeInvokeToCustomChild: '${dw.typeName}' is not a custom Matter component driver; callback handled by parent only"
+        return true
+    }
+
+    try {
+        logDebug "routeInvokeToCustomChild: passing unchanged Invoke callback to ${dw.displayName}: ${redactInvokeCallbackForLog(descMap)}"
+        dw.parse(descMap)
+    }
+    catch (MissingMethodException e) {
+        // Custom component drivers opt in one by one by adding parse(Map). Do not turn an
+        // unimplemented handler into a warning, but never hide MissingMethodException thrown
+        // from inside a handler that does exist.
+        if (e.method == 'parse') {
+            logDebug "routeInvokeToCustomChild: '${dw.typeName}' does not implement parse(Map) yet"
+        }
+        else {
+            throw e
+        }
+    }
+    return true
+}
+
+// GetCredentialStatusResponse may carry credential bytes. Preserve the original callback for
+// the child, but never include those bytes in parent debug/trace logs.
+private Map redactInvokeCallbackForLog(final Map descMap) {
+    if (descMap == null) { return [:] }
+    boolean isDoorLockCredentialStatus =
+        (descMap.cluster == '0101' || safeNumberToInt(descMap.clusterInt, null) == 0x0101) &&
+        safeNumberToInt(descMap.commandInt, null) == 0x25
+    if (!isDoorLockCredentialStatus) { return descMap }
+
+    Map redacted = new HashMap(descMap)
+    if (redacted.containsKey('data')) { redacted.data = '[redacted CredentialData]' }
+    if (redacted.containsKey('value')) { redacted.value = '[redacted CredentialData]' }
+    return redacted
+}
+
+void parseIdentifyCluster(final Map descMap) {
+    if (descMap.cluster != '0003') { logWarn "parseIdentifyCluster: unexpected cluster:${descMap.cluster}"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
+    logTrace "parseIdentifyCluster: ${getAttributeName(descMap)} = ${descMap.value}"
+}
+
 // TODO: refactor! 
 void parseGeneralDiagnostics(final Map descMap) {
     //logTrace "parseGeneralDiagnostics: descMap:${descMap}"
@@ -1286,6 +1373,7 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
 void parseOnOffCluster(final Map descMap) {
     logTrace "parseOnOffCluster: descMap:${descMap}"
     if (descMap.cluster != '0006') { logWarn "parseOnOffCluster: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return  }
+    if (routeInvokeToCustomChild(descMap)) { return }
     Integer value
 
     switch (descMap.attrId) {
@@ -1342,9 +1430,10 @@ Integer getLuxValue(rawValue) {
 
 void parseLevelControlCluster(final Map descMap) {
     // starting from MAB 1.8.0, we support only the new parsing format (newParse=true), which provides the attribute value as an integer.
+    if (descMap.cluster != '0008') { logWarn "parseLevelControlCluster: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
     Integer scaledValue = safeToInt(descMap.value)
     logTrace "parseLevelControlCluster: _scaledValue:${scaledValue} (descMap:${descMap})"
-    if (descMap.cluster != '0008') { logWarn "parseLevelControlCluster: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     Integer value
     switch (descMap.attrId) {
         case '0000' : // CurrentLevel
@@ -1655,6 +1744,7 @@ void parseHumidityMeasurement(final Map descMap) { // 0405
 
 void parseDoorLock(final Map descMap) { // 0101
     if (descMap.cluster != '0101') { logWarn "parseDoorLock: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
     /*
     if (descMap.attrId == '0000') { // LockState
         boolean isLocked = ((descMap.value?.toString()?.trim()?.toLowerCase()) in ['1', '01', 'true', 'on'])
@@ -1732,6 +1822,7 @@ void parseCarbonDioxideConcentrationMeasurement(final Map descMap) { // 040D
 
 void parseCameraAvStreamManagement(final Map descMap) { // 0551 - Camera AV Stream Management (Matter 1.3+)
     if (descMap.cluster != '0551') { logWarn "parseCameraAvStreamManagement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
     logDebug "parseCameraAvStreamManagement: routing cluster 0x0551 attr ${descMap.attrId} to child driver"
     sendHubitatEvent([
         name: 'handleInChildDriver',
@@ -1743,6 +1834,7 @@ void parseCameraAvStreamManagement(final Map descMap) { // 0551 - Camera AV Stre
 
 void parseWindowCovering(final Map descMap) { // 0102
     if (descMap.cluster != '0102') { logWarn "parseWindowCovering: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
     if (descMap.attrId == '000B') { // TargetPositionLiftPercent100ths
         Integer valueInt = (safeToInt(descMap.value) / 100) as int
         sendHubitatEvent([
@@ -1801,6 +1893,7 @@ private int miredIntToCt(final Integer miredInt) {
 
 void parseFanControl(final Map descMap) { // 0202
     if (descMap.cluster != '0202') { logWarn "parseFanControl: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
     ChildDeviceWrapper dw = getDw(descMap)
     Integer value = safeToInt(descMap.value)
     switch (descMap.attrId) {
@@ -1831,6 +1924,7 @@ void parseFanControl(final Map descMap) { // 0202
 
 void parseColorControl(final Map descMap) { // 0300
     if (descMap.cluster != '0300') { logWarn "parseColorControl: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
     ChildDeviceWrapper dw = getDw(descMap)
     Integer value = safeToInt(descMap.value)
     switch (descMap.attrId) {
@@ -2006,6 +2100,7 @@ Double convertTemperature(final Map descMap) {
 
 void parseThermostat(final Map descMap) {
     if (descMap.cluster != '0201') { logWarn "parseThermostat: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
     ChildDeviceWrapper dw = getDw(descMap)
     Double valueIntCorrected = 0.0
     String unit = getTemperatureUnit()

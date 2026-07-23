@@ -119,6 +119,18 @@
       "codeType": "driver",
       "id": 5195,
       "version": 9
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
+      "id": 2764,
+      "codeType": "driver",
+      "version": 1722
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Door_Lock",
+      "id": 3188,
+      "codeType": "driver",
+      "version": 465
     }
   ]
 }
