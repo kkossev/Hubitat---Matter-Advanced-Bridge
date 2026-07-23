@@ -22,16 +22,17 @@
  * ver. 1.2.0  2025-01-10 kkossev - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.2.1  2025-01-10 kkossev - bugfix: changed OPEN/CLOSED to Hubitat standard (100/0) for correct Dashboard display; invertPosition preference default to true
  * ver. 1.2.2  2025-01-29 kkossev - common libraries
- * ver. 1.2.3  2026-02-11 kkossev - (dev. branch) getInfo()
- * ver. 1.2.4  2026-02-19 kkossev - (dev. branch) moved common methods to matterCommonLib
+ * ver. 1.2.3  2026-02-11 kkossev - getInfo()
+ * ver. 1.2.4  2026-02-19 kkossev - moved common methods to matterCommonLib
+ * ver. 1.2.5  2026-07-23 kkossev - (dev. branch) bug fixes
  *
  *                                   TODO:
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '1.2.4'
-@Field static final String matterComponentWindowShadeStamp   = '2026/02/19 4:49 PM'
+@Field static final String matterComponentWindowShadeVersion = '1.2.5'
+@Field static final String matterComponentWindowShadeStamp   = '2026/07/23 4:49 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -67,7 +68,7 @@ metadata {
         attribute 'batQuantity', 'string'
 
         command   'initialize', [[name: 'initialize all attributes']]
-        command   'getInfo', [[name: 'Check the live logs and the device data for additional infoormation on this device']]
+        command   'getInfo', [[name: 'Check the live logs and the device data for additional information on this device']]
 
         if (_DEBUG) {
             command 'parseTest', [[name: 'parseTest', type: 'STRING', description: 'parseTest', defaultValue : '']]

@@ -18,7 +18,8 @@
   * ver. 1.0.2  2026-01-11 kkossev + Claude Sonnet 4.5 - added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
   * ver. 1.0.3  2026-01-25 kkossev + + GPT-5.2 : newParse=true fixes (evtId as Integer)
   * ver. 1.0.4  2026-01-29 kkossev  - common libraries
-  * ver. 1.1.0  2026-02-21 kkossev  - (dev. branch) - added getInfo() command; code refactoring
+  * ver. 1.1.0  2026-02-21 kkossev  - added getInfo() command; code refactoring
+  * ver. 1.1.1  2026-07-23 kkossev  - (dev. branch) - bug fixes
   *
   *                                 TODO: featureMap in deviceFingerprintData is in decimal, maybe should be stored in hex for better readability?
   *                                 TODO: add getFeatureMap(cluster) method in the commonLib
@@ -28,8 +29,8 @@
 import groovy.transform.Field
 import groovy.json.JsonSlurper
 
-@Field static final String matterComponentButtonVersion = '1.1.0'
-@Field static final String matterComponentButtonStamp   = '2026/02/21 11:05 PM'
+@Field static final String matterComponentButtonVersion = '1.1.1'
+@Field static final String matterComponentButtonStamp   = '2026/07/23 11:05 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -282,7 +283,7 @@ private void handleSwitchAttribute(Map descMap) {
             break
 
         case 0xFFFC: // FeatureMap
-            Integer featureMap = safeToInt(descMap.value)
+            Integer featureMap = safeHexToInt(descMap.value)
             String featuresText = decodeFeatureMap(featureMap)
             // FeatureMapRaw is stored in fingerprintData as '003B_FFFC'
             message = "${prefix}FeatureMap: ${featuresText} (0x${matter.integerTo8bitUnsignedHex(featureMap)})"
@@ -454,7 +455,7 @@ Integer getFeatureMap() {
         return 0
     }
     //Integer featureMap = matter.convertHexToInt(fingerprint['003B_FFFC'] ?: '00')
-    Integer featureMap = safeToInt(fingerprint['003B_FFFC'] ?: '1F')  // Workaround: If featureMap is missing, assume 0x1F (all common features) instead of 0x00
+    Integer featureMap = safeHexToInt(fingerprint['003B_FFFC'], 0x1F)  // Workaround: If featureMap is missing, assume 0x1F (all common features) instead of 0x00
     logDebug "getFeatureMap: ${featureMap} raw value=${fingerprint['003B_FFFC']}"
     return featureMap
 }

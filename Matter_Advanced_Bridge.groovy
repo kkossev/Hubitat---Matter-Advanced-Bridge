@@ -40,7 +40,7 @@
  * ver. 1.5.4  2026-01-08 kkossev + GPT-5.2 : added discoveryTimeoutScale; added 'Matter Generic Component Button' driver
  * ver. 1.5.5  2026-01-10 kkossev + Claude Sonnet 4.5 : Matter Locks are now working!; componentPing command added;
  * ver. 1.5.6  2026-01-11 kkossev + Claude Sonnet 4.5 : Fixed button events subscription issue; fixed to RGBW child devices detection; fixed deviceTypeList parsing issue; added 'generatePushedOn' preference for buttons that don't send multiPressComplete events
- * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : A major refactoring of the Door Lock driver; optimized subsciption management;
+ * ver. 1.6.0  2026-01-17 kkossev + Claude Sonnet 4.5 + GPT-5.2 : A major refactoring of the Door Lock driver; optimized subscription management;
  *                                  water leak sensors (deviceType 0x0043) automatic detection
  * ver. 1.7.0  2026-01-25 kkossev   DEVICE_TYPE = 'MATTER_BRIDGE' bug fix in initialize(); added ALPSTUGA Air Quality Monitor support - CarbonDioxideConcentrationMeasurement; improved BasicInformation (0x0028) decoding; 
  *                                  added ping() delta calculcation; added cleanSubscribe Min/MaxInterval preferences; added new parse(Map) toggle (experimental, WIP); added matterCommonLib.groovy library for common functions;
@@ -68,7 +68,7 @@
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
  * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
- * ver. 1.9.0  2026-07-22 kkossev   (dev. branch) callbackType:Invoke handling
+ * ver. 1.9.0  2026-07-23 kkossev   (dev. branch) callbackType:Invoke handling
  *
  *                                   TODO: add ping as a first step in the state machines before reading attributes
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
@@ -78,7 +78,7 @@
  *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events ? (may not ne needed anymore after callbackType:SubscribeResult processing is implemented)
  *                                   TODO: _discoverAll to call updated() or to start the periodic jobs
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
- *                                   TODO: thermostat component - supported modes JSON initialization duafter discovery
+ *                                   TODO: thermostat component - supported modes JSON initialization after discovery
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
@@ -93,7 +93,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/22 10:13 PM' }
+static String timeStamp() { '2026/07/23 2:08 PM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -455,11 +455,11 @@ void parse(Map msg) {
         logWarn 'parse(Map) received but newParse preference is disabled; enable the option to allow map parsing.'
         return
     }
-    Map pacthedNewParseMap = [:]
-    logTrace "parse(Map) called with msg: ${redactInvokeCallbackForLog(msg)}"
-    pacthedNewParseMap = newParseCompatibilityPatch(msg)
+    Map patchedNewParseMap = [:]
+    logTrace "parse(Map) called with msg: ${msg}"
+    patchedNewParseMap = newParseCompatibilityPatch(msg)
     prepareForParse()
-    processParsedDescription(pacthedNewParseMap, "new Parse/Map payload: ${pacthedNewParseMap}")
+    processParsedDescription(patchedNewParseMap, "new Parse/Map payload: ${patchedNewParseMap}")
 }
 
 private void prepareForParse() {
@@ -480,13 +480,13 @@ private void processParsedDescription(final Map descMap, final String descriptio
     checkStateMachineConfirmation(descMap)
 
     if (isDeviceDisabled(descMap)) {
-        if (traceEnable) { logWarn "parse: device is disabled: ${redactInvokeCallbackForLog(descMap)}" }
+        if (traceEnable) { logWarn "parse: device is disabled: ${descMap}" }
         return
     }
 
     if (!(((descMap.attrId in ['FFF8', 'FFF9', 'FFFA', 'FFFC', 'FFFD', '00FE']) && DO_NOT_TRACE_FFFX) || state['states']['isDiscovery'] == true)) {
         //logDebug "parse: descMap:${descMap}  description:${description}"
-        logDebug "parse: descMap:${redactInvokeCallbackForLog(descMap)}"
+        logDebug "parse: descMap:${descMap}"
     }
     // Additional debug for Matter events (especially Switch/buttons)
     if (descMap?.evtId != null && descMap?.cluster == '003B' && settings?.logEnable) {
@@ -495,6 +495,7 @@ private void processParsedDescription(final Map descMap, final String descriptio
     // 2026-02-11  [callbackType:SubscriptionResult, subscriptionId:3617819414] 
     if (descMap?.callbackType == 'SubscriptionResult') {
         logInfo "parse: received SubscriptionResult callback with subscriptionId:${descMap.subscriptionId}"
+        routeSubscriptionResultToDoorLockChildren(descMap)
         return
     }
     // 2026-02-11  [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
@@ -505,13 +506,8 @@ private void processParsedDescription(final Map descMap, final String descriptio
 
     boolean isInvokeCallback = (descMap?.callbackType == 'Invoke')
     if (isInvokeCallback) {
-        Map invokeLogMap = redactInvokeCallbackForLog(descMap)
         Integer invokeStatus = safeNumberToInt(descMap.status, null)
-        String commandHex = (descMap.commandInt instanceof Number)
-            ? HexUtils.integerToHexString((descMap.commandInt as Number).intValue(), 2).toUpperCase()
-            : UNKNOWN
-        String invokeMessage = "parse: received Invoke callback for endpoint:${descMap.endpoint} cluster:${descMap.cluster} command:0x${commandHex} status:${descMap.status}" +
-            (invokeLogMap.value != null ? " value:${invokeLogMap.value}" : '')
+        String invokeMessage = "parse: received Invoke callback: ${descMap}"
         if (invokeStatus == 0) {
             logDebug invokeMessage
         }
@@ -758,7 +754,7 @@ Map newParseCompatibilityPatch(final Map descMap) {
     // Preserve status, commandInt, data and value exactly as supplied by Hubitat. Invoke
     // callbacks do not have an attrId and response payload Maps may contain numeric keys/nulls.
     if (descMap.callbackType == 'Invoke') {
-        logTrace "newParseCompatibilityPatch: <b>Invoke</b> descMap after endpoint/cluster normalization:${redactInvokeCallbackForLog(patchedMap)}"
+        logTrace "newParseCompatibilityPatch: <b>Invoke</b> descMap after endpoint/cluster normalization:${patchedMap}"
         return patchedMap
     }
 
@@ -1148,7 +1144,7 @@ private boolean routeInvokeToCustomChild(final Map descMap) {
     }
 
     try {
-        logDebug "routeInvokeToCustomChild: passing unchanged Invoke callback to ${dw.displayName}: ${redactInvokeCallbackForLog(descMap)}"
+        logDebug "routeInvokeToCustomChild: passing unchanged Invoke callback to ${dw.displayName}: ${descMap}"
         dw.parse(descMap)
     }
     catch (MissingMethodException e) {
@@ -1165,19 +1161,29 @@ private boolean routeInvokeToCustomChild(final Map descMap) {
     return true
 }
 
-// GetCredentialStatusResponse may carry credential bytes. Preserve the original callback for
-// the child, but never include those bytes in parent debug/trace logs.
-private Map redactInvokeCallbackForLog(final Map descMap) {
-    if (descMap == null) { return [:] }
-    boolean isDoorLockCredentialStatus =
-        (descMap.cluster == '0101' || safeNumberToInt(descMap.clusterInt, null) == 0x0101) &&
-        safeNumberToInt(descMap.commandInt, null) == 0x25
-    if (!isDoorLockCredentialStatus) { return descMap }
+/**
+ * SubscriptionResult callbacks describe the node-level subscription and do not contain an
+ * endpoint. Forward them only to Door Lock component children so their transaction log records
+ * the successful subscription without changing normal endpoint routing.
+ */
+private void routeSubscriptionResultToDoorLockChildren(final Map descMap) {
+    if (descMap?.callbackType != 'SubscriptionResult') { return }
 
-    Map redacted = new HashMap(descMap)
-    if (redacted.containsKey('data')) { redacted.data = '[redacted CredentialData]' }
-    if (redacted.containsKey('value')) { redacted.value = '[redacted CredentialData]' }
-    return redacted
+    childDevices?.findAll { ChildDeviceWrapper dw ->
+        dw.typeName == 'Matter Generic Component Door Lock'
+    }?.each { ChildDeviceWrapper dw ->
+        try {
+            dw.parse(descMap)
+        }
+        catch (MissingMethodException e) {
+            if (e.method == 'parse') {
+                logDebug "routeSubscriptionResultToDoorLockChildren: '${dw.typeName}' does not implement parse(Map)"
+            }
+            else {
+                throw e
+            }
+        }
+    }
 }
 
 void parseIdentifyCluster(final Map descMap) {
@@ -2892,6 +2898,10 @@ void fingerprintsToSubscriptionsList() {
             boolean knownClusterFound = false
             List subscribeList = fingerprintMap['Subscribe'] as List
             logTrace "fingerprintsToSubscriptionsList: fingerprintName:${fingerprintName} subscribeList:${subscribeList}"
+            if (!subscribeList) {
+                logDebug "fingerprintsToSubscriptionsList: ${fingerprintName} has no supported clusters; skipping"
+                return  // continue with the next fingerprint
+            }
             // Subscribe=[6, 8, 768]
             subscribeList.each { cluster  ->
                 Integer clusterInt = safeToInt(cluster)
@@ -2909,6 +2919,10 @@ void fingerprintsToSubscriptionsList() {
                     // check whether the attribute_0xFFFB entry is in the fingerprintMap
                     String clusterListName = HexUtils.integerToHexString(clusterInt, 2) + '_FFFB'
                     List clusterAttrList = fingerprintMap[clusterListName]
+                    if (!clusterAttrList) {
+                        logDebug "fingerprintsToSubscriptionsList: ${fingerprintName} is missing ${clusterListName}; skipping"
+                        return  // continue with the next attribute
+                    }
                     // convert clusterAttrList from list of hex to list of integers
                     clusterAttrList = clusterAttrList.collect { safeHexToInt(it) }
                     logTrace "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} attribute:${attribute} clusterListName=${clusterListName} clusterAttrList=${clusterAttrList}"
@@ -4383,10 +4397,13 @@ def illumEvent( illum, descMap) {
     map.type = "digital"
     map.isStateChange = true
     map.descriptionText = "${map.name} is ${lux} ${map.unit}"
+    Integer reportingInterval = (minReportingTimeIllum ?: 10) as Integer
     Map lastRxMap = stringToJsonMap(state.lastRx2)
-    def timeElapsed = Math.round((now() - lastRxMap['illumTime'])/1000)
-    Integer timeRamaining = (minReportingTimeIllum - timeElapsed) as Integer
-    if (timeElapsed >= minReportingTimeIllum) {
+    Long illumTime = (lastRxMap['illumTime'] ?: (now() - reportingInterval * 1000L)) as Long
+    lastRxMap['illumTime'] = illumTime
+    def timeElapsed = Math.round((now() - illumTime) / 1000)
+    Integer timeRamaining = (reportingInterval - timeElapsed) as Integer
+    if (timeElapsed >= reportingInterval) {
        // if (settings?.txtEnable) {log.info "${device.displayName} ${map.descriptionText}"}
         unschedule("sendDelayedEventIllum")
         lastRxMap['illumTime'] = now()

@@ -27,7 +27,7 @@
   * ver. 1.4.1  2026-05-27 kkossev   fixed EZ dashboards unhappy face; added unlockWithTimeout command; added UnboltDoor command; 
   *                                  DuplicateDoorLockEventFilter; added the needed data: Map required by the LCM; added overwriteCodes option; getInfo improvements; 
   *                                  added operation source 'Aliro' (UWB/Apple Watch); added auto discovery for new lock codes reported by the lock;
-  * ver. 1.5.0  2026-07-22 kkossev  (dev.branch) callbackType:Invoke handling;
+  * ver. 1.5.0  2026-07-23 kkossev  (dev.branch) callbackType:Invoke handling;
   * 
   *                                  TODO: 
   *                                  TODO: 
@@ -50,7 +50,7 @@ import groovy.json.JsonOutput
 
 
 @Field static final String matterComponentLockVersion = '1.5.0'
-@Field static final String matterComponentLockStamp   = '2026/07/22 10:12 PM'
+@Field static final String matterComponentLockStamp   = '2026/07/23 7:35 PM'
 
 @Field static final Boolean _DEBUG_LOCK = true             // MAKE IT false for PRODUCTION !   
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true     // disable on production
@@ -62,6 +62,9 @@ import groovy.json.JsonOutput
 @Field static final Long CLEAR_CREDENTIAL_CONFIRMATION_DEDUP_MS = 30000L
 @Field static final Integer GET_USER_SCAN_TIMEOUT_SECONDS = 10
 @Field static final Integer GET_CREDENTIAL_STATUS_TIMEOUT_SECONDS = 10
+@Field static final Integer SET_USER_TIMEOUT_SECONDS = 10
+@Field static final Integer CLEAR_USER_TIMEOUT_SECONDS = 10
+@Field static final Long CLEAR_USER_CONFIRMATION_DEDUP_MS = 30000L
 
 metadata {
     definition(name: 'Matter Generic Component Door Lock', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Door_Lock') {
@@ -73,7 +76,7 @@ metadata {
         capability 'Refresh'
 
         command    'identify', [[name: 'Identify the lock device']]
-        command    'getInfo', [[name: 'Check the live logs and the device data for additional infoormation on this device']]
+        command    'getInfo', [[name: 'Check the live logs and the device data for additional information on this device']]
         command    'unlockWithTimeout', [[name: 'timeout*', type: 'NUMBER', description: 'Auto-relock timeout in seconds (1-65535)']]
         command    'unboltDoor', [[name: 'Unbolt door (latch retraction only, not available on all locks)']]
         command    'clearStatistics', [[name: 'Clear event statistics counters and duplicate-event cache']]
@@ -116,12 +119,11 @@ metadata {
               command 'matterScanCredentials', [[name:'credentialType*', type: 'NUMBER', description: 'Credential Type to scan (0-8)', defaultValue: '1']]
               command 'matterGetUser', [[name:'userIndex*', type: 'NUMBER', description: 'User Index (1-65534)', defaultValue: '1']]
               command 'matterScanUsers', [[name:'Scan occupied Matter users by following NextUserIndex']]
-              //command 'matterClearUser', [[name:'userIndex*', type: 'STRING', description: 'User Index (0-65534)', defaultValue: '1']]
-              /*
-              command 'matterSetUser', [[name: 'codePosition*', type: 'NUMBER', description: 'Code slot (1-based)'],
-                                           [name: 'pinCode*', type: 'STRING', description: 'PIN code (4-8 digits)'],
-                                           [name: 'name', type: 'STRING', description: "User name (optional)<br><br><b>See State Varables INFO whether your lock supports this function</b>"]]
-              */
+              command 'matterClearUser', [[name:'userIndex*', type:'NUMBER', description:'Existing User Index (1-65533); clear-all is intentionally not supported', defaultValue:'1']]
+              command 'matterSetUser', [[name:'userIndex*', type:'NUMBER', description:'User Index (1-65534)', defaultValue:'1'],
+                                        [name:'userName', type:'STRING', description:'Optional user name (maximum 10 UTF-8 bytes)']]
+              command 'matterModifyUser', [[name:'userIndex*', type:'NUMBER', description:'Existing User Index (1-65534)', defaultValue:'1'],
+                                           [name:'userName*', type:'STRING', description:'New user name (maximum 10 UTF-8 bytes)']]
             command 'testInvoke', [[name: 'testInvoke', type: 'STRING', description: 'test', defaultValue : '']]    // for debug purposes only
             command 'testUnlockWithCode', [[name: 'pinCode', type: 'STRING', description: 'Simulate physical unlock with this PIN code', defaultValue: '1234']]
         }
@@ -155,13 +157,19 @@ preferences {
 
 void parse(String description) { log.warn 'parse(String description) not implemented' }
 
-// Hubitat platform 2.5.1.132+ Invoke callback. The parent passes this Map unchanged.
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
 void parse(Map descMap) {
-    if (descMap?.callbackType != 'Invoke') {
-        logDebug "parse(Map): ignored non-Invoke callback: ${descMap}"
-        return
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleDoorLockInvokeResponse(descMap)
+            break
+        case 'SubscriptionResult':
+            logDebug "Matter transaction: received SubscriptionResult callback with subscriptionId:${descMap.subscriptionId}"
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
     }
-    handleDoorLockInvokeResponse(descMap)
 }
 
 // parse commands from parent
@@ -196,11 +204,7 @@ void handleDoorLockInvokeResponse(final Map descMap) {
     Integer commandInt = safeNumberToInt(descMap.commandInt, null)
     String commandName = (commandInt != null) ? (DoorLockClusterCommands[commandInt] ?: 'UNKNOWN') : 'UNKNOWN'
 
-    if (commandInt == 0x25 || "${descMap.cmdId}".equalsIgnoreCase('25')) {
-        logDebug "handleDoorLockInvokeResponse: command=${commandName} (${commandInt}) status=${invokeStatus} data=[redacted] value=${redactGetCredentialStatusValue(descMap.value)}"
-    } else {
-        logDebug "handleDoorLockInvokeResponse: command=${commandName} (${commandInt}) status=${invokeStatus} data=${descMap.data} value=${descMap.value}"
-    }
+    logDebug "handleDoorLockInvokeResponse: command=${commandName} (${commandInt}) status=${invokeStatus} data=${descMap.data} value=${descMap.value}"
 
     // The parent logs Interaction Model failures; the child also terminates matching local
     // pending operations immediately because no successful cluster response will follow.
@@ -210,8 +214,14 @@ void handleDoorLockInvokeResponse(final Map descMap) {
     }
 
     switch (commandInt) {
+        case 0x1A: // SetUser (status-only success)
+            processSetUserInvokeSuccess()
+            break
         case 0x1C: // GetUserResponse
             processGetUserResponse(descMap)
+            break
+        case 0x1D: // ClearUser (status-only success)
+            processClearUserInvokeSuccess()
             break
         case 0x23: // SetCredentialResponse
             processSetCredentialResponse(descMap)
@@ -242,10 +252,28 @@ private void handleDoorLockInvokeFailure(Integer commandInt, Integer invokeStatu
     String statusText = invokeStatus != null ? String.format('0x%02X', invokeStatus) : 'unknown'
 
     switch (commandInt) {
+        case 0x1A: // SetUser request
+            if (state.pendingSetUser instanceof Map) {
+                finishMatterSetUser(false, "SetUser invoke failed with status ${statusText}")
+            }
+            break
+
         case 0x1B: // GetUser request
         case 0x1C: // Defensive: some platforms may identify the expected response command
-            if (state.userScan?.active == true) {
+            if (state.pendingClearUser instanceof Map && state.pendingClearUser.stage in ['awaitingPreflight', 'awaitingGetUser']) {
+                String requestStage = state.pendingClearUser.stage == 'awaitingPreflight' ? 'preflight' : 'verification'
+                finishMatterClearUser(false, "GetUser ${requestStage} invoke failed with status ${statusText}")
+            } else if (state.pendingSetUser instanceof Map && state.pendingSetUser.stage in ['awaitingModifyPreflight', 'awaitingGetUser']) {
+                String requestStage = state.pendingSetUser.stage == 'awaitingModifyPreflight' ? 'preflight' : 'verification'
+                finishMatterSetUser(false, "GetUser ${requestStage} invoke failed with status ${statusText}")
+            } else if (state.userScan?.active == true) {
                 finishMatterUserScan("GetUser invoke failed with status ${statusText}", false)
+            }
+            break
+
+        case 0x1D: // ClearUser request
+            if (state.pendingClearUser instanceof Map) {
+                finishMatterClearUser(false, "ClearUser invoke failed with status ${statusText}")
             }
             break
 
@@ -314,11 +342,7 @@ void handleLockMessage(Map description) {
         logWarn "handleLockMessage: exception ${e} while parsing description.value = ${description.value}"
         return
     }
-    if (safeNumberToInt(descMap.commandInt, null) == 0x25 || "${descMap.cmdId}".equalsIgnoreCase('25')) {
-        logDebug "handleLockMessage: parsed GetCredentialStatusResponse data=[redacted] value=${redactGetCredentialStatusValue(descMap.value)}"
-    } else {
-        logDebug "handleLockMessage: parsed descMap = ${descMap}"
-    }
+    logDebug "handleLockMessage: parsed descMap = ${descMap}"
     if (descMap.cluster != '0101') { logWarn "handleLockMessage: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
 
     // Check if this is an event (has evtId) or an attribute (has attrId)
@@ -381,7 +405,7 @@ void processDoorLockAttributeReport(Map descMap) {
             useDebugLog = true
             break
         case '0001': // LockType
-            eventValue= DooorLockClusterLockType[safeHexToInt(descMap.value)]
+            eventValue = DoorLockClusterLockType[safeHexToInt(descMap.value)]
             message = "${prefix}lockType: ${eventValue} (raw:${descMap.value})"
             useDebugLog = true
             break
@@ -625,6 +649,14 @@ void processDoorLockAttributeReport(Map descMap) {
             break
     }
     
+    // Store raw integer for every attribute listed in LOCK_ATTR_STORE before
+    // info-mode buffering can return while waiting for the remaining reports.
+    // Language (0021) is handled explicitly above; all mapped values are numeric.
+    String lockAttrKey = LOCK_ATTR_STORE[descMap.attrId]
+    if (lockAttrKey != null) {
+        state.lockAttr[lockAttrKey] = safeHexToInt(descMap.value)
+    }
+
     // Conditional logging after the switch
     if (message != null) {
         if (isInfoMode) {
@@ -644,12 +676,6 @@ void processDoorLockAttributeReport(Map descMap) {
             }
         }
     }
-    // Store raw integer for every attribute listed in LOCK_ATTR_STORE.
-    // Language (0021) is handled explicitly above; all others are numeric.
-    String lockAttrKey = LOCK_ATTR_STORE[descMap.attrId]
-    if (lockAttrKey != null) {
-        state.lockAttr[lockAttrKey] = safeHexToInt(descMap.value)
-    }
 }
 
 
@@ -663,13 +689,17 @@ void processDoorLockAttributeReport(Map descMap) {
 
 // Hubitat wrap for setUser
 void setCode(codePosition, pinCode, name = null) {
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "setCode: ClearUser is active for user ${state.pendingClearUser.userIndex}; request ignored"
+        return
+    }
     if (!supportsLockCodes()) {
         logWarn "setCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
         return
     }
 
     if (state.isSettingCode == true) {
-        logDebug "setCode: Previous setCode operation is still in progress, coommand setCode(${codePosition}, ${pinCode}, ${name}) ignored."
+        logDebug "setCode: Previous setCode operation is still in progress, command setCode(${codePosition}, ${pinCode}, ${name}) ignored."
         return
     }
 
@@ -709,6 +739,10 @@ void setCode(codePosition, pinCode, name = null) {
  */
 void deleteCode(codePosition) {
     logInfo "deleteCode: codePosition=${codePosition}"
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "deleteCode: ClearUser is active for user ${state.pendingClearUser.userIndex}; request ignored"
+        return
+    }
     if (!supportsLockCodes()) {
         String msg = "${device.displayName} deleteCode: code position ${codePosition} failed - lock does not support PIN credential management"
         logInfo "deleteCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
@@ -938,6 +972,10 @@ void unboltDoor() {
 // WORKING !! :) 
 //
 void matterSetCredentialPIN(BigDecimal credentialIndexPar, String pinCode, BigDecimal userIndexPar = null) {
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "matterSetCredentialPIN: ClearUser is active for user ${state.pendingClearUser.userIndex}; request ignored"
+        return
+    }
     if (!supportsLockCodes()) {
         logWarn "matterSetCredentialPIN: This lock <b>does not</b> support PIN/User management (FeatureMap indicates no PIN/User support)"
         sendEvent(name: 'codeChanged', value: "failed", descriptionText: "Lock does not support PIN/User management", isStateChange: true)
@@ -1087,6 +1125,10 @@ void matterSetCredentialPIN(BigDecimal credentialIndexPar, String pinCode, BigDe
 // **** seems to work! :)
 //
 void matterClearCredential(BigDecimal credentialTypePar = null, BigDecimal credentialIndexPar = null) {
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "matterClearCredential: ClearUser is active for user ${state.pendingClearUser.userIndex}; request ignored"
+        return
+    }
     if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
         logWarn 'matterClearCredential: This lock does not support User management'
         return
@@ -1157,117 +1199,257 @@ void matterClearCredential(BigDecimal credentialTypePar = null, BigDecimal crede
     parent?.sendToDevice(cmd)
 }
 
-/*
-
-// NOT WORKING! :( )
 // 5.2.10.34. SetUser Command (0x1A)
-void matterSetUser(codePosition, pinCode, name = null) {
-    if (!supportsLockCodes()) {
-        logWarn "setCode: This lock <b>does not</b> support PIN credential management (FeatureMap indicates no PIN/User support)"
-        sendEvent(name: 'codeChanged', value: "failed", descriptionText: "Lock <b>does not</b> support PIN codes", isStateChange: true)
-        return
-    }
-    
-    if (!codePosition) {
-        logWarn 'matterSetUser: user index is required'
-        sendEvent(name: 'codeChanged', value: "failed", descriptionText: 'matterSetUser: missing user index', isStateChange: true)
+// Standalone diagnostic SetUser operations, verified with GetUser. They deliberately
+// do not participate in Hubitat setCode/SetCredential processing.
+void matterSetUser(BigDecimal userIndexPar, String userNamePar = null) {
+    matterSetUserOperation(userIndexPar, userNamePar, 0)
+}
+
+// Modify only the supplied user name. GetUser is used first so the full existing
+// record can be sent back; some locks (including the U200) mishandle null fields.
+void matterModifyUser(BigDecimal userIndexPar, String userNamePar) {
+    matterSetUserOperation(userIndexPar, userNamePar, 2)
+}
+
+private void matterSetUserOperation(BigDecimal userIndexPar, String userNamePar, Integer operationType) {
+    String commandName = operationType == 2 ? 'matterModifyUser' : 'matterSetUser'
+    String operationName = operationType == 2 ? 'Modify' : 'Add'
+    if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
+        logWarn "${commandName}: This lock does not support User management"
         return
     }
 
-    Integer userIndex
-    try {
-        userIndex = (codePosition as BigDecimal)?.intValue()
-    } catch (Exception ignored) {
-        userIndex = null
+    List<String> acceptedCommands = getDoorLockAcceptedCommandList()
+    if (settings?.ignoreCompatibilityChecks != true && !acceptedCommands.isEmpty() &&
+        (!acceptedCommands.contains('001A') || !acceptedCommands.contains('001B'))) {
+        List<String> missing = []
+        if (!acceptedCommands.contains('001A')) { missing.add('SetUser 0x1A') }
+        if (!acceptedCommands.contains('001B')) { missing.add('GetUser 0x1B') }
+        logWarn "${commandName}: required command(s) not present in AcceptedCommandList: ${missing.join(', ')}"
+        return
     }
-    if (userIndex == null || userIndex < 1 || userIndex > 255) {
-        logWarn "matterSetUser: user index must be 1-255, got '${codePosition}'"
-        sendEvent(name: 'codeChanged', value: "failed", descriptionText: "matterSetUser: invalid user index '${codePosition}'", isStateChange: true)
+
+    if (userIndexPar == null) {
+        logWarn "${commandName}: User index is required"
+        return
+    }
+    Integer userIndex = userIndexPar.intValue()
+    if (userIndexPar.compareTo(new BigDecimal(userIndex)) != 0) {
+        logWarn "${commandName}: User index must be a whole number, got '${userIndexPar}'"
+        return
+    }
+
+    Integer maxUserIndex = safeNumberToInt(state.lockAttr?.numberOfTotalUsers, 65534)
+    if (maxUserIndex == null || maxUserIndex < 1 || maxUserIndex > 65534) { maxUserIndex = 65534 }
+    if (userIndex < 1 || userIndex > maxUserIndex) {
+        logWarn "${commandName}: User index must be 1-${maxUserIndex}, got '${userIndexPar}'"
+        return
+    }
+
+    String userName = userNamePar != null && !userNamePar.trim().isEmpty() ? userNamePar : null
+    byte[] userNameBytes = userName != null ? userName.getBytes('UTF-8') : null
+    if (operationType == 2 && userNameBytes == null) {
+        logWarn "${commandName}: A non-blank user name is required for Modify"
+        return
+    }
+    if (userNameBytes != null && userNameBytes.length > 10) {
+        logWarn "${commandName}: User name must be at most 10 UTF-8 bytes, got ${userNameBytes.length}"
+        return
+    }
+
+    Map existingPending = state.pendingSetUser instanceof Map ? state.pendingSetUser as Map : null
+    if (existingPending != null) {
+        Long startedAt = existingPending.startedAt != null ? existingPending.startedAt as Long : 0L
+        if (startedAt > 0L && (now() - startedAt) <= (SET_USER_TIMEOUT_SECONDS * 2000L)) {
+            logWarn "${commandName}: another SetUser operation is active for user ${existingPending.userIndex}"
+            return
+        }
+        finishMatterSetUser(false, 'stale pending SetUser operation replaced')
+    }
+
+    String conflict = getMatterSetUserConflict()
+    if (conflict != null) {
+        logWarn "${commandName}: cannot start while ${conflict}"
+        return
+    }
+
+    Long startedAt = now()
+    state.remove('lastSetUserResult')
+    Map pending = [
+        userIndex: userIndex,
+        userName: userName,
+        operationType: operationType,
+        operationName: operationName,
+        startedAt: startedAt,
+        stage: operationType == 2 ? 'awaitingModifyPreflight' : 'preparingInvoke'
+    ]
+
+    if (operationType == 2) {
+        state.pendingSetUser = pending
+        runIn(SET_USER_TIMEOUT_SECONDS, 'matterSetUserTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
+        logInfo "matterModifyUser: reading existing user ${userIndex} before modifying the name to '${userName}'"
+        if (!sendMatterGetUserCommand(userIndex, 'matterModifyUser preflight')) {
+            finishMatterSetUser(false, 'could not send preflight GetUser request')
+        }
+        return
+    }
+
+    pending.userUniqueID = null
+    pending.userStatus = 1
+    pending.userType = 0
+    pending.credentialRule = 0
+    state.pendingSetUser = pending
+    sendMatterSetUserInvoke(pending)
+}
+
+private void sendMatterSetUserInvoke(Map pending) {
+    Integer operationType = safeNumberToInt(pending.operationType, null)
+    Integer userIndex = safeNumberToInt(pending.userIndex, null)
+    String userName = pending.userName != null ? "${pending.userName}" : null
+    byte[] userNameBytes = userName != null ? userName.getBytes('UTF-8') : null
+    Long userUniqueID = responseLong(pending.userUniqueID)
+    Integer userStatus = safeNumberToInt(pending.userStatus, null)
+    Integer userType = safeNumberToInt(pending.userType, null)
+    Integer credentialRule = safeNumberToInt(pending.credentialRule, null)
+    String commandName = operationType == 2 ? 'matterModifyUser' : 'matterSetUser'
+    String operationName = operationType == 2 ? 'Modify' : 'Add'
+
+    if (!(operationType in [0, 2]) || userIndex == null || (userNameBytes != null && userNameBytes.length > 10) ||
+        userStatus == null || userType == null || credentialRule == null) {
+        finishMatterSetUser(false, 'pending SetUser record is incomplete or invalid')
         return
     }
 
     Integer deviceNumber = getDeviceNumber()
     if (deviceNumber == null) {
-        sendEvent(name: 'codeChanged', value: "failed", descriptionText: 'matterSetUser: deviceNumber is null', isStateChange: true)
+        finishMatterSetUser(false, 'deviceNumber is unavailable')
         return
     }
 
-    
-    // ---- Build TLV payload ----
-    // 0: userIndex (uint16)
-    // 1: userName (string, nullable on some implementations)
-    // 2: userUniqueID (nullable uint32) -> we send NULL
-    // 3: userStatus (enum8)
-    // 4: userType (enum8)
-    // 5: credentialRule (enum8)
-
     String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
+    String userNameTlv = userNameBytes == null
+        ? '3402'
+        : '2C02' + HexUtils.integerToHexString(userNameBytes.length, 1) +
+            userNameBytes.collect { byte item -> String.format('%02X', item & 0xFF) }.join()
+    String userUniqueIdTlv = userUniqueID == null
+        ? '3403'
+        : '2603' + zigbee.swapOctets(String.format('%08X', userUniqueID & 0xFFFFFFFFL))
 
-    int userStatus = 0x01      // OccupiedEnabled (common)
-    int userType = 0x00        // UnrestrictedUser (common)
-    int credentialRule = 0x00  // Single (common)
-
-    String userStatusHex = HexUtils.integerToHexString(userStatus, 1)
-    String userTypeHex = HexUtils.integerToHexString(userType, 1)
-    String credentialRuleHex = HexUtils.integerToHexString(credentialRule, 1)
-
-    // userName:
-    // If no name provided -> send NULL (more compatible than empty string on some locks)
-    String userNameTlv
-    if (name == null || name.toString().trim().isEmpty()) {
-        userNameTlv = "2C" + "01" + "00"   // empty UTF-8 string, not NULL
-    } else {
-        String userName = name.toString()
-        byte[] userNameBytes = userName.getBytes('UTF-8')
-        int userNameLen = userNameBytes.length
-        String userNameHex = userNameBytes.collect { String.format('%02X', it) }.join()
-
-        if (userNameLen <= 0xFF) {
-            // UTF81: control 0x2C, tag 1, 1-byte length
-            userNameTlv = "2C" + "01" + HexUtils.integerToHexString(userNameLen, 1) + userNameHex
-        } else {
-            // UTF82: control 0x2D, tag 1, 2-byte length (LE)
-            String lenHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userNameLen, 2))
-            userNameTlv = "2D" + "01" + lenHexLE + userNameHex
-        }
-    }
-    userNameTlv = "2C0100"          // !!!!!!!!!!!!!!!!!!! for testing !!!!!!!!!!
-    // userUniqueID: NULL (tag 2)
-    // String userUniqueIdTlv = "34" + "02"
-// userUniqueID: uint32 (tag 2) -> use userIndex as value
-String userUniqueIdHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 4))
-// control 0x26 = context-specific + uint32
-String userUniqueIdTlv = "26" + "02" + userUniqueIdHexLE    
-    userUniqueIdTlv = "26" + "02" + "00000000"      /// !!!!!!!!!!!!!!!! for testing !!!!!!!!!!
-
-    // Build command struct
+    // All seven fields are encoded. For Modify, values not being changed come from
+    // the preflight GetUser response rather than relying on nullable-field handling.
     String tlv =
-            "15" +
-              "25" + "00" + userIndexHexLE +   // tag 0 uint16
-              userNameTlv +                    // tag 1 string or NULL
-              userUniqueIdTlv +                // tag 2 NULL
-              "24" + "03" + userStatusHex +    // tag 3 enum8
-              "24" + "04" + userTypeHex +      // tag 4 enum8
-              "24" + "05" + credentialRuleHex +// tag 5 enum8
-            "18"
+        '15' +
+            '2400' + HexUtils.integerToHexString(operationType, 1) +
+            '2501' + userIndexHexLE +
+            userNameTlv +
+            userUniqueIdTlv +
+            '2404' + HexUtils.integerToHexString(userStatus, 1) +
+            '2405' + HexUtils.integerToHexString(userType, 1) +
+            '2406' + HexUtils.integerToHexString(credentialRule, 1) +
+        '18'
 
-    // IMPORTANT: use matter.invoke() to build the Hubitat envelope correctly
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x001A, 2000, tlv)
-
-    logDebug "matterSetUser: index=${userIndex}, tlv=${tlv}, cmd=${cmd}"
-    parent?.componentLog(device, 'debug', "setting user ${userIndex}..." + (name ? " (${name})" : ""))
+    pending.stage = 'awaitingInvoke'
+    pending.sentAt = now()
+    state.pendingSetUser = pending
+    runIn(SET_USER_TIMEOUT_SECONDS, 'matterSetUserTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
+    String operationVerb = operationType == 2 ? 'modifying' : 'adding'
+    logInfo "${commandName}: ${operationVerb} user ${userIndex}${userName != null ? " (${userName})" : ''}"
+    logDebug "${commandName}: operation=${operationName}, userIndex=${userIndex}, userNameBytes=${userNameBytes?.length ?: 0}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "${operationVerb} Matter user ${userIndex}...")
     parent?.sendToDevice(cmd)
+}
 
-    // event should be sent later when confired
-    // sendEvent(name: 'codeChanged', value: "changed", descriptionText: "matterSetUser sent for user ${userIndex}", isStateChange: true)
+private String getMatterSetUserConflict() {
+    if (state.pendingClearUser instanceof Map) return "a ClearUser operation is active for user ${state.pendingClearUser.userIndex}"
+    if (state.userScan?.active == true) return 'a user scan is active'
+    if (state.credentialScan?.active == true) return 'a credential scan is active'
+    if (state.isSettingCode == true || state.isOverwritingCode == true) return 'a setCode operation is active'
+    if (state.isDeletingCode == true) return 'a deleteCode operation is active'
+    if (state.pendingSetCredentialInvoke instanceof Map) return 'a SetCredential operation is active'
+    if (state.pendingGetCredentialStatus instanceof Map) return 'a GetCredentialStatus operation is active'
+    return null
+}
 
-} // SetUser Command (0x1A)
+private void processSetUserInvokeSuccess() {
+    Map pending = state.pendingSetUser instanceof Map ? state.pendingSetUser as Map : null
+    if (pending == null) {
+        logWarn 'matterSetUser: successful Invoke callback has no pending SetUser operation'
+        return
+    }
+    if (pending.stage != 'awaitingInvoke') {
+        logDebug "matterSetUser: duplicate SetUser success ignored while stage=${pending.stage}"
+        return
+    }
 
-*/
+    Integer userIndex = safeNumberToInt(pending.userIndex, null)
+    if (userIndex == null) {
+        finishMatterSetUser(false, 'pending SetUser state has no valid user index')
+        return
+    }
+
+    pending.stage = 'awaitingGetUser'
+    pending.verificationRequestedAt = now()
+    state.pendingSetUser = pending
+    runIn(SET_USER_TIMEOUT_SECONDS, 'matterSetUserTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
+    String commandName = safeNumberToInt(pending.operationType, null) == 2 ? 'matterModifyUser' : 'matterSetUser'
+    logDebug "${commandName}: SetUser Invoke accepted; verifying user ${userIndex} with GetUser"
+    if (!sendMatterGetUserCommand(userIndex, "${commandName} verification")) {
+        finishMatterSetUser(false, 'could not send GetUser verification request')
+    }
+}
+
+void matterSetUserTimeout(Map data) {
+    Map pending = state.pendingSetUser instanceof Map ? state.pendingSetUser as Map : null
+    if (pending == null) return
+    Integer expectedUserIndex = safeNumberToInt(data?.expectedUserIndex, null)
+    Integer pendingUserIndex = safeNumberToInt(pending.userIndex, null)
+    if (expectedUserIndex != null && expectedUserIndex != pendingUserIndex) return
+    finishMatterSetUser(false, "timeout while ${pending.stage ?: 'waiting for confirmation'}")
+}
+
+private void finishMatterSetUser(Boolean success, String reason, Map actualUser = null, List<String> mismatches = []) {
+    Map pending = state.pendingSetUser instanceof Map ? new HashMap(state.pendingSetUser as Map) : [:]
+    unschedule('matterSetUserTimeout')
+    state.remove('pendingSetUser')
+
+    Long startedAt = pending.startedAt != null ? pending.startedAt as Long : now()
+    Map result = [
+        success: success,
+        reason: reason,
+        userIndex: safeNumberToInt(pending.userIndex, null),
+        userName: pending.userName,
+        operationType: safeNumberToInt(pending.operationType, null),
+        operationName: pending.operationName,
+        startedAt: startedAt,
+        finishedAt: now(),
+        durationMs: Math.max(0L, now() - startedAt)
+    ]
+    if (actualUser != null) { result.actualUser = new HashMap(actualUser) }
+    if (mismatches) { result.mismatches = new ArrayList(mismatches) }
+    state.lastSetUserResult = result
+
+    String commandName = result.operationType == 2 ? 'matterModifyUser' : 'matterSetUser'
+    String message = "${commandName}: ${result.operationName ?: 'SetUser'} ${success ? 'verified' : 'failed'} for user ${result.userIndex ?: 'unknown'}: ${reason}"
+    if (success) { logInfo message } else { logWarn message }
+}
 
 // 5.2.10.35. GetUser Command (0x1B)
 // Retrieve one user. GetUserResponse does not include PIN or other credential secret data.
 void matterGetUser(BigDecimal userIndexPar) {
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "matterGetUser: ClearUser verification is active for user ${state.pendingClearUser.userIndex}; direct request ignored"
+        return
+    }
+    if (state.pendingSetUser instanceof Map) {
+        logWarn "matterGetUser: SetUser verification is active for user ${state.pendingSetUser.userIndex}; direct request ignored"
+        return
+    }
+    if (state.userScan?.active == true) {
+        logWarn "matterGetUser: user scan is active for user ${state.userScan.pendingUserIndex}; direct request ignored"
+        return
+    }
     if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
         logWarn "matterGetUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
         return
@@ -1295,8 +1477,13 @@ void matterGetUser(BigDecimal userIndexPar) {
         return
     }
 
+    sendMatterGetUserCommand(userIndex, 'direct request')
+}
+
+private Boolean sendMatterGetUserCommand(Integer userIndex, String source) {
     Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
+    if (deviceNumber == null) return false
+    if (userIndex == null || userIndex < 1 || userIndex > 65534) return false
 
     List<Map<String, String>> cmdFields = []
     String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
@@ -1304,13 +1491,22 @@ void matterGetUser(BigDecimal userIndexPar) {
 
     // GetUser is not a timed command. GetUserResponse 0x1C is returned through callbackType:Invoke.
     String cmd = matter.invoke(deviceNumber, 0x0101, 0x001B, cmdFields)
-    logDebug "matterGetUser: userIndex=${userIndex}, userIndexHexLE=${userIndexHexLE}, cmd=${cmd}"
-    parent?.componentLog(device, 'debug', "querying user information for index ${userIndex}...")
+    logDebug "matterGetUser: source=${source}, userIndex=${userIndex}, userIndexHexLE=${userIndexHexLE}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "querying user information for index ${userIndex} (${source})...")
     parent?.sendToDevice(cmd)
+    return true
 }
 
 // Diagnostic occupied-user scan. Kept separate from getCodes() until live traversal is validated.
 void matterScanUsers() {
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "matterScanUsers: ClearUser verification is active for user ${state.pendingClearUser.userIndex}"
+        return
+    }
+    if (state.pendingSetUser instanceof Map) {
+        logWarn "matterScanUsers: SetUser verification is active for user ${state.pendingSetUser.userIndex}"
+        return
+    }
     if (state.userScan?.active == true) {
         Long lastRequestAt = state.userScan.lastRequestAt != null ? state.userScan.lastRequestAt as Long : 0L
         if (lastRequestAt > 0L && (now() - lastRequestAt) <= (GET_USER_SCAN_TIMEOUT_SECONDS * 2000L)) {
@@ -1372,7 +1568,9 @@ private void requestMatterUserScanIndex(Integer userIndex) {
     state.userScan = scan
     runIn(GET_USER_SCAN_TIMEOUT_SECONDS, 'matterUserScanTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
     logDebug "matterScanUsers: requesting user ${userIndex} (request ${scan.requestCount})"
-    matterGetUser(userIndex as BigDecimal)
+    if (!sendMatterGetUserCommand(userIndex, 'user scan')) {
+        finishMatterUserScan("could not send GetUser request for user ${userIndex}", false)
+    }
 }
 
 void matterUserScanTimeout(Map data) {
@@ -1524,50 +1722,270 @@ private String htmlEscapeLogValue(Object value) {
         .replace("'", '&#39;')
 }
 
-/*
-// 5.2.10.37. ClearUser Command (0x1D) - WORKING ! :) 
-// Clears a user or all Users. 
-// // cmdFields: ID:0, Name:UserIndex, Type:uint16, Constraint: 1 to NumberOfTotalUsersSupported, Default:0xFFFE, Conformance:Mandatory
-void matterClearUser(String userIndex) {
+// 5.2.10.37. ClearUser Command (0x1D)
+// Standalone diagnostic operation: preflight GetUser -> timed ClearUser -> GetUser verification.
+// The 0xFFFE clear-all sentinel is deliberately rejected until full-database verification exists.
+void matterClearUser(BigDecimal userIndexPar) {
     if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
-        logWarn "matterClearUser: This lock <b>does not</b> support User management (FeatureMap indicates no User support)"
+        logWarn 'matterClearUser: This lock does not support User management'
         return
     }
-    
-    if (!userIndex) {
-        logWarn "matterClearUser: User index is required"
-        return
-    }
-    // TODO: use device data "Number Of Total Users Supported" to validate index ! ( U200 supports up to 10 users )
-    Integer index = userIndex as Integer
-    if (index < 1 || index > 10) {
-        logWarn "matterClearUser: User index must be 1-10, got '${userIndex}'"
-        return
-    }
-    
-    Integer deviceNumber = getDeviceNumber()
-    if (deviceNumber == null) return
-    
-    parent?.componentLog(device, 'debug', "clearing user at index ${index}...")
-    logDebug "matterClearUser: clearing user at index ${index}"
-    List<Map<String, String>> cmdFields = []
-    cmdFields.add(matter.cmdField(DataType.UINT16, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(index, 2))))
-    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001D, 2000, cmdFields)
 
-    parent?.sendToDevice(cmd)
-    // matterClearUser is working, for existing users it returns a response in an event : 
-    //       descMap = [callbackType:Event, endpointInt:1, clusterInt:257, evtId:4, timestamp:946765068557, priority:1, data:[4:STRUCT:[6:UINT:8, 3:UINT:8, 0:UINT:2, 1:UINT:1, 4:UINT:3, 5:UINT:112233, 2:UINT:7]], value:[6:8, 3:8, 0:2, 1:1, 4:3, 5:112233, 2:7], cluster:0101, endpoint:01]
-    // :) 
+    List<String> acceptedCommands = getDoorLockAcceptedCommandList()
+    if (settings?.ignoreCompatibilityChecks != true && !acceptedCommands.isEmpty() &&
+        (!acceptedCommands.contains('001D') || !acceptedCommands.contains('001B'))) {
+        List<String> missing = []
+        if (!acceptedCommands.contains('001D')) { missing.add('ClearUser 0x1D') }
+        if (!acceptedCommands.contains('001B')) { missing.add('GetUser 0x1B') }
+        logWarn "matterClearUser: required command(s) not present in AcceptedCommandList: ${missing.join(', ')}"
+        return
+    }
+
+    if (userIndexPar == null) {
+        logWarn 'matterClearUser: User index is required'
+        return
+    }
+    Integer userIndex = userIndexPar.intValue()
+    if (userIndexPar.compareTo(new BigDecimal(userIndex)) != 0) {
+        logWarn "matterClearUser: User index must be a whole number, got '${userIndexPar}'"
+        return
+    }
+    if (userIndex == 0xFFFE) {
+        logWarn 'matterClearUser: clear-all (UserIndex 65534 / 0xFFFE) is intentionally not supported by this verified standalone command'
+        return
+    }
+
+    Integer maxUserIndex = safeNumberToInt(state.lockAttr?.numberOfTotalUsers, 65533)
+    if (maxUserIndex == null || maxUserIndex < 1 || maxUserIndex > 65533) { maxUserIndex = 65533 }
+    if (userIndex < 1 || userIndex > maxUserIndex) {
+        logWarn "matterClearUser: User index must be 1-${maxUserIndex}, got '${userIndexPar}'"
+        return
+    }
+
+    Map existingPending = state.pendingClearUser instanceof Map ? state.pendingClearUser as Map : null
+    if (existingPending != null) {
+        Long startedAt = existingPending.startedAt != null ? existingPending.startedAt as Long : 0L
+        if (startedAt > 0L && (now() - startedAt) <= (CLEAR_USER_TIMEOUT_SECONDS * 2000L)) {
+            logWarn "matterClearUser: another ClearUser operation is active for user ${existingPending.userIndex}"
+            return
+        }
+        finishMatterClearUser(false, 'stale pending ClearUser operation replaced')
+    }
+    if (state.pendingSetUser instanceof Map) {
+        logWarn "matterClearUser: cannot start while SetUser is active for user ${state.pendingSetUser.userIndex}"
+        return
+    }
+    String conflict = getMatterSetUserConflict()
+    if (conflict != null) {
+        logWarn "matterClearUser: cannot start while ${conflict}"
+        return
+    }
+
+    state.remove('lastClearUserResult')
+    state.remove('recentClearUserConfirmation')
+    state.pendingClearUser = [
+        userIndex: userIndex,
+        startedAt: now(),
+        stage: 'awaitingPreflight'
+    ]
+    runIn(CLEAR_USER_TIMEOUT_SECONDS, 'matterClearUserTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
+    logInfo "matterClearUser: reading existing user ${userIndex} before clearing it"
+    if (!sendMatterGetUserCommand(userIndex, 'matterClearUser preflight')) {
+        finishMatterClearUser(false, 'could not send preflight GetUser request')
+    }
 }
-*/
+
+private void handleMatterClearUserPreflightResponse(Map userMeta) {
+    Map pending = state.pendingClearUser instanceof Map ? state.pendingClearUser as Map : null
+    if (pending == null || pending.stage != 'awaitingPreflight') return
+
+    Integer expectedIndex = safeNumberToInt(pending.userIndex, null)
+    Integer actualIndex = responseInt(userMeta.userIndex)
+    Integer userStatus = responseInt(userMeta.userStatus)
+    if (actualIndex != expectedIndex) {
+        finishMatterClearUser(false, "preflight GetUser returned UserIndex ${actualIndex}, expected ${expectedIndex}", userMeta)
+        return
+    }
+    if (!(userStatus in [1, 3])) {
+        finishMatterClearUser(false, "preflight GetUser found no occupied user at index ${expectedIndex}", userMeta)
+        return
+    }
+
+    pending.preflightUser = new HashMap(userMeta)
+    pending.preflightCompletedAt = now()
+    state.pendingClearUser = pending
+    sendMatterClearUserInvoke(pending)
+}
+
+private void sendMatterClearUserInvoke(Map pending) {
+    Integer userIndex = safeNumberToInt(pending.userIndex, null)
+    Integer deviceNumber = getDeviceNumber()
+    if (userIndex == null || deviceNumber == null) {
+        finishMatterClearUser(false, userIndex == null ? 'pending ClearUser state has no valid user index' : 'deviceNumber is unavailable')
+        return
+    }
+
+    String userIndexHexLE = zigbee.swapOctets(HexUtils.integerToHexString(userIndex, 2))
+    String tlv = '15' + '2500' + userIndexHexLE + '18'
+    String cmd = matter.invoke(deviceNumber, 0x0101, 0x001D, 2000, tlv)
+    pending.stage = 'awaitingInvoke'
+    pending.sentAt = now()
+    state.pendingClearUser = pending
+    runIn(CLEAR_USER_TIMEOUT_SECONDS, 'matterClearUserTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
+    logInfo "matterClearUser: clearing user ${userIndex}"
+    logDebug "matterClearUser: userIndex=${userIndex}, userIndexHexLE=${userIndexHexLE}, tlv=${tlv}, cmd=${cmd}"
+    parent?.componentLog(device, 'debug', "clearing Matter user ${userIndex}...")
+    parent?.sendToDevice(cmd)
+}
+
+private void processClearUserInvokeSuccess() {
+    Map pending = state.pendingClearUser instanceof Map ? state.pendingClearUser as Map : null
+    if (pending == null) {
+        logWarn 'matterClearUser: successful Invoke callback has no pending ClearUser operation'
+        return
+    }
+    if (pending.stage != 'awaitingInvoke') {
+        logDebug "matterClearUser: duplicate ClearUser success ignored while stage=${pending.stage}"
+        return
+    }
+
+    Integer userIndex = safeNumberToInt(pending.userIndex, null)
+    if (userIndex == null) {
+        finishMatterClearUser(false, 'pending ClearUser state has no valid user index')
+        return
+    }
+    pending.stage = 'awaitingGetUser'
+    pending.verificationRequestedAt = now()
+    state.pendingClearUser = pending
+    runIn(CLEAR_USER_TIMEOUT_SECONDS, 'matterClearUserTimeout', [overwrite: true, data: [expectedUserIndex: userIndex]])
+    logDebug "matterClearUser: ClearUser Invoke accepted; verifying user ${userIndex} with GetUser"
+    if (!sendMatterGetUserCommand(userIndex, 'matterClearUser verification')) {
+        finishMatterClearUser(false, 'could not send GetUser verification request')
+    }
+}
+
+void matterClearUserTimeout(Map data) {
+    Map pending = state.pendingClearUser instanceof Map ? state.pendingClearUser as Map : null
+    if (pending == null) return
+    Integer expectedUserIndex = safeNumberToInt(data?.expectedUserIndex, null)
+    Integer pendingUserIndex = safeNumberToInt(pending.userIndex, null)
+    if (expectedUserIndex != null && expectedUserIndex != pendingUserIndex) return
+    finishMatterClearUser(false, "timeout while ${pending.stage ?: 'waiting for confirmation'}")
+}
+
+private void finishMatterClearUser(Boolean success, String reason, Map actualUser = null, List<String> mismatches = []) {
+    Map pending = state.pendingClearUser instanceof Map ? new HashMap(state.pendingClearUser as Map) : [:]
+    unschedule('matterClearUserTimeout')
+    state.remove('pendingClearUser')
+
+    Long startedAt = pending.startedAt != null ? pending.startedAt as Long : now()
+    Map result = [
+        success: success,
+        reason: reason,
+        userIndex: safeNumberToInt(pending.userIndex, null),
+        startedAt: startedAt,
+        finishedAt: now(),
+        durationMs: Math.max(0L, now() - startedAt)
+    ]
+    if (pending.preflightUser instanceof Map) { result.preflightUser = new HashMap(pending.preflightUser as Map) }
+    if (actualUser != null) { result.actualUser = new HashMap(actualUser) }
+    if (mismatches) { result.mismatches = new ArrayList(mismatches) }
+    state.lastClearUserResult = result
+
+    if (success) {
+        Map preflightUser = result.preflightUser instanceof Map ? result.preflightUser as Map : [:]
+        clearCachedUserAssociations(result.userIndex as Integer, preflightUser)
+        state.recentClearUserConfirmation = [
+            userIndex: result.userIndex,
+            confirmedAt: now(),
+            expiresAt: now() + CLEAR_USER_CONFIRMATION_DEDUP_MS
+        ]
+    }
+    String message = "matterClearUser: ${success ? 'verified' : 'failed'} for user ${result.userIndex ?: 'unknown'}: ${reason}"
+    if (success) { logInfo message } else { logWarn message }
+}
+
+private void clearCachedUserAssociations(Integer userIndex, Map preflightUser = [:]) {
+    if (userIndex == null) return
+
+    List<Map> deletedCredentials = []
+    List preflightCredentials = preflightUser?.credentials instanceof List ? preflightUser.credentials as List : []
+    preflightCredentials.each { Object rawCredential ->
+        if (!(rawCredential instanceof Map)) return
+        Map credential = rawCredential as Map
+        Integer credentialType = responseInt(credential.credentialType)
+        Integer credentialIndex = responseInt(credential.credentialIndex)
+        if (credentialType == null || credentialIndex == null) return
+        if (!deletedCredentials.any {
+            responseInt(it.credentialType) == credentialType && responseInt(it.credentialIndex) == credentialIndex
+        }) {
+            deletedCredentials.add([
+                credentialType: credentialType,
+                credentialTypeName: credential.credentialTypeName ?: (CredentialTypeEnum[credentialType] ?: "Unknown (${credentialType})"),
+                credentialIndex: credentialIndex
+            ])
+        }
+    }
+    Set<String> deletedMetadataKeys = deletedCredentials.collect { Map credential ->
+        "${credential.credentialType}:${credential.credentialIndex}"
+    } as Set<String>
+    Set<String> deletedPinSlots = deletedCredentials.findAll { Map credential ->
+        responseInt(credential.credentialType) == 1
+    }.collect { Map credential ->
+        "${credential.credentialIndex}"
+    } as Set<String>
+
+    Map users = state.userMetaByIndex instanceof Map ? new HashMap(state.userMetaByIndex as Map) : [:]
+    users.remove("${userIndex}")
+    state.userMetaByIndex = users
+
+    Map credentialMetadata = state.credentialMetaByTypeAndIndex instanceof Map
+        ? new HashMap(state.credentialMetaByTypeAndIndex as Map)
+        : [:]
+    credentialMetadata.keySet().toList().each { Object key ->
+        Map entry = credentialMetadata[key] instanceof Map ? credentialMetadata[key] as Map : null
+        if (deletedMetadataKeys.contains("${key}") || (entry != null && responseInt(entry.userIndex) == userIndex)) {
+            credentialMetadata.remove(key)
+        }
+    }
+    state.credentialMetaByTypeAndIndex = credentialMetadata
+
+    ensureLockCodeStateMaps()
+    Map codeMetadata = new HashMap(state.codeMetaByCredential as Map)
+    codeMetadata.keySet().toList().each { Object key ->
+        Map entry = codeMetadata[key] instanceof Map ? codeMetadata[key] as Map : null
+        if (deletedPinSlots.contains("${key}") || (entry != null && responseInt(entry.userIndex) == userIndex)) {
+            codeMetadata.remove(key)
+        }
+    }
+    state.codeMetaByCredential = codeMetadata
+
+    Map lockCodes = new HashMap(getLockCodes())
+    List<String> removedPinSlots = []
+    deletedPinSlots.each { String slot ->
+        if (lockCodes.containsKey(slot)) {
+            lockCodes.remove(slot)
+            removedPinSlots.add(slot)
+        }
+    }
+    if (removedPinSlots) { updateLockCodes(lockCodes) }
+
+    String deletedCredentialText = deletedCredentials
+        ? deletedCredentials.collect { Map credential -> "${credential.credentialTypeName}#${credential.credentialIndex}" }.join(', ')
+        : 'none reported'
+    logDebug "matterClearUser: cleared cached user ${userIndex}; deleted credentials=${deletedCredentialText}; removed lockCodes PIN slots=${removedPinSlots ?: 'none'}"
+}
 
 
 
 
 // 5.2.10.42. GetCredentialStatus Command (0x24)
-// Queries one credential reference. The response may contain sensitive CredentialData;
-// only its presence and byte length are retained or logged.
+// Queries one credential reference. Returned CredentialData is normalized to uppercase hex.
 void matterGetCredentialStatus(BigDecimal credentialTypePar, BigDecimal credentialIndexPar) {
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "matterGetCredentialStatus: ClearUser is active for user ${state.pendingClearUser.userIndex}; request ignored"
+        return
+    }
     if (!isFeatureEnabled(FEATURE_USER_MANAGEMENT)) {
         logWarn 'matterGetCredentialStatus: This lock does not support User management'
         return
@@ -1658,6 +2076,14 @@ void matterGetCredentialStatusTimeout(Map data) {
 
 // Diagnostic credential scan. Starts at index 1 and follows NextCredentialIndex.
 void matterScanCredentials(BigDecimal credentialTypePar) {
+    if (state.pendingClearUser instanceof Map) {
+        logWarn "matterScanCredentials: ClearUser is active for user ${state.pendingClearUser.userIndex}"
+        return
+    }
+    if (state.pendingSetUser instanceof Map) {
+        logWarn "matterScanCredentials: SetUser verification is active for user ${state.pendingSetUser.userIndex}"
+        return
+    }
     if (credentialTypePar == null) {
         logWarn 'matterScanCredentials: credential type is required'
         return
@@ -1845,7 +2271,9 @@ private String formatMatterCredentialScanDetails(List<Map> scannedCredentials) {
         String user = credential.userIndex != null ? "User ${htmlEscapeLogValue(credential.userIndex)}" : 'User not reported'
         String fabrics = "creator ${htmlEscapeLogValue(credential.creatorFabricIndex ?: 'not reported')}, modified ${htmlEscapeLogValue(credential.lastModifiedFabricIndex ?: 'not reported')}"
         String next = credential.nextCredentialIndex != null ? htmlEscapeLogValue(credential.nextCredentialIndex) : 'none'
-        String data = credential.credentialDataPresent == true ? "redacted (${htmlEscapeLogValue(credential.credentialDataLength ?: 'unknown')} bytes)" : 'not returned'
+        String data = credential.credentialDataPresent == true
+            ? "${htmlEscapeLogValue(credential.credentialData)} (${htmlEscapeLogValue(credential.credentialDataLength != null ? credential.credentialDataLength : 'unknown')} bytes)"
+            : 'not returned'
         "<b>${htmlEscapeLogValue(credential.credentialTypeName)} #${index}</b> &mdash; ${status}<br>&nbsp;&nbsp;${user} &middot; Fabrics: ${fabrics} &middot; Next: ${next} &middot; Data: ${data}"
     }.join('<br>')
 }
@@ -2059,16 +2487,14 @@ Boolean isDoorLockCommandSupported(String commandHex) {
 // Helper function to process event mask attributes (reduces code duplication)
 // Returns the message to be logged (caller handles logging)
 String processEventMaskAttribute(String attrId, String attrName, Map descMap, Closure decoder) {
-    String rawValue = (descMap.value instanceof List) ? 
-        (descMap.value.size() > 0 ? descMap.value[0]?.toString() : '00') : 
-        descMap.value?.toString()
-    String maskValue = rawValue?.take(4) ?: '00'
-    Integer mask = safeParseHex(maskValue)
+    Object rawValue = descMap.value instanceof List
+        ? (descMap.value ? descMap.value[0] : null)
+        : descMap.value
+    Integer mask = rawValue instanceof Number
+        ? safeNumberToInt(rawValue, 0)
+        : safeHexToInt(rawValue?.toString(), 0)
+    String maskValue = String.format('%04X', mask)
     String decoded = decoder(mask)
-    
-    if (rawValue?.length() > 4) { 
-        logWarn "${attrName}: value truncated from 0x${rawValue}" 
-    }
     
     // Build and return message (prefix will be added by caller)
     boolean isInfoMode = state.states?.isInfo == true
@@ -2259,10 +2685,9 @@ void processGetCredentialStatusResponse(Map descMap) {
 
     Object decodedValue = unwrapMatterValue(descMap.value)
     if (!(decodedValue instanceof Map)) {
+        logWarn "processGetCredentialStatusResponse: malformed response value=${descMap.value}"
         if (state.credentialScan?.active == true) {
             finishMatterCredentialScan('malformed GetCredentialStatusResponse payload', false)
-        } else {
-            logWarn 'processGetCredentialStatusResponse: malformed response (payload redacted)'
         }
         return
     }
@@ -2275,13 +2700,13 @@ void processGetCredentialStatusResponse(Map descMap) {
     Integer nextCredentialIndex = responseInt(responseField(values, 4, 'nextCredentialIndex'))
     Object credentialDataRaw = responseField(values, 5, 'credentialData')
     Boolean credentialDataPresent = !isMatterNull(unwrapMatterValue(credentialDataRaw))
-    Integer credentialDataLength = credentialDataPresent ? responseOctetLength(credentialDataRaw) : null
+    String credentialData = credentialDataPresent ? normalizeCredentialDataHex(credentialDataRaw) : null
+    Integer credentialDataLength = credentialData != null ? (credentialData.length() / 2) as Integer : null
 
     if (credentialExists == null) {
+        logWarn "processGetCredentialStatusResponse: missing or invalid CredentialExists value=${descMap.value}"
         if (state.credentialScan?.active == true) {
             finishMatterCredentialScan('GetCredentialStatusResponse missing CredentialExists', false)
-        } else {
-            logWarn 'processGetCredentialStatusResponse: missing or invalid CredentialExists (payload redacted)'
         }
         return
     }
@@ -2299,6 +2724,7 @@ void processGetCredentialStatusResponse(Map descMap) {
         lastModifiedFabricIndex: lastModifiedFabricIndex,
         nextCredentialIndex: nextCredentialIndex,
         credentialDataPresent: credentialDataPresent,
+        credentialData: credentialData,
         credentialDataLength: credentialDataLength,
         updatedAt: now()
     ]
@@ -2320,6 +2746,9 @@ void processGetCredentialStatusResponse(Map descMap) {
                 userIndex: userIndex,
                 creatorFabricIndex: creatorFabricIndex,
                 lastModifiedFabricIndex: lastModifiedFabricIndex,
+                credentialDataPresent: credentialDataPresent,
+                credentialData: credentialData,
+                credentialDataLength: credentialDataLength,
                 updatedAt: now()
             ])
         }
@@ -2328,14 +2757,37 @@ void processGetCredentialStatusResponse(Map descMap) {
     }
 
     String credentialLabel = credentialIndex != null ? "${credentialTypeName} #${credentialIndex}" : credentialTypeName
-    String dataSummary = credentialDataPresent ? "redacted (${credentialDataLength != null ? credentialDataLength : 'unknown'} bytes)" : 'not returned'
+    String dataSummary = credentialDataPresent ? "${credentialData} (${credentialDataLength != null ? credentialDataLength : 'unknown'} bytes)" : 'not returned'
     logInfo "GetCredentialStatus Response: ${credentialLabel}, exists=${credentialExists}, userIndex=${userIndex ?: 'not reported'}, creatorFabric=${creatorFabricIndex ?: 'not reported'}, modifiedFabric=${lastModifiedFabricIndex ?: 'not reported'}, nextCredentialIndex=${nextCredentialIndex ?: 'none'}, credentialData=${dataSummary}"
     handleMatterCredentialScanResponse(credentialMeta)
 }
 
-private Object redactGetCredentialStatusValue(Object rawValue) {
-    return '[redacted GetCredentialStatusResponse]'
+private String normalizeCredentialDataHex(Object rawValue) {
+    Object value = unwrapMatterValue(rawValue)
+    if (isMatterNull(value)) return null
+
+    if (value instanceof byte[]) {
+        return (value as byte[]).collect { byte item -> String.format('%02X', item & 0xFF) }.join()
+    }
+
+    if (value instanceof Collection) {
+        Collection items = value as Collection
+        Boolean isByteCollection = items.every { Object item ->
+            item instanceof Number && (item as Number).intValue() >= 0 && (item as Number).intValue() <= 255
+        }
+        if (isByteCollection) {
+            return items.collect { Object item -> String.format('%02X', (item as Number).intValue()) }.join()
+        }
+    }
+
+    String stringValue = "${value}"
+    String hexValue = stringValue.startsWith('0x') || stringValue.startsWith('0X') ? stringValue.substring(2) : stringValue
+    if (hexValue ==~ /(?i)[0-9a-f]+/ && (hexValue.length() % 2) == 0) {
+        return hexValue.toUpperCase()
+    }
+    return stringValue.getBytes('UTF-8').collect { byte item -> String.format('%02X', item & 0xFF) }.join()
 }
+
 private Boolean responseBool(Object rawValue) {
     Object value = unwrapMatterValue(rawValue)
     if (isMatterNull(value)) return null
@@ -2347,20 +2799,14 @@ private Boolean responseBool(Object rawValue) {
     return null
 }
 
-private Integer responseOctetLength(Object rawValue) {
-    Object value = unwrapMatterValue(rawValue)
-    if (isMatterNull(value)) return null
-    if (value instanceof byte[]) return (value as byte[]).length
-    if (value instanceof Collection) return (value as Collection).size()
-    String stringValue = "${value}"
-    String hexValue = stringValue.startsWith('0x') ? stringValue.substring(2) : stringValue
-    if (hexValue ==~ /(?i)[0-9a-f]+/ && (hexValue.length() % 2) == 0) return hexValue.length() / 2
-    return stringValue.getBytes('UTF-8').length
-}
-
 void processGetUserResponse(Map descMap) {
     if (!(descMap.value instanceof Map)) {
         logWarn "processGetUserResponse: malformed response value=${descMap.value}"
+        if (state.pendingClearUser instanceof Map && state.pendingClearUser.stage in ['awaitingPreflight', 'awaitingGetUser']) {
+            finishMatterClearUser(false, "malformed GetUser ${state.pendingClearUser.stage == 'awaitingPreflight' ? 'preflight' : 'verification'} response")
+        } else if (state.pendingSetUser instanceof Map && state.pendingSetUser.stage in ['awaitingModifyPreflight', 'awaitingGetUser']) {
+            finishMatterSetUser(false, "malformed GetUser ${state.pendingSetUser.stage == 'awaitingModifyPreflight' ? 'preflight' : 'verification'} response")
+        }
         return
     }
 
@@ -2368,6 +2814,11 @@ void processGetUserResponse(Map descMap) {
     Integer userIndex = responseInt(responseField(values, 0, 'userIndex'))
     if (userIndex == null || userIndex < 1 || userIndex > 65534) {
         logWarn "processGetUserResponse: missing or invalid UserIndex in value=${descMap.value}"
+        if (state.pendingClearUser instanceof Map && state.pendingClearUser.stage in ['awaitingPreflight', 'awaitingGetUser']) {
+            finishMatterClearUser(false, "GetUser ${state.pendingClearUser.stage == 'awaitingPreflight' ? 'preflight' : 'verification'} response has no valid UserIndex")
+        } else if (state.pendingSetUser instanceof Map && state.pendingSetUser.stage in ['awaitingModifyPreflight', 'awaitingGetUser']) {
+            finishMatterSetUser(false, "GetUser ${state.pendingSetUser.stage == 'awaitingModifyPreflight' ? 'preflight' : 'verification'} response has no valid UserIndex")
+        }
         return
     }
 
@@ -2409,8 +2860,126 @@ void processGetUserResponse(Map descMap) {
     String credentialText = credentials.isEmpty()
         ? 'none'
         : credentials.collect { Map credential -> "${credential.credentialTypeName}#${credential.credentialIndex}" }.join(', ')
-    logInfo "GetUser Response: userIndex=${userIndex}, userName=${userName ?: 'null'}, status=${statusText}, type=${typeText}, rule=${ruleText}, credentials=${credentialText}, nextUserIndex=${nextUserIndex}"
+    String userNameText = userName == null ? 'null' : (userName.isEmpty() ? "'' (empty)" : userName)
+    logInfo "GetUser Response: userIndex=${userIndex}, userName=${userNameText}, status=${statusText}, type=${typeText}, rule=${ruleText}, credentials=${credentialText}, nextUserIndex=${nextUserIndex}"
+    handleMatterClearUserPreflightResponse(userMeta)
+    handleMatterClearUserVerificationResponse(userMeta)
+    handleMatterModifyPreflightResponse(userMeta)
+    handleMatterSetUserVerificationResponse(userMeta)
     handleMatterUserScanResponse(userMeta)
+}
+
+private void handleMatterModifyPreflightResponse(Map userMeta) {
+    Map pending = state.pendingSetUser instanceof Map ? state.pendingSetUser as Map : null
+    if (pending == null || pending.stage != 'awaitingModifyPreflight') return
+
+    Integer expectedIndex = safeNumberToInt(pending.userIndex, null)
+    Integer actualIndex = responseInt(userMeta.userIndex)
+    Integer userStatus = responseInt(userMeta.userStatus)
+    Integer userType = responseInt(userMeta.userType)
+    Integer credentialRule = responseInt(userMeta.credentialRule)
+    if (actualIndex != expectedIndex) {
+        finishMatterSetUser(false, "preflight GetUser returned UserIndex ${actualIndex}, expected ${expectedIndex}", userMeta)
+        return
+    }
+    if (!(userStatus in [1, 3]) || userType == null || credentialRule == null) {
+        finishMatterSetUser(false, "preflight GetUser found no occupied, complete user record at index ${expectedIndex}", userMeta)
+        return
+    }
+
+    pending.originalUserName = userMeta.userName
+    pending.userUniqueID = responseLong(userMeta.userUniqueID)
+    pending.userStatus = userStatus
+    pending.userType = userType
+    pending.credentialRule = credentialRule
+    pending.preflightCompletedAt = now()
+    state.pendingSetUser = pending
+    logDebug "matterModifyUser: preflight matched user ${expectedIndex}; sending complete existing record with the new name"
+    sendMatterSetUserInvoke(pending)
+}
+
+private void handleMatterSetUserVerificationResponse(Map userMeta) {
+    Map pending = state.pendingSetUser instanceof Map ? state.pendingSetUser as Map : null
+    if (pending == null || pending.stage != 'awaitingGetUser') return
+
+    Integer expectedIndex = safeNumberToInt(pending.userIndex, null)
+    Integer actualIndex = responseInt(userMeta.userIndex)
+    String expectedName = pending.userName != null ? "${pending.userName}" : null
+    String actualName = userMeta.userName != null ? "${userMeta.userName}" : null
+    Integer expectedStatus = safeNumberToInt(pending.userStatus, null)
+    Integer expectedType = safeNumberToInt(pending.userType, null)
+    Integer expectedRule = safeNumberToInt(pending.credentialRule, null)
+    Integer actualStatus = responseInt(userMeta.userStatus)
+    Integer actualType = responseInt(userMeta.userType)
+    Integer actualRule = responseInt(userMeta.credentialRule)
+
+    List<String> mismatches = []
+    if (actualIndex != expectedIndex) {
+        mismatches.add("UserIndex expected ${expectedIndex}, got ${actualIndex}")
+    }
+    if (expectedName != null && actualName != expectedName) {
+        mismatches.add("UserName expected '${expectedName}', got '${actualName}'")
+    }
+    if (expectedStatus != null && actualStatus != expectedStatus) {
+        mismatches.add("UserStatus expected ${expectedStatus}, got ${actualStatus}")
+    }
+    if (expectedType != null && actualType != expectedType) {
+        mismatches.add("UserType expected ${expectedType}, got ${actualType}")
+    }
+    if (expectedRule != null && actualRule != expectedRule) {
+        mismatches.add("CredentialRule expected ${expectedRule}, got ${actualRule}")
+    }
+
+    if (mismatches.isEmpty()) {
+        finishMatterSetUser(true, 'GetUser verification matched all requested fields', userMeta)
+    } else {
+        finishMatterSetUser(false, "GetUser verification mismatch: ${mismatches.join('; ')}", userMeta, mismatches)
+    }
+}
+
+private void handleMatterClearUserVerificationResponse(Map userMeta) {
+    Map pending = state.pendingClearUser instanceof Map ? state.pendingClearUser as Map : null
+    if (pending == null || pending.stage != 'awaitingGetUser') return
+
+    Integer expectedIndex = safeNumberToInt(pending.userIndex, null)
+    Integer actualIndex = responseInt(userMeta.userIndex)
+    Integer actualStatus = responseInt(userMeta.userStatus)
+    List<Map> actualCredentials = userMeta.credentials instanceof List ? userMeta.credentials as List<Map> : []
+    List<String> mismatches = []
+
+    if (actualIndex != expectedIndex) {
+        mismatches.add("UserIndex expected ${expectedIndex}, got ${actualIndex}")
+    }
+    if (actualStatus != null && actualStatus != 0) {
+        mismatches.add("UserStatus expected Available (0) or null, got ${actualStatus}")
+    }
+    if (userMeta.userName != null) {
+        mismatches.add("UserName expected null, got '${userMeta.userName}'")
+    }
+    if (userMeta.userUniqueID != null) {
+        mismatches.add("UserUniqueID expected null, got ${userMeta.userUniqueID}")
+    }
+    if (userMeta.userType != null) {
+        mismatches.add("UserType expected null, got ${userMeta.userType}")
+    }
+    if (userMeta.credentialRule != null) {
+        mismatches.add("CredentialRule expected null, got ${userMeta.credentialRule}")
+    }
+    if (!actualCredentials.isEmpty()) {
+        mismatches.add("Credentials expected none, got ${actualCredentials.size()}")
+    }
+    if (userMeta.creatorFabricIndex != null) {
+        mismatches.add("CreatorFabricIndex expected null, got ${userMeta.creatorFabricIndex}")
+    }
+    if (userMeta.lastModifiedFabricIndex != null) {
+        mismatches.add("LastModifiedFabricIndex expected null, got ${userMeta.lastModifiedFabricIndex}")
+    }
+
+    if (mismatches.isEmpty()) {
+        finishMatterClearUser(true, 'GetUser verification confirmed the user record is available', userMeta)
+    } else {
+        finishMatterClearUser(false, "GetUser verification mismatch: ${mismatches.join('; ')}", userMeta, mismatches)
+    }
 }
 
 private Object responseField(Map values, Integer fieldId, String fieldName = null) {
@@ -2737,6 +3306,7 @@ void processLockUserChangeEvent(Map description) {
     String source    = DoorLockClusterOperationSource[opSource] ?: "Unknown (${opSource})"
 
     logDebug "processLockUserChangeEvent: type=${dataType}(${lockDataType}), op=${operation}, user=${userIndex}, dataIdx=${dataIndex}, source=${source}"
+    Boolean pendingClearUserEvent = isPendingClearUserEvent(lockDataType, dataOpType, userIndex, dataIndex)
 
     // Recover Hubitat credential slot where possible.
     boolean isPinEvent = (lockDataType == 0x06)
@@ -2764,7 +3334,7 @@ void processLockUserChangeEvent(Map description) {
     Integer codePosition = credentialKey != null ? safeToInt(credentialKey) : null
     Boolean recentClearEvent = isRecentClearCredentialEvent(credentialKey, userIndex, dataIndex, dataOpType)
 
-    if (credentialKey != null && !recentClearEvent) {
+    if (credentialKey != null && !recentClearEvent && !pendingClearUserEvent) {
         upsertCredentialMeta(credentialKey, [
             userIndex: userIndex,
             credentialIndex: codePosition,
@@ -2790,6 +3360,30 @@ void processLockUserChangeEvent(Map description) {
     sendEvent(name: 'lastUserChange', value: "${operation} ${dataType}", descriptionText: descriptionText, isStateChange: true)
 
     // --- codeChanged and lockCodes sync ---
+    if (pendingClearUserEvent) {
+        Map clearEvent = [
+            receivedAt: now(),
+            lockDataType: lockDataType,
+            dataOperationType: dataOpType,
+            userIndex: userIndex,
+            dataIndex: dataIndex,
+            operationSource: opSource
+        ]
+        Map pending = state.pendingClearUser instanceof Map ? state.pendingClearUser as Map : null
+        Map recent = getRecentClearUserConfirmation()
+        Integer clearUserIndex = pending != null
+            ? safeNumberToInt(pending.userIndex, null)
+            : safeNumberToInt(recent?.userIndex, null)
+        if (pending != null) {
+            pending.clearEvent = clearEvent
+            state.pendingClearUser = pending
+        } else if (recent != null) {
+            recent.clearEvent = clearEvent
+            state.recentClearUserConfirmation = recent
+        }
+        logDebug "processLockUserChangeEvent: suppressing codeChanged for standalone ClearUser user ${clearUserIndex}"
+        return
+    }
     if (recentClearEvent) {
         String matchedCredentialKey = credentialKey ?: (recentClearConfirmation?.credentialKey != null ? "${recentClearConfirmation.credentialKey}" : 'unknown')
         logDebug "processLockUserChangeEvent: deleteCode slot ${matchedCredentialKey} was already completed from ${recentClearConfirmation?.source}; duplicate codeChanged suppressed"
@@ -2884,6 +3478,26 @@ void processLockUserChangeEvent(Map description) {
         // UserIndex Add/Modify follow-up or other unhandled type — suppress codeChanged
         logDebug "processLockUserChangeEvent: suppressing codeChanged for non-PIN ${operation} event (type=${dataType})"
     }
+}
+
+private Boolean isPendingClearUserEvent(Integer lockDataType, Integer dataOpType, Integer userIndex, Integer dataIndex) {
+    Map pending = state.pendingClearUser instanceof Map ? state.pendingClearUser as Map : null
+    Integer expectedUserIndex = pending != null && pending.stage in ['awaitingInvoke', 'awaitingGetUser']
+        ? safeNumberToInt(pending.userIndex, null)
+        : safeNumberToInt(getRecentClearUserConfirmation()?.userIndex, null)
+    return lockDataType == 0x02 && dataOpType == 0x01 &&
+        expectedUserIndex != null && (userIndex == expectedUserIndex || dataIndex == expectedUserIndex)
+}
+
+private Map getRecentClearUserConfirmation() {
+    Map recent = state.recentClearUserConfirmation instanceof Map ? state.recentClearUserConfirmation as Map : null
+    if (recent == null) return null
+    Long expiresAt = recent.expiresAt != null ? recent.expiresAt as Long : 0L
+    if (expiresAt <= now()) {
+        state.remove('recentClearUserConfirmation')
+        return null
+    }
+    return recent
 }
 
 // Remove a code entry from the lockCodes attribute by Hubitat codePosition
@@ -3234,7 +3848,7 @@ void clearInfoMode() {
 ]
 
 // 5.2.6.3. LockType Attribute (0x0001)
-@Field static final Map<String, String> DooorLockClusterLockType = [
+@Field static final Map<Integer, String> DoorLockClusterLockType = [
     0x00    : 'deadbolt',           // Physical lock type is dead bolt
     0x01    : 'magnetic',           // Physical lock type is magnetic
     0x02    : 'other',              // Physical lock type is other
@@ -3280,7 +3894,7 @@ Boolean Value Summary
     0x01    : 'LockFactoryReset',
     0x03    : 'LockRadioPowerCycled',
     0x04    : 'WrongCodeEntryLimit',
-    0x05    : 'FrontEsceutcheonRemoved',
+    0x05    : 'FrontEscutcheonRemoved',
     0x06    : 'DoorForcedOpen',
     0x07    : 'DoorAjar',
     0x08    : 'ForcedUser'

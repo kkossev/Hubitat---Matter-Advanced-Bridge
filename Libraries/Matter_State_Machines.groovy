@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/Matter_State_Machines.groovy',
-    version: '1.1.1',
+    version: '1.1.3',
     documentationLink: ''
 )
 /*
@@ -33,15 +33,16 @@ library(
   * ver. 1.0.5  2026-01-08 GPT-5.2  - skip discovery for disabled child devices to eliminate timeouts
   * ver. 1.1.0  2026-01-17 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine; added finalizeDeviceType() call
   * ver. 1.1.1  2026-01-17 GPT-5.2  - restored DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
-  * ver. 1.1.2  2026-02-21 kkossev  - (dev. branch) potential bug fix in discovering global elements (including FeatureMap); added 0xFFFA
+  * ver. 1.1.2  2026-02-21 kkossev  - potential bug fix in discovering global elements (including FeatureMap); added 0xFFFA
+  * ver. 1.1.3  2026-07-23 kkossev  - (dev. branch) bug fixes
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.1.2'
-@Field static final String matterStateMachinesLibStamp   = '2026/02/21 10:43 PM'
+@Field static final String matterStateMachinesLib = '1.1.3'
+@Field static final String matterStateMachinesLibStamp   = '2026/07/23 10:03 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -56,7 +57,7 @@ import groovy.transform.Field
 
 void initializeStateMachineVars() {
     if (state['states'] == null) { state['states'] = [:] }
-    if (state['stateMachines'] == null) { state['stateMachines'] = [] }
+    if (!(state['stateMachines'] instanceof Map)) { state['stateMachines'] = [:] }
     if (state['stateMachines']['readSingeAttrState'] == null) { state['stateMachines']['readSingeAttrState'] = 0 }
     if (state['stateMachines']['readSingeAttrRetry'] == null) { state['stateMachines']['readSingeAttrRetry'] = 0 }
     if (state['stateMachines']['discoverGlobalElementsState'] == null) { state['stateMachines']['discoverGlobalElementsState'] = STATE_DISCOVER_GLOBAL_ELEMENTS_IDLE }
@@ -67,7 +68,7 @@ void initializeStateMachineVars() {
     if (state['stateMachines']['discoverAllResult'] == null) { state['stateMachines']['discoverAllResult'] = UNKNOWN }
 }
 
-void readSingeAttrStateMachine(Map data = null) {
+void readSingleAttrStateMachine(Map data = null) {
     initializeStateMachineVars()
 
     if (data != null) {
@@ -78,21 +79,21 @@ void readSingeAttrStateMachine(Map data = null) {
             data['action'] = RUNNING
         }
     }
-    logTrace "readSingeAttrStateMachine: data:${data}, state['stateMachines'] = ${state['stateMachines']}"
+    logTrace "readSingleAttrStateMachine: data:${data}, state['stateMachines'] = ${state['stateMachines']}"
 
     Integer st =    state['stateMachines']['readSingeAttrState']
     Integer retry = state['stateMachines']['readSingeAttrRetry']
     Integer maxRetries = STATE_MACHINE_MAX_RETRIES * getDiscoveryTimeoutScale()
     String fingerprintName = getFingerprintName(data.endpoint)
     String attributeName = getAttributeName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: HexUtils.integerToHexString(data.attribute, 2)])
-    logTrace "readSingeAttrStateMachine: st:${st} retry:${retry} data:${data}"
+    logTrace "readSingleAttrStateMachine: st:${st} retry:${retry} data:${data}"
     switch (st) {
         case 0:
-            logDebug "readSingeAttrStateMachine: st:${st} - idle"
-            unschedule('readSingeAttrStateMachine')
+            logDebug "readSingleAttrStateMachine: st:${st} - idle"
+            unschedule('readSingleAttrStateMachine')
             break
         case 1: // start - first check if the endpoint and the cluster are in the fingerprint
-            //logDebug "readSingeAttrStateMachine: st:${st} - checking whether attribute ${data.attribute} is in the fingerprint ${fingerprintName}"
+            //logDebug "readSingleAttrStateMachine: st:${st} - checking whether attribute ${data.attribute} is in the fingerprint ${fingerprintName}"
             if (state[fingerprintName] == null) {
                 logWarn "readAttributeSafe(): state[${fingerprintName}] is null !"
                 logWarn 'run steps A1 and A2 !'
@@ -101,7 +102,7 @@ void readSingeAttrStateMachine(Map data = null) {
                 st = 99
                 break
             }
-            logTrace "readSingeAttrStateMachine: st:${st} - found fingerprint ${fingerprintName}"
+            logTrace "readSingleAttrStateMachine: st:${st} - found fingerprint ${fingerprintName}"
             // check whether the cluster is in the fingerprint ServerList
             List<String> serverList = state[fingerprintName]['ServerList']
             if (serverList == null) {
@@ -112,10 +113,10 @@ void readSingeAttrStateMachine(Map data = null) {
                 st = 99
                 break
             }
-            logTrace "readSingeAttrStateMachine: st:${st} - found serverList ${serverList}"
+            logTrace "readSingleAttrStateMachine: st:${st} - found serverList ${serverList}"
             // convert the serverList to a list of Integers
             List<Integer> serverListInt = serverList?.collect { HexUtils.hexStringToInt(it) }
-            logTrace "readSingeAttrStateMachine: st:${st} - found serverListInt ${serverListInt}"
+            logTrace "readSingleAttrStateMachine: st:${st} - found serverListInt ${serverListInt}"
             // check whether the cluster is in the fingerprint serverListInt
             if (!serverListInt?.contains(data.cluster)) {
                 logWarn "readAttributeSafe(): state[${fingerprintName}]['ServerList'] does not contain cluster ${data.cluster} (0x${HexUtils.integerToHexString(data.cluster, 2)}) !"
@@ -135,10 +136,10 @@ void readSingeAttrStateMachine(Map data = null) {
                 st = 99
                 break
             }
-            logTrace "readSingeAttrStateMachine: st:${st} - found attributeList ${attributeList}"
+            logTrace "readSingleAttrStateMachine: st:${st} - found attributeList ${attributeList}"
             // convert the attributeList to a list of Integers
             List<Integer> attributeListInt = attributeList?.collect { HexUtils.hexStringToInt(it) }
-            logTrace "readSingeAttrStateMachine: st:${st} - found attributeListInt ${attributeListInt}"
+            logTrace "readSingleAttrStateMachine: st:${st} - found attributeListInt ${attributeListInt}"
             // check whether the attribute is in the fingerprint attributeListInt
             if (!attributeListInt?.contains(data.attribute)) {
                 logWarn "readAttributeSafe(): state[${fingerprintName}]['AttributeList'] does not contain attribute ${data.attribute} (0x${HexUtils.integerToHexString(data.attribute, 2)}) !"
@@ -157,22 +158,22 @@ void readSingeAttrStateMachine(Map data = null) {
             break
         case 2: // waiting for the attribute value
             if (state['stateMachines']['Confirmation'] == true) {
-                logTrace "readSingeAttrStateMachine: st:${st} - received ${attributeName} reading confirmation!"
+                logTrace "readSingleAttrStateMachine: st:${st} - received ${attributeName} reading confirmation!"
                 state['stateMachines']['readSingeAttrResult'] = SUCCESS
                 st = 99
             }
             else {
-                logTrace "readSingeAttrStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
+                logTrace "readSingleAttrStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
                 if (retry > maxRetries) {
-                    logWarn "readSingeAttrStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
+                    logWarn "readSingleAttrStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     state['stateMachines']['readSingeAttrResult'] = ERROR
                     st = 99
                 }
             }
             break
         case 99:
-            logDebug "readSingeAttrStateMachine: st:${st} - THE END"
+            logDebug "readSingleAttrStateMachine: st:${st} - THE END"
             st = 0
             break
         default :    // error
@@ -185,7 +186,7 @@ void readSingeAttrStateMachine(Map data = null) {
         if (data != null) {
             data['action'] = RUNNING
         }
-        runInMillis(STATE_MACHINE_PERIOD, readSingeAttrStateMachine, [overwrite: true, data: data])
+        runInMillis(STATE_MACHINE_PERIOD, readSingleAttrStateMachine, [overwrite: true, data: data])
     }
 }
 
@@ -212,7 +213,7 @@ private boolean isEndpointDisabled(Integer endpoint) {
 /**
  * This state machine checks and discoveres the GLOBAL ELEMENTS of a specific endpoint and cluster.
  *
- * Must be called this way : disoverGlobalElementsStateMachine([action: START, endpoint: Integer, cluster: Integer])
+ * Must be called this way : discoverGlobalElementsStateMachine([action: START, endpoint: Integer, cluster: Integer])
  * where:
  *      - action: START
  *      - endpoint: the endpoint to be discovered
@@ -229,7 +230,7 @@ private boolean isEndpointDisabled(Integer endpoint) {
  * The calling function must check the state['stateMachines']['discoverGlobalElementsResult'] to determine the result of the state machine execution.
  */
 
-void disoverGlobalElementsStateMachine(Map data) {
+void discoverGlobalElementsStateMachine(Map data) {
     initializeStateMachineVars()
     if (data != null) {
         if (data['action'] == START) {
@@ -239,22 +240,22 @@ void disoverGlobalElementsStateMachine(Map data) {
             data['action'] = RUNNING    // something different than START or STOP - TODO !
         }
     }
-    if (data.debug) { logDebug "disoverGlobalElementsStateMachine: data:${data}, state['stateMachines'] = ${state['stateMachines']}" }
+    if (data.debug) { logDebug "discoverGlobalElementsStateMachine: data:${data}, state['stateMachines'] = ${state['stateMachines']}" }
 
     Integer st =    state['stateMachines']['discoverGlobalElementsState']
     Integer retry = state['stateMachines']['discoverGlobalElementsRetry']
     Integer maxRetries = STATE_MACHINE_MAX_RETRIES * getDiscoveryTimeoutScale()
     //String fingerprintName = getFingerprintName(data.endpoint)
     //String attributeName = getAttributeName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: HexUtils.integerToHexString(data.attribute, 2)])
-    if (data.debug) { logDebug "disoverGlobalElementsStateMachine: st:${st} retry:${retry} data:${data}" }
+    if (data.debug) { logDebug "discoverGlobalElementsStateMachine: st:${st} retry:${retry} data:${data}" }
     switch (st) {
         case STATE_DISCOVER_GLOBAL_ELEMENTS_IDLE :  // should not happen !
-            logWarn "disoverGlobalElementsStateMachine: st:${st} - idle -> unscheduling!"
+            logWarn "discoverGlobalElementsStateMachine: st:${st} - idle -> unscheduling!"
             state['stateMachines']['discoverGlobalElementsResult'] = ERROR
-            unschedule('disoverGlobalElementsStateMachine')
+            unschedule('discoverGlobalElementsStateMachine')
             break
         case STATE_DISCOVER_GLOBAL_ELEMENTS_INIT :
-            if (data.debug) { logDebug "disoverGlobalElementsStateMachine: st:${st} endpoint ${data.endpoint} attribute ${data.attribute}- starting ..." }
+            if (data.debug) { logDebug "discoverGlobalElementsStateMachine: st:${st} endpoint ${data.endpoint} attribute ${data.attribute}- starting ..." }
             st = STATE_DISCOVER_GLOBAL_ELEMENTS_ATTRIBUTE_LIST
         // continue with the next state
         case STATE_DISCOVER_GLOBAL_ELEMENTS_ATTRIBUTE_LIST :
@@ -265,23 +266,23 @@ void disoverGlobalElementsStateMachine(Map data) {
             break
         case STATE_DISCOVER_GLOBAL_ELEMENTS_ATTRIBUTE_LIST_WAIT:
             if (state['stateMachines']['Confirmation'] == true) {
-                if (data.debug) { logDebug "disoverGlobalElementsStateMachine: st:${st} - received reading confirmation!" }
+                if (data.debug) { logDebug "discoverGlobalElementsStateMachine: st:${st} - received reading confirmation!" }
                 // here we have bridgeDescriptor/fingerprintNN : {AttributeList=[00, 01, 02, 03, FFF8, FFF9, FFFB, FFFC, FFFD]}
                 // read all the attributes from the ['AttributeList']
                 List<Map<String, String>> attributePaths = []
                 String fingerprintName = getFingerprintName(data.endpoint)
                 String stateClusterName = getStateClusterName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: 'FFFB'])
-                //logWarn "disoverGlobalElementsStateMachine: st:${st} - fingerprintName:${fingerprintName}, stateClusterName:${stateClusterName}, state[fingerprintName][stateClusterName]:${state[fingerprintName][stateClusterName]}"
+                //logWarn "discoverGlobalElementsStateMachine: st:${st} - fingerprintName:${fingerprintName}, stateClusterName:${stateClusterName}, state[fingerprintName][stateClusterName]:${state[fingerprintName][stateClusterName]}"
                 List<Integer> attributeList = []
                 if (state[fingerprintName] != null && state[fingerprintName][stateClusterName] != null) {
                     attributeList = state[fingerprintName][stateClusterName]?.collect { HexUtils.hexStringToInt(it) }
                 } else {
-                    logWarn "disoverGlobalElementsStateMachine: st:${st} - attributeList state data is null, skipping to end"
+                    logWarn "discoverGlobalElementsStateMachine: st:${st} - attributeList state data is null, skipping to end"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_END
                     break
                 }
                 if (attributeList == null || attributeList.isEmpty()) {
-                    logWarn "disoverGlobalElementsStateMachine: st:${st} - attributeList is empty, skipping to end"
+                    logWarn "discoverGlobalElementsStateMachine: st:${st} - attributeList is empty, skipping to end"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_END
                     break
                 }
@@ -294,30 +295,30 @@ void disoverGlobalElementsStateMachine(Map data) {
                 retry = 0; st = STATE_DISCOVER_GLOBAL_ELEMENTS_GLOBAL_ELEMENTS_WAIT
             }
             else {
-                logTrace "disoverGlobalElementsStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
+                logTrace "discoverGlobalElementsStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
                 if (retry > maxRetries) {
-                    logWarn "disoverGlobalElementsStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
+                    logWarn "discoverGlobalElementsStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
                 }
             }
             break
         case STATE_DISCOVER_GLOBAL_ELEMENTS_GLOBAL_ELEMENTS_WAIT:
             if (state['stateMachines']['Confirmation'] == true) {
-                if (data.debug) { logDebug "disoverGlobalElementsStateMachine: st:${st} - received reading confirmation!" }
+                if (data.debug) { logDebug "discoverGlobalElementsStateMachine: st:${st} - received reading confirmation!" }
                 st = STATE_DISCOVER_GLOBAL_ELEMENTS_END
             }
             else {
-                logTrace "disoverGlobalElementsStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
+                logTrace "discoverGlobalElementsStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
                 if (retry > maxRetries) {
-                    logWarn "disoverGlobalElementsStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
+                    logWarn "discoverGlobalElementsStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
                 }
             }
             break
         case STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR : // 98 - error
-            logWarn "disoverGlobalElementsStateMachine: st:${st} - error"
+            logWarn "discoverGlobalElementsStateMachine: st:${st} - error"
             sendInfoEvent('ERROR during the Matter Bridge and Devices discovery (STATE_DISCOVER_GLOBAL_ELEMENTS)')
             state.states['isInfo'] = false
             st = 0
@@ -325,7 +326,7 @@ void disoverGlobalElementsStateMachine(Map data) {
         case STATE_DISCOVER_GLOBAL_ELEMENTS_END : // 99 - end
             state.states['isInfo'] = false
             state['stateMachines']['discoverGlobalElementsResult'] = SUCCESS
-            if (data.debug) { logDebug "disoverGlobalElementsStateMachine: st:${st} - THE END" }
+            if (data.debug) { logDebug "discoverGlobalElementsStateMachine: st:${st} - THE END" }
             st = 0
             break
         default :    // error
@@ -340,7 +341,7 @@ void disoverGlobalElementsStateMachine(Map data) {
         if (data != null) {
             data['action'] = RUNNING
         }
-        runInMillis(STATE_MACHINE_PERIOD, disoverGlobalElementsStateMachine, [overwrite: true, data: data])
+        runInMillis(STATE_MACHINE_PERIOD, discoverGlobalElementsStateMachine, [overwrite: true, data: data])
     }
     else {
         state.states['isInfo'] = false
@@ -440,7 +441,7 @@ void discoverAllStateMachine(Map data = null) {
             break
         case DISCOVER_ALL_STATE_INIT: // start (collectBasicInfo())
             sendInfoEvent('Starting Matter Bridge and Devices discovery ...<br><br><br>')
-            if (state.bridgeDescriptor == null) { state.bridgeDescriptor = [] } // or state['bridgeDescriptor'] = [:] ?
+            if (!(state.bridgeDescriptor instanceof Map)) { state.bridgeDescriptor = [:] }
             state.states['isInfo'] = true
             state['stateMachines']['discoverAllResult'] = RUNNING
             boolean oldLogEnable = settings?.logEnable
@@ -452,7 +453,7 @@ void discoverAllStateMachine(Map data = null) {
             // break is skipped intentionally - continue with the next state
         case DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS :
             sendInfoEvent('Discovering the Matter Device...')
-            disoverGlobalElementsStateMachine([action: START, endpoint: 0, cluster: 0x001D, debug: false])
+            discoverGlobalElementsStateMachine([action: START, endpoint: 0, cluster: 0x001D, debug: false])
             stateMachinePeriod = STATE_MACHINE_PERIOD * 2
             retry = 0; st = DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS_WAIT
             break
@@ -615,8 +616,8 @@ void discoverAllStateMachine(Map data = null) {
             state.states['isInfo'] = true
             state.states['cluster'] = '001D'     // HexUtils.integerToHexString(partEndpointInt, 2)
             state.tmp = null
-            // do not call 'toBeConfirmed' and 'Confirmation' here - it is filled in the disoverGlobalElementsStateMachine() !
-            disoverGlobalElementsStateMachine([action: START, endpoint: partEndpointInt, cluster: 0x001D, debug: false])
+            // do not call 'toBeConfirmed' and 'Confirmation' here - it is filled in the discoverGlobalElementsStateMachine() !
+            discoverGlobalElementsStateMachine([action: START, endpoint: partEndpointInt, cluster: 0x001D, debug: false])
             /////////////////////////////////////////////////////////////////////////////////////////////////////////////
             stateMachinePeriod = STATE_MACHINE_PERIOD * 3
             retry = 0; st = DISCOVER_ALL_STATE_GET_PARTS_LIST_NEXT_DEVICE_WAIT_STATE
@@ -658,8 +659,8 @@ void discoverAllStateMachine(Map data = null) {
                 state.states['isInfo'] = true
                 state.states['cluster'] = '0039'     // HexUtils.integerToHexString(partEndpointInt, 2)
                 state.tmp = null
-                // do not call 'toBeConfirmed' and 'Confirmation' here - it is filled in in the disoverGlobalElementsStateMachine() !
-                disoverGlobalElementsStateMachine([action: START, endpoint: partEndpointInt, cluster: 0x0039, debug: false])
+                // do not call 'toBeConfirmed' and 'Confirmation' here - it is filled in in the discoverGlobalElementsStateMachine() !
+                discoverGlobalElementsStateMachine([action: START, endpoint: partEndpointInt, cluster: 0x0039, debug: false])
                 stateMachinePeriod = STATE_MACHINE_PERIOD * 2
                 retry = 0; st = DISCOVER_ALL_STATE_GET_BRIDGED_DEVICE_BASIC_INFO_WAIT_STATE
             }

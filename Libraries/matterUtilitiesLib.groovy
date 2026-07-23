@@ -6,7 +6,7 @@ library(
     name: 'matterUtilitiesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterUtilitiesLib.groovy',
-    version: '1.3.3',
+    version: '1.3.4',
     documentationLink: ''
 )
 /*
@@ -31,6 +31,7 @@ library(
   * ver. 1.3.1  2026-01-06 GPT-5.2 - added discoveryTimeoutScale
   * ver. 1.3.2  2026-01-26 GPT-5.2 - Minimal fix: make decodeTLVContainer() handle nested containers; reduced warning level logging
   * ver. 1.3.3  2026-02-18 kkossev   -(dev.branch)
+  * ver. 1.3.4  2026-07-23 kkossev   -(dev.branch) - bug fixes;
   * 
   *                        TODO: remove the custom decodeTLV() !!!!!!!!!!
 */
@@ -38,8 +39,8 @@ library(
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterUtilitiesLibVersion = '1.3.3'
-@Field static final String matterUtilitiesLibStamp   = '2026/02/18 10:03 PM'
+@Field static final String matterUtilitiesLibVersion = '1.3.4'
+@Field static final String matterUtilitiesLibStamp   = '2026/07/23 10:03 PM'
 
 metadata {
     // no capabilities
@@ -81,9 +82,9 @@ void readAttributeSafe(List<String> parameters /*String endpointPar, String clus
     String  endpointId  = HexUtils.integerToHexString(endpointInt, 1)
     String  clusterId   = HexUtils.integerToHexString(clusterInt, 2)
     String  attrId      = HexUtils.integerToHexString(attrInt, 2)
-    logDebug "readAttributeSafe(endpoint:${endpointId}, cluster:${clusterId}, attribute:${attrId}) -> starting readSingeAttrStateMachine!"
+    logDebug "readAttributeSafe(endpoint:${endpointId}, cluster:${clusterId}, attribute:${attrId}) -> starting readSingleAttrStateMachine!"
 
-    readSingeAttrStateMachine([action: START, endpoint: endpointInt, cluster: clusterInt, attribute: attrInt])
+    readSingleAttrStateMachine([action: START, endpoint: endpointInt, cluster: clusterInt, attribute: attrInt])
 }
 
 void readAttribute(List<String> parameters) {
@@ -132,7 +133,7 @@ void removeAllSubscriptions(List<String> parameters) {
     logTrace "removeAllSubscriptions(${parameters}) ..."
     clearSubscriptionsState()
     unsubscribe()
-    sendInfoEvent('all subsciptions are removed!', 're-discover the devices again ...')
+    sendInfoEvent('all subscriptions are removed!', 're-discover the devices again ...')
 }
 
 void removeAllDevices(List<String> parameters) {
