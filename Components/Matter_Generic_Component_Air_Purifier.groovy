@@ -21,11 +21,7 @@
  * ver. 1.2.1  2026-01-29 kkossev   - added common library matterCommonLib
  * ver. 1.2.2  2026-02-19 kkossev   - moved common methods to matterCommonLib
  * ver. 1.2.3  2026-05-24 kkossev   - featureMap bug fix
- * ver. 1.2.4  2026-07-25 kkossev   - bug fixes
- * 
- *                                   TODO: use safeToHex methods;  decodeIeee754Float method float value
- *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
- *                                   TODO: add cluster 0202 'Window Covering' endpointId:"0B"
+ * ver. 1.2.4  2026-07-25 kkossev   - bug fixes; removed parse(String); added HEPA/carbon filter monitoring (0x0071/0x0072); decodeIeee754Float() bug fix
  *
 */
 
@@ -34,7 +30,7 @@ import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 
 @Field static final String matterComponentAirPurifierVersion = '1.2.4'
-@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 6:57 PM'
+@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 9:53 AM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 
@@ -60,10 +56,13 @@ metadata {
         command 'setSpeed', [[name:'Fan speed*', type:'ENUM', description:'Select the desired fan speed', constraints:SUPPORTED_FAN_SPEEDS]]
         command 'toggle'
         command 'setIndicatorStatus', [[name:'Status*', type:'ENUM', description:'Select LED indicators status on the device', constraints:['on', 'off']]]
+        command 'resetFilterCondition', [[name:'Filter*', type:'ENUM', description:'Reset the filter condition counter - use it after physically replacing the filter', constraints:['HEPA', 'activated carbon']]]
         
         // Attributes for devices.Ikea_E2006
         attribute 'airQuality', 'enum', ['good', 'moderate', 'unhealthy for sensitive groups', 'unhealthy', 'hazardous']
-        attribute 'filterUsage', 'number'
+        attribute 'filterUsage', 'number'                       // HEPA filter, cluster 0x0071 - percent USED (100 = spent)
+        attribute 'carbonFilterStatus', 'enum', ['normal', 'replace']    // activated carbon filter, cluster 0x0072
+        attribute 'carbonFilterUsage', 'number'                 // activated carbon filter, cluster 0x0072 - percent USED
         attribute 'pm25', 'number'
         attribute 'auto', 'enum', ['on', 'off']
         attribute 'indicatorStatus', 'enum', ['on', 'off']
@@ -227,6 +226,12 @@ void cycleSpeed() {
     parent?.componentSetSpeed(device, newSpeed)
 }
 
+// Resource Monitoring ResetCondition - cluster 0x0071 (HEPA) / 0x0072 (activated carbon)
+void resetFilterCondition(String filter = 'HEPA') {
+    if (logEnable) { log.debug "${device.displayName} resetting the ${filter} filter condition ..." }
+    parent?.componentResetFilterCondition(device, filter)
+}
+
 void setIndicatorStatus(String status) {
     if (logEnable) { log.debug "Setting status indicator to: ${status}" }
     sendEvent(name:'indicatorStatus', value:status, descriptionText:"Indicator status turned ${status}", type:'digital')
@@ -276,19 +281,54 @@ private void logsOff() {
 
 
 /**
- * Decode IEEE754 single-precision float from hex string
- * @param hexValue Hex string (e.g., "40A00000")
- * @return Rounded integer value
+ * Decode a Matter 'single' (IEEE754 float32) attribute value.
+ *
+ * The value always arrives here as a String, because processUnprocessed() re-parses the stringified
+ * descMap that the parent sends in the 'unprocessed' event. It can be:
+ *    - an 8-hex-digit float32 bit pattern : '40A00000' -> 5.0
+ *    - a plain decimal, with or without a fractional part, sign or exponent : '12.5', '450', '-1.25E-4'
+ *    - the string 'null', for the nullable attributes (MinMeasuredValue, MaxMeasuredValue, ...)
+ * A float32 bit pattern is ALWAYS exactly 8 hex characters, so the length is what discriminates the
+ * two forms - do not go back to testing for a decimal point, whole numbers like '450' have none and
+ * were previously decoded as 0x450 bits, i.e. silently reported as 0.
+ * The only ambiguous input is an 8-digit all-decimal string ('12345678'), which is read as a bit
+ * pattern - harmless here, as neither CO2 (ppm) nor PM2.5 (ug/m3) ever reaches 8 digits.
+ *
+ * @param rawValue the raw attribute value as a String
+ * @return the decoded value as a Double, or null when it is absent or cannot be decoded
  */
-Integer decodeIeee754Float(String hexValue) {
-    // Minimal version: expects valid String input (hex or decimal)
-    if (hexValue == null) return null
-    if (hexValue =~ /^\d+\.\d+$/) {
-        return Math.round(Float.parseFloat(hexValue))
-    } else {
-        Integer bits = Integer.parseUnsignedInt(hexValue, 16)
-        return Math.round(Float.intBitsToFloat(bits))
+Double decodeIeee754Float(String rawValue) {
+    String value = rawValue?.trim()
+    if (!value || value.equalsIgnoreCase('null')) { return null }
+    try {
+        if (value ==~ /^[0-9A-Fa-f]{8}$/) {
+            return (Double) Float.intBitsToFloat(Integer.parseUnsignedInt(value, 16))
+        }
+        return safeToDouble(value, null)
+    } catch (Exception e) {
+        logWarn "decodeIeee754Float: cannot decode '${rawValue}' : ${e.message}"
+        return null
     }
+}
+
+/**
+ * Log one of the informational float32 attributes of the Concentration Measurement clusters
+ * (0x040D CO2 and 0x042A PM2.5) - MinMeasuredValue, MaxMeasuredValue, Uncertainty, ...
+ * Only used in the 'Info' mode, no events are sent.
+ * @param descMap the re-parsed description map
+ * @param attrInt the attribute id, used to look up the attribute name
+ * @param prefix  the Info-mode log line prefix
+ */
+void logConcentrationInfoValue(Map descMap, Integer attrInt, String prefix) {
+    String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
+    String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
+    String attrName = ConcentrationMeasurementClusterAttributes[attrInt] ?: "attribute 0x${descMap.attrId}"
+    Double decoded = decodeIeee754Float(descMap.value)
+    if (decoded == null) {
+        logInfo "${prefix}${clusterName} ${attrName}: <i>not available</i> (raw: ${descMap.value})"
+        return
+    }
+    logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
 }
 
 void refresh() {
@@ -381,15 +421,12 @@ void processUnprocessed(Map description) {
             if (txtEnable) { log.info "${descriptionText}" }
             break
         case '042A_0000': // attribute 'pm25', 'number'
-            Integer pm25Int
-            if (descMap.value instanceof Number) {
-                pm25Int = Math.round(descMap.value as Float)
-            } else if (descMap.value instanceof String) {
-                pm25Int = decodeIeee754Float(descMap.value)
-            } else {
-                logWarn "Unexpected type for PM2.5 value: value=${descMap.value}, not Number or String"
+            Double pm25Decoded = decodeIeee754Float(descMap.value)
+            if (pm25Decoded == null) {
+                logWarn "PM2.5 value could not be decoded: value=${descMap.value}"
                 return
             }
+            Integer pm25Int = Math.round(pm25Decoded) as Integer
             if (logEnable) { log.debug "${device.displayName} PM2.5 raw: ${descMap.value}" }
             if (logEnable) { log.debug "${device.displayName} PM2.5 decoded: ${pm25Int} μg/m³" }
             // Check threshold from preference
@@ -405,15 +442,12 @@ void processUnprocessed(Map description) {
             if (txtEnable) { log.info "${descriptionText}" }
             break
         case '040D_0000': // CO₂ Concentration Measurement
-            Integer co2
-            if (descMap.value instanceof Number) {
-                co2 = Math.round(descMap.value as Float)
-            } else if (descMap.value instanceof String) {
-                co2 = decodeIeee754Float(descMap.value)
-            } else {
-                logWarn "Unexpected type for CO₂ value: value=${descMap.value}, not Number or String"
+            Double co2Decoded = decodeIeee754Float(descMap.value)
+            if (co2Decoded == null) {
+                logWarn "CO₂ value could not be decoded: value=${descMap.value}"
                 return
             }
+            Integer co2 = Math.round(co2Decoded) as Integer
             if (logEnable) { log.debug "${device.displayName} CO₂ raw: ${descMap.value}" }
             if (logEnable) { log.debug "${device.displayName} CO₂ decoded: ${co2} ppm" }
             // Check threshold from preference
@@ -433,57 +467,21 @@ void processUnprocessed(Map description) {
         case '040D_0001': // CO₂ MinMeasuredValue (IEEE754 float)
         case '042A_0001': // PM2.5 MinMeasuredValue (IEEE754 float)
             if (isInfoMode) {
-                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
-                String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
-                Integer decoded
-                if (descMap.value instanceof Number) {
-                    decoded = Math.round(descMap.value as Float)
-                } else if (descMap.value instanceof String) {
-                    decoded = decodeIeee754Float(descMap.value)
-                } else {
-                    logWarn "Unexpected type for MinMeasuredValue: value=${descMap.value}, not Number or String"
-                    return
-                }
-                String attrName = ConcentrationMeasurementClusterAttributes[0x0001]
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
+                logConcentrationInfoValue(descMap, 0x0001, prefix)
             }
             break
-        
+
         case '040D_0002': // CO₂ MaxMeasuredValue (IEEE754 float)
         case '042A_0002': // PM2.5 MaxMeasuredValue (IEEE754 float)
             if (isInfoMode) {
-                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
-                String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
-                Integer decoded
-                if (descMap.value instanceof Number) {
-                    decoded = Math.round(descMap.value as Float)
-                } else if (descMap.value instanceof String) {
-                    decoded = decodeIeee754Float(descMap.value)
-                } else {
-                    logWarn "Unexpected type for MaxMeasuredValue: value=${descMap.value}, not Number or String"
-                    return
-                }
-                String attrName = ConcentrationMeasurementClusterAttributes[0x0002]
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
+                logConcentrationInfoValue(descMap, 0x0002, prefix)
             }
             break
-        
+
         case '040D_0007': // CO₂ Uncertainty (IEEE754 float)
         case '042A_0007': // PM2.5 Uncertainty (IEEE754 float)
             if (isInfoMode) {
-                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
-                String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
-                Integer decoded
-                if (descMap.value instanceof Number) {
-                    decoded = Math.round(descMap.value as Float)
-                } else if (descMap.value instanceof String) {
-                    decoded = decodeIeee754Float(descMap.value)
-                } else {
-                    logWarn "Unexpected type for Uncertainty: value=${descMap.value}, not Number or String"
-                    return
-                }
-                String attrName = ConcentrationMeasurementClusterAttributes[0x0007]
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
+                logConcentrationInfoValue(descMap, 0x0007, prefix)
             }
             break
         

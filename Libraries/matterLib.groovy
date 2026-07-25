@@ -6,7 +6,7 @@ library(
     name: 'matterLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterLib.groovy',
-    version: '1.4.4',
+    version: '1.4.5',
     documentationLink: ''
 )
 /*
@@ -33,14 +33,15 @@ library(
   * ver. 1.4.2  2026-02-15 kkossev  - minor fixes and improvements
   * ver. 1.4.3  2026-02-16 kkossev  - added BooleanStateConfiguration
   * ver. 1.4.4  2026-02-16 kkossev  - (dev. branch) added Camera AV Stream Management cluster attributes
+  * ver. 1.4.5  2026-07-25 kkossev  - added ResourceMonitoring cluster attributes (HEPA 0x0071 and activated carbon 0x0072 filter monitoring)
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterLibVersion = '1.4.4'
-@Field static final String matterLibStamp   = '2026/05/30 2:03 PM'
+@Field static final String matterLibVersion = '1.4.5'
+@Field static final String matterLibStamp   = '2026/07/25 9:53 AM'
 
 // no metadata section for matterLib
 
@@ -180,6 +181,8 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0045') { return BooleanStateClusterAttributes }
     if (cluster == '0080') { return BooleanStateConfigurationClusterAttributes }
     if (cluster == '005B') { return AirQualityClusterAttributes }
+    if (cluster == '0071') { return ResourceMonitoringClusterAttributes }    // HEPAFilterMonitoring
+    if (cluster == '0072') { return ResourceMonitoringClusterAttributes }    // ActivatedCarbonFilterMonitoring
     if (cluster == '0090') { return ElectricalPowerMeasurementAttributes}
     if (cluster == '0091') { return ElectricalEnergyMeasurementAttributes}
     if (cluster == '0101') { return DoorLockClusterAttributes }
@@ -227,6 +230,73 @@ Map getEventsMapByClusterId(String cluster) {
     0x0003  : 'PartsList',
     0x0004  : 'TagList'        // Semantic tags for endpoint identification
 ]
+
+/*
+ * Descriptor TagList (0x001D:0x0004) - Matter Standard Namespaces for the SemanticTagStruct.
+ *
+ * Only the namespaces that have been verified against real device data are listed here. Everything else
+ * is rendered numerically by getSemanticTagName() - a wrong name is worse than a raw number, so DO NOT
+ * add entries from memory; add them only from the Matter spec 'Standard Namespaces' section.
+ *
+ * Verified 2026-07-25 against an IKEA DIRIGERA bridge (STYRBAR-style remotes), where the two namespaces
+ * cross-validate each other : endpoint 0x17 reports Position.Top + Switches.Up, endpoint 0x18 reports
+ * Position.Bottom + Switches.Down, and endpoint 0x15 reports Switches.Custom with Label 'Shortcut'
+ * (the spec requires the Label field exactly for the Custom tag).
+ */
+@Field static final Map<Integer, String> SemanticTagNamespaces = [
+    0x08    : 'Position',
+    0x43    : 'Switches'
+]
+
+@Field static final Map<Integer, String> SemanticTagPositionNamespace = [      // namespace 0x08
+    0x00    : 'Left',
+    0x01    : 'Right',
+    0x02    : 'Top',
+    0x03    : 'Bottom',
+    0x04    : 'Middle',
+    0x05    : 'Row',
+    0x06    : 'Column'
+]
+
+@Field static final Map<Integer, String> SemanticTagSwitchesNamespace = [      // namespace 0x43
+    0x00    : 'On',
+    0x01    : 'Off',
+    0x02    : 'Toggle',
+    0x03    : 'Up',
+    0x04    : 'Down',
+    0x05    : 'Next',
+    0x06    : 'Previous',
+    0x07    : 'Enter/OK/Select',
+    0x08    : 'Custom'          // the Label field carries the manufacturer's name for the button
+]
+
+Map<Integer, String> getSemanticTagsMapByNamespace(Integer namespaceId) {
+    if (namespaceId == null) { return null }
+    if (namespaceId == 0x08) { return SemanticTagPositionNamespace }
+    if (namespaceId == 0x43) { return SemanticTagSwitchesNamespace }
+    return null
+}
+
+/**
+ * Build a human readable name for one decoded semantic tag.
+ * Unknown namespaces and tags degrade to their numeric form instead of being guessed.
+ * @return e.g. "Position.Top", "Switches.Custom 'Shortcut'", "Position.0x63", "ns:0x63 tag:0x07"
+ */
+String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, String label) {
+    String name
+    if (mfgCode != null) {      // manufacturer-specific namespace - the standard tables do not apply
+        name = "mfg:0x${String.format('%04X', mfgCode)} ns:0x${String.format('%02X', namespaceId ?: 0)} tag:0x${String.format('%02X', tag ?: 0)}"
+    }
+    else {
+        String namespaceName = SemanticTagNamespaces[namespaceId]
+        String tagName = getSemanticTagsMapByNamespace(namespaceId)?.get(tag)
+        if (namespaceName != null && tagName != null) { name = "${namespaceName}.${tagName}" }
+        else if (namespaceName != null)               { name = "${namespaceName}.0x${String.format('%02X', tag ?: 0)}" }
+        else { name = "ns:0x${String.format('%02X', namespaceId ?: 0)} tag:0x${String.format('%02X', tag ?: 0)}" }
+    }
+    if (label) { name += " '${label}'" }
+    return name
+}
 
 // 9.6. Binding Cluster 0x001E
 @Field static final Map<Integer, String> BindingClusterAttributes = [
@@ -606,6 +676,29 @@ Map getEventsMapByClusterId(String cluster) {
     0x0004  : 'AlarmsSuppressed',           // BITMAP8, R/W - suppressed alarms
     0x0005  : 'AlarmsEnabled',              // BITMAP8, R/W - enabled alarms
     0x0006  : 'AlarmsSupported'             // BITMAP8, R  - supported alarms
+]
+
+// Matter 1.2+ : Resource Monitoring Cluster - the common base of HEPAFilterMonitoring 0x0071 and
+// ActivatedCarbonFilterMonitoring 0x0072 (and the other *FilterMonitoring / *CartridgeMonitoring clusters).
+// All of them share the same attribute set, so one map serves them all.
+@Field static final Map<Integer, String> ResourceMonitoringClusterAttributes = [
+    0x0000  : 'Condition',              // UINT8,  R - percent; the meaning depends on DegradationDirection!
+    0x0001  : 'DegradationDirection',   // ENUM8,  R - 0 = Up (Condition rises as the resource degrades), 1 = Down (Condition falls)
+    0x0002  : 'ChangeIndication',       // ENUM8,  R - 0 = OK, 1 = Warning, 2 = Critical
+    0x0003  : 'InPlaceIndicator',       // BOOL,   R - true when the resource is installed
+    0x0004  : 'LastChangedTime',        // EPOCH-S, R/W, nullable - when the resource was last changed
+    0x0005  : 'ReplacementProductList'  // LIST,   R - identifiers of suitable replacement products
+]
+
+@Field static final Map<Integer, String> ResourceMonitoringDegradationDirection = [
+    0x00    : 'Up',                     // Condition counts UP as the resource degrades   -> Condition is the percent USED
+    0x01    : 'Down'                    // Condition counts DOWN as the resource degrades -> Condition is the percent REMAINING
+]
+
+@Field static final Map<Integer, String> ResourceMonitoringChangeIndication = [
+    0x00    : 'OK',                     // the resource does not need to be changed
+    0x01    : 'Warning',                // the resource will need to be changed soon
+    0x02    : 'Critical'                // the resource needs to be changed now
 ]
 
 // 5.2.6 Door Lock Cluster 0x0101 (257)

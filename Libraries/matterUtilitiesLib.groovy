@@ -169,73 +169,204 @@ boolean utilities(String commandLine=null) {
     return true
 }
 
-// TODO - refactor or remove?
-void collectBasicInfo(Integer endpoint = 0, Integer timePar = 1, boolean fast = false) {
-    Integer time = timePar
-    // first thing to do is to read the Bridge (ep=0) Descriptor Cluster (0x001D) attribute 0XFFFB and store the ServerList in state.bridgeDescriptor['ServerList']
-    // also, the DeviceTypeList ClientList and PartsList are stored in state.bridgeDescriptor
-    requestAndCollectAttributesValues(endpoint, cluster = 0x001D, time, fast)  // Descriptor Cluster - DeviceTypeList, ServerList, ClientList, PartsList
-
-    // next - fill in all the ServerList clusters attributes list in the fingerprint
-    time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
-    scheduleRequestAndCollectServerListAttributesList(endpoint.toString(), time, fast)
-
-    // collect the BasicInformation Cluster attributes
-    time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
-    String fingerprintName = getFingerprintName(endpoint)
-    if (state[fingerprintName] == null) {
-        logWarn "collectBasicInfo(): state.${fingerprintName} is null !"
-        state[fingerprintName]
-        return
-    }
-    List<String> serverList = state[fingerprintName]['ServerList']
-    logDebug "collectBasicInfo(): endpoint=${endpoint}, fingerprintName=${fingerprintName}, serverList=${serverList} "
-
-    if (endpoint == 0) {
-        /* groovylint-disable-next-line ConstantIfExpression */
-        if ('0028' in serverList) {
-            requestAndCollectAttributesValues(endpoint, cluster = 0x0028, time, fast) // Basic Information Cluster
-            time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
-        }
-        else {
-            logWarn "collectBasicInfo(): BasicInformationCluster 0x0028 endpoint:${endpoint} is <b>not in the ServerList !</b>"
-        }
-    }
-    else {
-        if ('0039' in serverList) {
-            requestAndCollectAttributesValues(endpoint, cluster = 0x0039, time, fast) // Bridged Device Basic Information Cluster
-            time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
-        }
-        else {
-            logWarn "collectBasicInfo(): BridgedDeviceBasicInformationCluster 0x0039 endpoint:${endpoint} is <b>not in the ServerList !</b>"
-        }
-    }
-    runIn(time as int, 'delayedInfoEvent', [overwrite: true, data: [info: 'Basic Bridge Discovery finished', descriptionText: '']])
+// NOTE: the former 'timePar' and 'fast' parameters are gone - the collector is now driven by the replies,
+// not by a fixed schedule, so there is nothing left to tune per call. See infoCollectStateMachine() below.
+void collectBasicInfo(Integer endpoint = 0) {
+    // Descriptor first (it fills in the ServerList), then the attribute lists of every ServerList cluster,
+    // then the BasicInformation / BridgedDeviceBasicInformation cluster - resolved once the ServerList is known.
+    startInfoCollect(endpoint, ['001D', 'SERVERLIST', 'BASICINFO'], 'Basic Bridge Discovery finished')
 }
 
-// TODO - refactor or remove?
-void requestExtendedInfo(Integer endpoint = 0, Integer timePar = 15, boolean fast = false) {
-    Integer time = timePar
+void requestExtendedInfo(Integer endpoint = 0) {
     List<String> serverList = state[getFingerprintName(endpoint)]?.ServerList
-    logWarn "requestExtendedInfo(): serverList:${serverList} endpoint=${endpoint} getFingerprintName = ${getFingerprintName(endpoint)}"
     if (serverList == null) {
-        logWarn 'getInfo(): serverList is null!'
+        logWarn 'requestExtendedInfo(): serverList is null!'
         return
     }
-    serverList.each { cluster ->
-        Integer clusterInt = HexUtils.hexStringToInt(cluster)
+    List<String> queue = []
+    serverList.each { String cluster ->
+        Integer clusterInt = safeHexToInt(cluster, -1)
+        if (clusterInt < 0) { return }
         if (endpoint != 0 && (clusterInt in [0x2E, 0x41])) {
             logWarn "requestExtendedInfo(): skipping endpoint ${endpoint}, cluster:${clusterInt} (0x${cluster}) - KNOWN TO CAUSE Zemismart M1 to crash !"
             return
         }
-        logDebug "requestExtendedInfo(): endpointInt:${endpoint} (0x${HexUtils.integerToHexString(safeToInt(endpoint), 1)}),  clusterInt:${clusterInt} (0x${cluster}),  time:${time}"
-        /* groovylint-disable-next-line ParameterReassignment */
-        requestAndCollectAttributesValues(endpoint, clusterInt, time, fast = false)
-        time += (fast ? SHORT_TIMEOUT : LONG_TIMEOUT) * getDiscoveryTimeoutScale()
+        queue.add(cluster)
+    }
+    startInfoCollect(endpoint, queue, 'Extended Bridge Discovery finished')
+}
+
+/*
+ * ---------------------------------------------------------------------------------------------------------
+ *  getInfo() collector state machine
+ *
+ *  Replaces the original fixed runIn() schedule, which waited 3*scale seconds before reading the values and
+ *  12*scale seconds before printing them, for EVERY cluster - a 'Basic' run took ~91 seconds at scale 2, of
+ *  which about 2 seconds was actual Matter traffic. Every step now advances as soon as the reply is seen by
+ *  checkStateMachineConfirmation(); the old delays survive only as the timeout safety net.
+ *
+ *  The queue holds 4-char cluster hex strings plus two tokens:
+ *      'SERVERLIST' - read the AttributeList (0xFFFB) of every cluster in the endpoint's ServerList
+ *      'BASICINFO'  - resolved at run time to 0028 (the bridge) or 0039 (a bridged device), which can only
+ *                     be decided after the Descriptor has actually been read.
+ *
+ *  NOTE: state.states['isInfo'], state.states['cluster'] and state.tmp are owned by
+ *  requestMatterClusterAttributesList() / logRequestedClusterAttrResult() - this machine must not set them.
+ * ---------------------------------------------------------------------------------------------------------
+ */
+@Field static final Integer INFO_COLLECT_PERIOD    = 300    // milliseconds between the state machine ticks
+// Per-step timeout, multiplied by discoveryTimeoutScale : ~5s at 1x, ~10s at 2x, ~15s at 3x.
+// Keep it modest - a 'Basic' run has 5 waiting steps, so this is the worst case divided by 5. A bridge that
+// answers a single attribute read in more than 5 seconds is unreachable for practical purposes anyway
+// (compare MAX_PING_MILISECONDS = 15000 in the parent driver).
+@Field static final Integer INFO_COLLECT_MAX_TICKS = 17
+
+@Field static final Integer INFO_STATE_IDLE             = 0
+@Field static final Integer INFO_STATE_NEXT             = 1
+@Field static final Integer INFO_STATE_ATTR_LIST        = 2
+@Field static final Integer INFO_STATE_ATTR_LIST_WAIT   = 3
+@Field static final Integer INFO_STATE_VALUES           = 4
+@Field static final Integer INFO_STATE_VALUES_WAIT      = 5
+@Field static final Integer INFO_STATE_SERVER_LIST      = 6
+@Field static final Integer INFO_STATE_SERVER_LIST_WAIT = 7
+@Field static final Integer INFO_STATE_END              = 99
+
+void startInfoCollect(Integer endpoint, List<String> queue, String finishedText) {
+    if (state['stateMachines'] == null) { state['stateMachines'] = [:] }
+    if (state['states'] == null) { state['states'] = [:] }
+    if (queue == null || queue.isEmpty()) {
+        logWarn 'startInfoCollect(): nothing to collect!'
+        return
+    }
+    state['states']['isPing'] = false
+    state['stateMachines']['infoEndpoint'] = endpoint
+    state['stateMachines']['infoQueue'] = queue
+    state['stateMachines']['infoIndex'] = 0
+    state['stateMachines']['infoFinished'] = finishedText
+    state['stateMachines']['infoState'] = INFO_STATE_NEXT
+    state['stateMachines']['infoRetry'] = 0
+    logDebug "startInfoCollect(): endpoint=${endpoint} queue=${queue}"
+    unschedule('infoCollectStateMachine')
+    runInMillis(INFO_COLLECT_PERIOD, 'infoCollectStateMachine', [overwrite: true])
+}
+
+void infoCollectStateMachine() {
+    if (state['stateMachines'] == null) { state['stateMachines'] = [:] }
+    Integer st = safeToInt(state['stateMachines']['infoState'], INFO_STATE_IDLE)
+    Integer retry = safeToInt(state['stateMachines']['infoRetry'], 0)
+    Integer endpoint = safeToInt(state['stateMachines']['infoEndpoint'], 0)
+    Integer index = safeToInt(state['stateMachines']['infoIndex'], 0)
+    List<String> queue = (state['stateMachines']['infoQueue'] ?: []) as List
+    Integer maxTicks = INFO_COLLECT_MAX_TICKS * getDiscoveryTimeoutScale()
+    String entry = (index >= 0 && index < queue.size()) ? queue[index] : null
+    Integer entryCluster = (entry != null) ? safeHexToInt(entry, -1) : -1
+    boolean confirmed = (state['stateMachines']['Confirmation'] == true)
+    logTrace "infoCollectStateMachine: st:${st} retry:${retry} index:${index} entry:${entry}"
+
+    switch (st) {
+        case INFO_STATE_NEXT :
+            if (entry == null) { st = INFO_STATE_END; break }
+            if (entry == 'SERVERLIST') { st = INFO_STATE_SERVER_LIST; break }
+            if (entry == 'BASICINFO') {
+                // the ServerList is known only now, after the Descriptor has been read
+                String wanted = (endpoint == 0) ? '0028' : '0039'
+                List<String> knownServerList = state[getFingerprintName(endpoint)]?.ServerList ?: []
+                if (!(wanted in knownServerList)) {
+                    logWarn "collectBasicInfo(): cluster 0x${wanted} is <b>not in the ServerList</b> of endpoint ${endpoint} !"
+                    state['stateMachines']['infoIndex'] = index + 1
+                    break       // stays in INFO_STATE_NEXT
+                }
+                queue[index] = wanted
+                state['stateMachines']['infoQueue'] = queue
+            }
+            st = INFO_STATE_ATTR_LIST
+            break
+        case INFO_STATE_ATTR_LIST :
+            if (entryCluster < 0) {
+                logWarn "infoCollectStateMachine: invalid cluster '${entry}' - skipped"
+                state['stateMachines']['infoIndex'] = index + 1
+                st = INFO_STATE_NEXT
+                break
+            }
+            state['stateMachines']['toBeConfirmed'] = [endpoint, entryCluster, 0xFFFB]
+            state['stateMachines']['Confirmation'] = false
+            requestMatterClusterAttributesList([endpoint: endpoint, cluster: entryCluster])
+            retry = 0; st = INFO_STATE_ATTR_LIST_WAIT
+            break
+        case INFO_STATE_ATTR_LIST_WAIT :
+            if (confirmed) {
+                st = INFO_STATE_VALUES
+            }
+            else {
+                retry++
+                if (retry > maxTicks) {
+                    logWarn "infoCollectStateMachine: timeout waiting for the AttributeList of cluster ${entry} (endpoint ${endpoint})"
+                    st = INFO_STATE_VALUES      // try the values anyway - an older AttributeList may still be in the state
+                }
+            }
+            break
+        case INFO_STATE_VALUES :
+            state['stateMachines']['Confirmation'] = false
+            Integer lastAttr = requestMatterClusterAttributesValues([endpoint: endpoint, cluster: entryCluster])
+            if (lastAttr == null) {
+                logWarn "infoCollectStateMachine: no attributes to read for cluster ${entry} (endpoint ${endpoint})"
+                logRequestedClusterAttrResult([endpoint: endpoint, cluster: entryCluster])
+                state['stateMachines']['infoIndex'] = index + 1
+                retry = 0; st = INFO_STATE_NEXT
+                break
+            }
+            state['stateMachines']['toBeConfirmed'] = [endpoint, entryCluster, lastAttr]
+            retry = 0; st = INFO_STATE_VALUES_WAIT
+            break
+        case INFO_STATE_VALUES_WAIT :
+            if (!confirmed) {
+                retry++
+                if (retry <= maxTicks) { break }
+                logWarn "infoCollectStateMachine: timeout waiting for the attribute values of cluster ${entry} (endpoint ${endpoint}) - logging what was received"
+            }
+            logRequestedClusterAttrResult([endpoint: endpoint, cluster: entryCluster])
+            state['stateMachines']['infoIndex'] = index + 1
+            retry = 0; st = INFO_STATE_NEXT
+            break
+        case INFO_STATE_SERVER_LIST :
+            List<String> burstList = state[getFingerprintName(endpoint)]?.ServerList ?: []
+            if (burstList.isEmpty()) {
+                logWarn "infoCollectStateMachine: the ServerList of endpoint ${endpoint} is empty - skipping the attribute lists"
+                state['stateMachines']['infoIndex'] = index + 1
+                st = INFO_STATE_NEXT
+                break
+            }
+            // requestAndCollectServerListAttributesList() reads 0xFFFB of each cluster, in the ServerList order
+            state['stateMachines']['toBeConfirmed'] = [endpoint, safeHexToInt(burstList.last(), 0), 0xFFFB]
+            state['stateMachines']['Confirmation'] = false
+            requestAndCollectServerListAttributesList([endpointPar: endpoint.toString()])
+            retry = 0; st = INFO_STATE_SERVER_LIST_WAIT
+            break
+        case INFO_STATE_SERVER_LIST_WAIT :
+            if (!confirmed) {
+                retry++
+                if (retry <= maxTicks) { break }
+                logWarn "infoCollectStateMachine: timeout waiting for the ServerList attribute lists (endpoint ${endpoint})"
+            }
+            state['stateMachines']['infoIndex'] = index + 1
+            retry = 0; st = INFO_STATE_NEXT
+            break
+        case INFO_STATE_END :
+            state['states']['isInfo'] = false
+            sendInfoEvent(state['stateMachines']['infoFinished'] ?: 'Bridge Discovery finished')
+            st = INFO_STATE_IDLE
+            break
+        default :
+            state['states']['isInfo'] = false
+            st = INFO_STATE_IDLE
+            break
     }
 
-    runIn(time, 'delayedInfoEvent', [overwrite: true, data: [info: 'Extended Bridge Discovery finished', descriptionText: '']])
-    logDebug "requestExtendedInfo(): jobs scheduled for total time: ${time} seconds"
+    state['stateMachines']['infoState'] = st
+    state['stateMachines']['infoRetry'] = retry
+    if (st != INFO_STATE_IDLE) {
+        runInMillis(INFO_COLLECT_PERIOD, 'infoCollectStateMachine', [overwrite: true])
+    }
 }
 
 void minimizeStateVariables(List<String> parameters) {

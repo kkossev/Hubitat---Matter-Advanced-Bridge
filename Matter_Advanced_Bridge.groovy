@@ -82,12 +82,7 @@
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
  *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
- *                                   TODO: decode [0013] CapabilityMinima = 1524000324010318 [0012] UniqueID = 4A6A0276A1834629
  *                                   TODO: reset statistics on Hub reboot
- *                                   TODO: TLV decode [0004] TagList = [24, 2408, 34151802, 24, 2443, 34151800, 24, 2443, 34151803, 24, 2443, 08032C08]
- *                                   TODO: add cluster 0071 'HEPAFilterMonitoring'
- *                                   TODO: add cluster 0202 'Window Covering'
- *                                   TODO: check if duplicated:  updateChildFingerprintData() and copyEntireFingerprintToChild(); 
  *
  */
 
@@ -111,8 +106,8 @@ static String timeStamp() { '2026/07/25 9:19 AM' }
 @Field static final Integer MAX_PING_MILISECONDS = 15000     // rtt more than 15 seconds will be ignored
 @Field static final Integer PRESENCE_COUNT_THRESHOLD = 2     // missing 3 checks will set the device healthStatus to offline
 @Field static final String  UNKNOWN = 'UNKNOWN'
-@Field static final Integer SHORT_TIMEOUT  = 7
-@Field static final Integer LONG_TIMEOUT   = 15
+@Field static final Integer SHORT_TIMEOUT  = 7      // unused since 1.9.0 - the getInfo() collector is reply-driven
+@Field static final Integer LONG_TIMEOUT   = 15     // unused since 1.9.0 - see infoCollectStateMachine()
 @Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 0    // was 1
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT = 600
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL = 0xFFFF
@@ -170,7 +165,7 @@ metadata {
         if (_DEBUG) {
             command 'getInfo', [
                     [name:'infoType', type: 'ENUM', description: 'Bridge Info Type', constraints: ['Basic', 'Extended']],   // if the parameter name is 'type' - shows a drop-down list of the available drivers!
-                    [name:'endpoint', type: 'STRING', description: 'Endpoint', constraints: ['STRING']]
+                    [name:'endpoint', type: 'STRING', description: 'Endpoint (decimal, or hex with a 0x prefix) - 0 is the Bridge itself', constraints: ['STRING']]
             ]
             command 'test', [[name: 'test', type: 'STRING', description: 'test', defaultValue : '']]
         }
@@ -275,6 +270,18 @@ metadata {
     // Air Quality Cluster
     0x005B : [attributes: 'AirQualityClusterAttributes', parser: 'parseAirQuality',
               subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+    ],
+    // HEPA Filter Monitoring Cluster (Resource Monitoring)
+    0x0071 : [attributes: 'ResourceMonitoringClusterAttributes', parser: 'parseResourceMonitoring',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Condition
+                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // DegradationDirection
+                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // ChangeIndication
+    ],
+    // Activated Carbon Filter Monitoring Cluster (Resource Monitoring) - identical structure to 0x0071
+    0x0072 : [attributes: 'ResourceMonitoringClusterAttributes', parser: 'parseResourceMonitoring',
+              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Condition
+                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // DegradationDirection
+                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // ChangeIndication
     ],
     // Electrical Power Measurement Cluster
     0x0090 : [attributes: 'ElectricalPowerMeasurementAttributes',  parser: 'parseElectricalPowerMeasurement',
@@ -395,6 +402,8 @@ metadata {
     0x0045 : 'parseBooleanState',
     0x0080 : 'parseBooleanStateConfiguration',
     0x005B : 'parseAirQuality',
+    0x0071 : 'parseResourceMonitoring',     // HEPAFilterMonitoring
+    0x0072 : 'parseResourceMonitoring',     // ActivatedCarbonFilterMonitoring
     0x0090 : 'parseElectricalPowerMeasurement',
     0x0091 : 'parseElectricalEnergyMeasurement',
     0x0101 : 'parseDoorLock',
@@ -934,34 +943,63 @@ void gatherAttributesValuesInfo(final Map descMap) {
                     Map typeNames = deviceTypeNames(displayValue)
                     if (typeNames.names) {
                         String namesStr = typeNames.names.collect { "'${it}'" }.join(', ')
-                        deviceTypeNamesStr = typeNames.names.size() > 1 && typeNames.best 
+                        deviceTypeNamesStr = typeNames.names.size() > 1 && typeNames.best
                             ? "  (${namesStr}, best = '${typeNames.best}')"
                             : "  (${namesStr})"
                     }
                 }
-                //
-                try {
-                    tempIntValue = HexUtils.hexStringToInt(displayValue)
-                    if (tempIntValue >= 10) {
-                        tmpStr += ' = 0x' + displayValue + ' (' + tempIntValue + ')'
-                        if (descMap.attrId == '0015') {
-                            tmpStr += " [Matter Spec: ${(tempIntValue>>24)&0xFF}.${(tempIntValue>>16)&0xFF}.${(tempIntValue>>8)&0xFF}.${tempIntValue&0xFF}]"
-                        } else if (descMap.attrId == '000B') {
-                            // ManufacturingDate: 0xYYYYMMDD (hex string)
-                            String dateStr = String.format('%08X', tempIntValue)
-                            int y = dateStr[0..3] as int
-                            int m = dateStr[4..5] as int
-                            int d = dateStr[6..7] as int
-                            tmpStr += " [Manufacturing Date: ${y}-${String.format('%02d', m)}-${String.format('%02d', d)}]"
-                        } else if (descMap.attrId == '0009') {
-                            tmpStr += " [SW Ver: ${(tempIntValue>>24)&0xFF}.${(tempIntValue>>16)&0xFF}.${(tempIntValue>>8)&0xFF}.${tempIntValue&0xFF}]"
-                        }
-                    } else {
+                // Descriptor TagList (0x0004) is a list of semantic tag structs - show the decoded names
+                if (descMap.cluster == '001D' && attrName == 'TagList' && descMap.value instanceof List) {
+                    List<Map> semanticTags = normalizeTagList(descMap.value as List)
+                    if (!semanticTags.isEmpty()) {
+                        displayValue = semanticTags*.name.join(', ') + " (raw:${descMap.value})"
+                    }
+                }
+                // BasicInformation CapabilityMinima (0x0013) is a struct - decode it instead of showing the raw TLV.
+                // NOTE: the neighbouring UniqueID (0x0012) needs NO decoding - it is already the vendor's
+                // 8-byte identifier in its canonical hex form, it is not encoded text and not TLV.
+                if (descMap.cluster == '0028' && descMap.attrId == '0013') {
+                    Map capabilityMinima = decodeCapabilityMinima(descMap.value)
+                    if (capabilityMinima != null) {
+                        displayValue = "CaseSessionsPerFabric:${capabilityMinima.caseSessionsPerFabric}, SubscriptionsPerFabric:${capabilityMinima.subscriptionsPerFabric} (raw:${descMap.value})"
+                    }
+                }
+                // How to render the value:
+                //  - on the parse(Map) path the scalar attributes arrive as Numbers -> print them as they are;
+                //  - the ONLY String values that are really hex are FeatureMap (FFFC) and ClusterRevision (FFFD),
+                //    which newParseCompatibilityPatch normalizes to uppercase hex strings;
+                //  - EVERY other String is device text (ProductName, SerialNumber, UniqueID, ManufacturingDate...)
+                //    and must never be hex-decoded - 'ACE' is a product name, not 0x0ACE.
+                tempIntValue = null
+                if (displayValue instanceof Number) {
+                    tempIntValue = ((Number) displayValue).intValue()
+                    tmpStr += ' = ' + displayValue
+                }
+                else if (displayValue instanceof String && descMap.attrId in ['FFFC', 'FFFD']) {
+                    try {
+                        tempIntValue = HexUtils.hexStringToInt(displayValue)
+                        tmpStr += (tempIntValue >= 10) ? ' = 0x' + displayValue + ' (' + tempIntValue + ')' : ' = ' + displayValue
+                    } catch (ignored) {
                         tmpStr += ' = ' + displayValue
                     }
-                } catch (e) {
+                }
+                else {
                     tmpStr += ' = ' + displayValue + deviceTypeNamesStr
                 }
+                // BasicInformation SpecificationVersion (0x0028:0x0015) : major.minor.patch packed in the top 3 bytes
+                if (descMap.cluster == '0028' && descMap.attrId == '0015' && tempIntValue != null) {
+                    tmpStr += " [Matter Spec: ${(tempIntValue >> 24) & 0xFF}.${(tempIntValue >> 16) & 0xFF}.${(tempIntValue >> 8) & 0xFF}.${tempIntValue & 0xFF}]"
+                }
+                // BasicInformation ManufacturingDate (0x0028:0x000B) is a plain 'YYYYMMDD' string
+                else if (descMap.cluster == '0028' && descMap.attrId == '000B') {
+                    String dateStr = displayValue?.toString()
+                    if (dateStr ==~ /^\d{8}$/) {
+                        tmpStr += " [Manufacturing Date: ${dateStr[0..3]}-${dateStr[4..5]}-${dateStr[6..7]}]"
+                    }
+                }
+                // NOTE: there is deliberately no SoftwareVersion (0x0009) decoding - it is a vendor defined
+                // uint32 with no standard packing (Aqara reports 4005050 for '4.5.50', which byte-unpacks to
+                // the meaningless 0.61.28.186). SoftwareVersionString (0x000A) is the authoritative value.
                 state.tmp = (state.tmp ?: '') + "${tmpStr} " + '<br>'
             }
         }
@@ -1136,6 +1174,48 @@ void parsePowerSource(final Map descMap) {
 
 // Cluster 0x0028 is called in collectBasicInfo() and in the stateMachine DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_LIST 
 // TODO - use it in getInfo() new command !
+/**
+ * Decode the BasicInformation CapabilityMinima attribute (0x0028:0x0013) - a struct of two uint16 fields.
+ *
+ * Depending on the Hubitat platform version it arrives either already decoded as a Map ([0:3, 1:3]),
+ * or as a raw Matter TLV hex string, e.g. '1524000324010318' :
+ *      15        anonymous-tag STRUCTURE
+ *      24 00 03  context tag 0 (CaseSessionsPerFabric),  1-byte uint = 3
+ *      24 01 03  context tag 1 (SubscriptionsPerFabric), 1-byte uint = 3
+ *      18        end of container
+ * Control bytes 0x24/0x25/0x26/0x27 are context-tagged unsigned ints of 1/2/4/8 bytes, little-endian.
+ * This is deliberately a tiny struct-specific decoder and NOT a general purpose TLV decoder.
+ *
+ * @param rawValue the attribute value, either a Map or a TLV hex String
+ * @return [caseSessionsPerFabric: n, subscriptionsPerFabric: n], or null if it cannot be decoded
+ */
+Map decodeCapabilityMinima(Object rawValue) {
+    if (rawValue instanceof Map) {
+        // note: do NOT use ?: here - a legitimate field value of 0 is falsy in Groovy
+        Integer cs = safeToInt(rawValue[0] != null ? rawValue[0] : rawValue['0'], null)
+        Integer su = safeToInt(rawValue[1] != null ? rawValue[1] : rawValue['1'], null)
+        if (cs == null && su == null) { return null }
+        return [caseSessionsPerFabric: cs, subscriptionsPerFabric: su]
+    }
+    String tlv = rawValue?.toString()?.trim()?.toUpperCase()
+    if (!tlv || !(tlv ==~ /^[0-9A-F]+$/) || (tlv.length() % 2) != 0 || !tlv.startsWith('15')) { return null }
+    Map<Integer, Integer> fields = [:]
+    int pos = 2                                     // skip the structure control byte
+    while (pos + 2 <= tlv.length()) {
+        Integer control = safeHexToInt(tlv[pos..pos + 1], -1)
+        if (control == 0x18) { break }               // end of container
+        if (!(control in [0x24, 0x25, 0x26, 0x27])) { return null }
+        Integer nBytes = 1 << (control - 0x24)
+        if (pos + 4 + (nBytes * 2) > tlv.length()) { return null }
+        Integer tag = safeHexToInt(tlv[(pos + 2)..(pos + 3)], -1)
+        String valueHex = tlv[(pos + 4)..(pos + 3 + nBytes * 2)]
+        fields[tag] = safeHexToInt(valueHex.toList().collate(2)*.join().reverse().join(), 0)   // little-endian
+        pos += 4 + (nBytes * 2)
+    }
+    if (fields.isEmpty()) { return null }
+    return [caseSessionsPerFabric: fields[0], subscriptionsPerFabric: fields[1]]
+}
+
 void parseBasicInformationCluster(final Map descMap) {  // 0x0028 BasicInformation (the Bridge)
     Map eventMap = [:]
     String attrName = getAttributeName(descMap)
@@ -1203,6 +1283,52 @@ List<String> normalizeDeviceTypeList(final List rawList) {
     }.findAll { it != null }
 }
 
+/**
+ * Normalizes a Descriptor TagList (0x001D:0x0004) - a list[SemanticTagStruct] describing what the
+ * endpoint semantically IS (which button of a remote, which side of a device, ...).
+ *
+ * SemanticTagStruct fields, by TLV tag number:
+ *      0 = MfgCode     vendor-id, nullable - null means a standard (non-manufacturer) namespace
+ *      1 = NamespaceID uint8
+ *      2 = Tag         uint8
+ *      3 = Label       string, optional and nullable (the spec requires it for the 'Custom' tags)
+ *
+ * Observed on an IKEA DIRIGERA bridge as a list of maps keyed by the tag number:
+ *      [[1:8, 2:2, 0:null], [1:67, 2:3, 0:null]]   ->  Position.Top, Switches.Up
+ *      [[1:67, 3:Shortcut, 2:8, 0:null]]           ->  Switches.Custom 'Shortcut'
+ * The list-of-tag/value-maps form accepted by normalizeDeviceTypeList() is handled too, defensively.
+ *
+ * @return e.g. [[mfgCode:null, namespaceId:8, tag:2, label:null, name:'Position.Top'], ...]
+ *         - an empty list if nothing could be extracted.
+ */
+List<Map> normalizeTagList(final List rawList) {
+    if (rawList == null) { return [] }
+    return rawList.collect { entry ->
+        Map fields = [:]
+        if (entry instanceof Map) {                     // [1:8, 2:2, 0:null]
+            (entry as Map).each { k, v ->
+                Integer key = (k instanceof Number) ? ((Number) k).intValue() : safeToInt(k, null)
+                if (key != null) { fields[key] = v }
+            }
+        }
+        else if (entry instanceof List) {               // [[tag:0, value:x], [tag:1, value:y]]
+            (entry as List).each { field ->
+                if (field instanceof Map && field['tag'] != null) { fields[safeToInt(field['tag'], -1)] = field['value'] }
+            }
+        }
+        else { return null }
+        if (fields.isEmpty()) { return null }
+        // note: do NOT use ?: on these - namespace 0 and tag 0 ('Left') are legitimate values and falsy in Groovy
+        Integer mfgCode     = (fields[0] instanceof Number) ? ((Number) fields[0]).intValue() : null
+        Integer namespaceId = (fields[1] instanceof Number) ? ((Number) fields[1]).intValue() : null
+        Integer tag         = (fields[2] instanceof Number) ? ((Number) fields[2]).intValue() : null
+        String  label       = (fields[3] != null) ? fields[3].toString() : null
+        if (namespaceId == null && tag == null && label == null) { return null }
+        return [mfgCode: mfgCode, namespaceId: namespaceId, tag: tag, label: label,
+                name: getSemanticTagName(mfgCode, namespaceId, tag, label)]
+    }.findAll { it != null }
+}
+
 void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
     logTrace "parseDescriptorCluster: descMap:${descMap}"
     String attrName = getAttributeName(descMap)    //= DescriptorClusterAttributes[descMap.attrInt as int] ?: GlobalElementsAttributes[descMap.attrInt as int] ?: UNKNOWN
@@ -1246,6 +1372,19 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
                     if (partsListCount != oldCount) {
                         logInfo "THE NUMBER OF THE BRIDGED DEVICES CHANGED FROM ${oldCount} TO ${partsListCount} !!!"
                     }
+                }
+            }
+            break
+        case '0004' :   // TagList - the semantic tags describing what this endpoint is
+            if (descMap.value instanceof List && !(descMap.value as List).isEmpty()) {
+                if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
+                List<Map> semanticTags = normalizeTagList(descMap.value as List)
+                if (semanticTags.isEmpty()) {
+                    logWarn "parseDescriptorCluster: unexpected TagList format - not stored: ${descMap.value}"
+                }
+                else {
+                    state[fingerprintName][attrName] = semanticTags
+                    logDebug "parseDescriptorCluster: TagList for endpoint ${descMap.endpoint} = ${semanticTags*.name.join(', ')}"
                 }
             }
             break
@@ -1656,6 +1795,70 @@ void parseAirQuality(final Map descMap) { // 005B
         value: descMap.toString(),
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = true)
+}
+
+/**
+ * Resource Monitoring clusters : 0x0071 HEPAFilterMonitoring and 0x0072 ActivatedCarbonFilterMonitoring.
+ * Both clusters are identical in structure, so one parser handles both and only the emitted event names differ.
+ *
+ * The Condition attribute (0x0000) is a percentage whose meaning depends on DegradationDirection (0x0001):
+ *   Down (1) : Condition counts down as the filter degrades -> it is the percent REMAINING (100 = new filter)
+ *   Up   (0) : Condition counts up   as the filter degrades -> it is the percent USED
+ * The 'filterUsage' / 'carbonFilterUsage' attributes are always normalized to the percent USED (100 = spent).
+ * DegradationDirection is cached in state[fingerprintName] so that whichever attribute arrives second
+ * recomputes and re-sends the usage - the two reports arrive in no guaranteed order.
+ */
+void parseResourceMonitoring(final Map descMap) { // 0071 (HEPA filter) and 0072 (activated carbon filter)
+    if (!(descMap.cluster in ['0071', '0072'])) { logWarn "parseResourceMonitoring: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    boolean isHepa = (descMap.cluster == '0071')
+    String usageAttrName  = isHepa ? 'filterUsage'  : 'carbonFilterUsage'
+    String statusAttrName = isHepa ? 'filterStatus' : 'carbonFilterStatus'
+    String filterName     = isHepa ? 'HEPA filter'  : 'activated carbon filter'
+    String fingerprintName = getFingerprintName(descMap)
+    String deviceName = getDeviceDisplayName(descMap?.endpoint)
+    Integer value = safeHexToInt(descMap.value)
+
+    switch (descMap.attrId) {
+        case '0000' :   // Condition
+        case '0001' :   // DegradationDirection
+            // cache both values - the usage can only be calculated when the direction is known
+            if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
+            state[fingerprintName]["${descMap.cluster}_${descMap.attrId}"] = value
+            Integer condition = safeToInt(state[fingerprintName]["${descMap.cluster}_0000"], -1)
+            if (condition < 0) {
+                logDebug "parseResourceMonitoring: ${filterName} DegradationDirection is ${ResourceMonitoringDegradationDirection[value] ?: value} - waiting for the Condition value"
+                return
+            }
+            // default to 'Down' (percent remaining) while the direction is still unknown - it is the more common
+            // reporting style; the value is recalculated and re-sent as soon as DegradationDirection arrives.
+            Integer direction = safeToInt(state[fingerprintName]["${descMap.cluster}_0001"], 0x01)
+            Integer usage = (direction == 0x00) ? condition : (100 - condition)
+            if (usage < 0) { usage = 0 } ; if (usage > 100) { usage = 100 }
+            sendHubitatEvent([
+                name: usageAttrName,
+                value: usage,
+                unit: '%',
+                descriptionText: "${deviceName} ${filterName} usage is ${usage}% (Condition:${condition}% direction:${ResourceMonitoringDegradationDirection[direction] ?: direction})"
+            ], descMap, ignoreDuplicates = true)
+            break
+        case '0002' :   // ChangeIndication : 0 = OK, 1 = Warning, 2 = Critical
+            String filterStatus = (value == 0x00) ? 'normal' : 'replace'
+            sendHubitatEvent([
+                name: statusAttrName,
+                value: filterStatus,
+                descriptionText: "${deviceName} ${filterName} status is ${filterStatus} (ChangeIndication:${ResourceMonitoringChangeIndication[value] ?: value})"
+            ], descMap, ignoreDuplicates = true)
+            break
+        case '0003' :   // InPlaceIndicator
+            logInfo "${deviceName} ${filterName} is ${value == 0 ? 'NOT ' : ''}in place"
+            break
+        case '0004' :   // LastChangedTime
+            logInfo "${deviceName} ${filterName} was last changed at ${value} (epoch-s)"
+            break
+        default :
+            logTrace "parseResourceMonitoring: ${filterName} ${getAttributeName(descMap)} (0x${descMap.attrId}) = ${descMap.value}"
+            break
+    }
 }
 
 void parseElectricalPowerMeasurement(final Map descMap) { // 0090
@@ -2267,14 +2470,19 @@ void requestMatterClusterAttributesList(final Map data) {
 /**
  * Requests the values of ALL ATRIBUTES for a Matter cluster and endpoint
  */
-void requestMatterClusterAttributesValues(final Map data) {
+/**
+ * Reads all the attributes of a cluster, as listed in the previously collected AttributeList (0xFFFB).
+ * @return the attribute id of the LAST read that was actually sent - the info collector state machine
+ *         arms its confirmation on it. Returns null when nothing was sent.
+ */
+Integer requestMatterClusterAttributesValues(final Map data) {
     Integer endpoint = data.endpoint as Integer
     Integer cluster  = data.cluster  as Integer
     List<Map<String, String>> serverList = []
     String fingerprintName = getFingerprintName(endpoint)
     if (state[fingerprintName] == null) {
         logWarn "requestMatterClusterAttributesValues: state.${fingerprintName} is null !"
-        return
+        return null
     }
     logDebug "Requesting Attributes Values for endpoint <b>0x${HexUtils.integerToHexString(endpoint, 1)}</b>  cluster <b>${MatterClusters[data.cluster]}</b> (0x${HexUtils.integerToHexString(data.cluster, 2)}) attributes values ..."
 
@@ -2291,38 +2499,34 @@ void requestMatterClusterAttributesValues(final Map data) {
     logDebug "requestMatterClusterAttributesValues: (requesting cluster 0x${HexUtils.integerToHexString(data.cluster, 2)}) fingerprintName=${fingerprintName} listMapName=${listMapName} attributeList=${attributeList}"
     if (attributeList == null) {
         logWarn 'requestMatterClusterAttributesValues: attrListString is null'
-        return
+        return null
     }
     logDebug "requestMatterClusterAttributesValues: cluster ${MatterClusters[data.cluster]} (0x${HexUtils.integerToHexString(data.cluster, 2)}) attributeList:${attributeList}"
-    List<Map<String, String>> attributePaths = attributeList.collect { attr ->
+    Integer lastAttrInt = null
+    List<Map<String, String>> attributePaths = []
+    attributeList.each { attr ->
         Integer attrInt = HexUtils.hexStringToInt(attr)
         if (attrInt == 0x0040 || attrInt == 0x0041) {
             logDebug "requestMatterClusterAttributesValues: skipping attribute 0x${HexUtils.integerToHexString(attrInt, 2)} (${attrInt})"
-            return
+            return      // 'continue' of the each{} closure
         }
-        matter.attributePath(endpoint, cluster, attrInt)
-    }.findAll()
-    if (!attributePaths.isEmpty()) {
-        sendToDevice(matter.readAttributes(attributePaths))
+        attributePaths.add(matter.attributePath(endpoint, cluster, attrInt))
+        lastAttrInt = attrInt
     }
+    if (attributePaths.isEmpty()) {
+        return null
+    }
+    sendToDevice(matter.readAttributes(attributePaths))
+    return lastAttrInt
 }
 
 /**
  * Requests, collects and logs all attribute values for a given endpoint and cluster.
  */
-void requestAndCollectAttributesValues(Integer endpoint, Integer cluster, Integer time=1, boolean fast=false) {
-    state.states['isPing'] = false
-    final int baseTime = (time as int) ?: 1
-    final int scale = getDiscoveryTimeoutScale()
-    runIn(baseTime, requestMatterClusterAttributesList,   [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
-    runIn(baseTime + ((fast ? 2 : 3) * scale),  requestMatterClusterAttributesValues, [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
-    runIn(baseTime + ((fast ? 6 : 12) * scale), logRequestedClusterAttrResult,        [overwrite: false, data: [endpoint: endpoint, cluster: cluster] ])
-}
-
-void scheduleRequestAndCollectServerListAttributesList(String endpointPar = '00', Integer time=1, boolean fast=false) {
-    state.states['isPing'] = false
-    runIn((time as int) ?: 1, requestAndCollectServerListAttributesList,   [overwrite: false, data: [endpointPar: endpointPar] ])
-}
+// NOTE: requestAndCollectAttributesValues() and scheduleRequestAndCollectServerListAttributesList() were
+// removed in 1.9.0 - they scheduled the read/collect/log steps with fixed runIn() delays. The getInfo()
+// collector in matterUtilitiesLib now drives those same three steps from the confirmation of the previous
+// reply instead (see infoCollectStateMachine()).
 
 void requestAndCollectServerListAttributesList(Map data)
 {
@@ -2344,9 +2548,34 @@ void requestAndCollectServerListAttributesList(Map data)
 }
 
 /*
+ *  getInfo - collects and logs the attribute values of an endpoint (endpoint 0 = the Bridge itself).
+ *  'Basic'    - the Descriptor, the ServerList clusters attribute lists and the BasicInformation cluster.
+ *  'Extended' - every cluster in the endpoint's ServerList (slow!).
+ *
+ *  NOTE: the Info mode bookkeeping (state.states['isInfo'], state.states['cluster'], state.tmp) is armed by
+ *  requestMatterClusterAttributesList() and cleared by logRequestedClusterAttrResult() - do NOT set it here,
+ *  arming it too early makes unrelated inbound reports accumulate into state.tmp.
+ */
+void getInfo() { getInfoPatched('Basic', '0') }        // patch for HE platform version 2.4.0.x
+void getInfo(String infoType, String endpointPar = '0') { getInfoPatched(infoType, endpointPar) }
+void getInfoPatched(String infoType, String endpointPar = '0') {
+    Integer endpoint = safeNumberToInt(endpointPar ?: '0', 0)
+    String infoTypePar = infoType ?: 'Basic'
+    logInfo "getInfo(${infoTypePar}) endpoint:${endpoint} ..."
+    if (infoTypePar == 'Extended') {
+        sendInfoEvent("Collecting the Extended info for endpoint ${endpoint} ...")
+        requestExtendedInfo(endpoint)
+    }
+    else {
+        sendInfoEvent("Collecting the Basic info for endpoint ${endpoint} ...")
+        collectBasicInfo(endpoint)
+    }
+}
+
+/*
  *  Discover all the endpoints and clusters for the Bridge and all the Bridged Devices
  */
-void _DiscoverAll() { _DiscoverAllPatched('All') }     // patch for HE platform version 2.4.0.x 
+void _DiscoverAll() { _DiscoverAllPatched('All') }     // patch for HE platform version 2.4.0.x
 void _DiscoverAllPatched(String statePar/* = null*/) {
     logWarn "_DiscoverAll()"
     updated()   // 2026-02-09
@@ -3106,6 +3335,29 @@ void componentSetSensitivityLevel(DeviceWrapper dw, Integer level) {
     sendToDevice(matter.writeAttributes(attrWriteRequests))
 }
 
+/**
+ * Resource Monitoring ResetCondition command (0x00) - tells the device that the filter was physically
+ * replaced, so it resets its Condition counter and clears the ChangeIndication.
+ * @param dw the child device
+ * @param filterType 'HEPA' -> cluster 0x0071, anything containing 'carbon' -> cluster 0x0072
+ */
+void componentResetFilterCondition(DeviceWrapper dw, String filterType = 'HEPA') {
+    boolean isCarbon = (filterType ?: '').toLowerCase().contains('carbon')
+    Integer cluster = isCarbon ? 0x0072 : 0x0071
+    String clusterHex = HexUtils.integerToHexString(cluster, 2)
+    String filterName = isCarbon ? 'activated carbon filter' : 'HEPA filter'
+    List<String> serverList = getDeviceServerList(dw)
+    if (!serverList.isEmpty() && !(clusterHex in serverList)) {
+        logWarn "componentResetFilterCondition(${dw}): cluster 0x${clusterHex} is not in the ServerList ${serverList} - this device has no ${filterName}!"
+        return
+    }
+    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
+    List<Map<String, String>> cmdFields = []        // ResetCondition has no command fields
+    String cmd = matter.invoke(deviceNumber, cluster, 0x0000, cmdFields)
+    logDebug "componentResetFilterCondition(${dw}): sending ResetCondition to device# ${deviceNumber} cluster 0x${clusterHex} : ${cmd}"
+    sendToDevice(cmd)
+}
+
 void componentIdentify(DeviceWrapper dw) {
     if (!dw.hasCommand('identify')) { logError "componentIdentify(${dw}) driver '${dw.typeName}' does not have command 'identify' in ${dw.supportedCommands}"; return }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
@@ -3736,13 +3988,26 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
 // but must NOT be copied into child device fingerprintData. ServerList is the only 001D key a child
 // driver reads (via getServerList()); everything else is either constant metadata or used only in
 // the main driver.
+// Must stay in sync with the 001D filter in parseGlobalElements() : both keep ServerList (0001) only.
+// Note that getStateClusterName() returns these plain names for cluster 001D only - all other clusters
+// are keyed as 'NNNN_AAAA', so this set can never match a non-Descriptor entry.
 @Field static final Set<String> DESCRIPTOR_ONLY_KEYS = [
-    'DeviceTypeList', 'ClientList', 'PartsList', 'AttributeList', 'AcceptedCommandList', 'GeneratedCommandList', 'FeatureMap', 'ClusterRevision'
+    'DeviceTypeList', 'ClientList', 'PartsList', 'AttributeList', 'AcceptedCommandList', 'GeneratedCommandList',
+    'FeatureMap', 'ClusterRevision', 'EventList', 'FabricIndex', 'TagList'
 ] as Set
 
 /**
  * Copy entire fingerprint data from parent state to child device data
  * This preserves critical configuration even after state.fingerprint* is minimized
+ *
+ * NOT a duplicate of updateChildFingerprintData() - the two are complementary:
+ *   this one   : bulk OVERWRITE of the whole fingerprintData, sourced from state[fingerprintName],
+ *                called once per endpoint at the end of the discovery state machine.
+ *   the other  : incremental MERGE of a single key, sourced from the child's own fingerprintData,
+ *                called at runtime whenever a cluster attribute arrives.
+ * Because this one overwrites, any key written only by updateChildFingerprintData() and never stored
+ * in state[fingerprintName] (e.g. sensitivityLevel) is lost on the next discovery.
+ *
  * @param fingerprintName The fingerprint key (e.g., 'fingerprint08')
  * @param dni The child device network ID
  */
