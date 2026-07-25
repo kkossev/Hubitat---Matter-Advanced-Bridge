@@ -6,7 +6,7 @@ library(
     name: 'matterCommonLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/matterCommonLib.groovy',
-    version: '1.0.0',
+    version: '1.0.1',
     documentationLink: ''
 )
 /*
@@ -25,14 +25,15 @@ library(
   *  for the specific language governing permissions and limitations under the License.
   *
   * ver. 1.0.0  2026-01-24 kkossev  - first release
+  * ver. 1.0.1  2026-07-25 kkossev  - bug fixes
 */
 
 import hubitat.helper.HexUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String matterCommonLibVersion = '1.0.0'
-@Field static final String matterCommonLibStamp   = '2026/01/24 12:37 AM'
+@Field static final String matterCommonLibVersion = '1.0.1'
+@Field static final String matterCommonLibStamp   = '2026/07/25 5:11 PM'
 metadata {
     // no capabilities
     // no attributes
@@ -61,6 +62,7 @@ static Integer safeHexToInt(val, Integer defaultVal=0) {
             return defaultVal
         }
     }
+    if (val instanceof Number) return ((Number)val).intValue()   // Long/BigInteger/etc. from the new parse path
     return defaultVal
 }
 

@@ -106,7 +106,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/25 4:15 PM' }
+static String timeStamp() { '2026/07/25 5:17 PM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -3877,7 +3877,7 @@ void componentSetColorTemperature(DeviceWrapper dw, BigDecimal colorTemperature,
     cmdFields.add(matter.cmdField(DataType.UINT16, 1, transitionTime))
     String cmd = matter.invoke(deviceNumber, 0x0300, 0x0A, cmdFields)  // 0x0300 = Color Control Cluster, 0x0A = MoveToColorTemperature
     sendToDevice(cmd)
-    if (level != null || duration != null) {
+    if (level != null) {
         componentSetLevel(dw, level, duration)
     }
 }
@@ -4116,34 +4116,6 @@ Map fingerprintToData(String fingerprint) {
     }
     return data
  }
-
-private Integer createChildDevices() {
-    logDebug 'createChildDevices(): '
-    boolean result = false
-    Integer deviceCount = 0
-    // Exclude node/bridge-only clusters from being treated as a child-device support signal.
-    List<Integer> supportedClusters = SupportedMatterClusters.collect { it.key }?.findAll { it != 0x0033 }
-    logDebug "createChildDevices(): supportedClusters=${supportedClusters}"
-    state.each { fingerprintName, fingerprintMap ->
-        if (fingerprintName.startsWith('fingerprint')) {
-            List<String> serverListStr = fingerprintMap['ServerList']
-            List<Integer> serverListInt = serverListStr.collect { safeHexToInt(it) }
-            if (supportedClusters.any { it in serverListInt }) {
-                logDebug "createChildDevices(): creating child device for fingerprintName: ${fingerprintName} ProductName: ${fingerprintMap['ProductName']}"
-                result = createChildDevices(fingerprintToData(fingerprintName))
-                if (result) { deviceCount++ }
-            }
-            else {
-                logWarn "createChildDevices(): fingerprintName: ${fingerprintName} ProductName: ${fingerprintMap['ProductName']} <b>ServerList: ${fingerprintMap['ServerList']}</b> is not supported yet!"
-            }
-        }
-        else {
-            logTrace "createChildDevices(): fingerprintName: ${fingerprintName} SKIPPED"
-        }
-    }
-    sendHubitatEvent([name: 'deviceCount', value: deviceCount, descriptionText: "${device.displayName} number of devices exposing known clusters is ${deviceCount}"])
-    return deviceCount
-}
 
 private boolean createChildDevices(Map d) {
     logDebug "createChildDevices(Map d): d=${d}"

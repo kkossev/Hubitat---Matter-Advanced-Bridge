@@ -30,7 +30,7 @@ import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 
 @Field static final String matterComponentAirPurifierVersion = '1.2.4'
-@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 2:08 PM'
+@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 5:17 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 
@@ -59,7 +59,7 @@ metadata {
         command 'resetFilterCondition', [[name:'Filter*', type:'ENUM', description:'Reset the filter condition counter - use it after physically replacing the filter', constraints:['HEPA', 'activated carbon']]]
         
         // Attributes for devices.Ikea_E2006
-        attribute 'airQuality', 'enum', ['good', 'moderate', 'unhealthy for sensitive groups', 'unhealthy', 'hazardous']
+        attribute 'airQuality', 'enum', ['Unknown', 'Good', 'Fair', 'Moderate', 'Poor', 'VeryPoor', 'ExtremelyPoor']   // matches AirQualityEnum (Matter spec 2.9.5.1)
         attribute 'filterUsage', 'number'                       // HEPA filter, cluster 0x0071 - percent USED (100 = spent)
         attribute 'carbonFilterStatus', 'enum', ['normal', 'replace']    // activated carbon filter, cluster 0x0072
         attribute 'carbonFilterUsage', 'number'                 // activated carbon filter, cluster 0x0072 - percent USED
@@ -262,21 +262,6 @@ void setIndicatorStatus(String status) {
     // TODO!
 }
 
-private Integer lerp(Integer ylo, Integer yhi, BigDecimal xlo, BigDecimal xhi, Integer cur) {
-    return Math.round(((cur - xlo) / (xhi - xlo)) * (yhi - ylo) + ylo)
-}
-
-private List pm25Aqi(Integer pm25) { // See: https://en.wikipedia.org/wiki/Air_quality_index#United_States
-    if (pm25 <=  12.1) return [lerp(  0,  50,   0.0,  12.0, pm25), 'good', 'green']
-    if (pm25 <=  35.5) return [lerp( 51, 100,  12.1,  35.4, pm25), 'moderate', 'gold']
-    if (pm25 <=  55.5) return [lerp(101, 150,  35.5,  55.4, pm25), 'unhealthy for sensitive groups', 'darkorange']
-    if (pm25 <= 150.5) return [lerp(151, 200,  55.5, 150.4, pm25), 'unhealthy', 'red']
-    if (pm25 <= 250.5) return [lerp(201, 300, 150.5, 250.4, pm25), 'very unhealthy', 'purple']
-    if (pm25 <= 350.5) return [lerp(301, 400, 250.5, 350.4, pm25), 'hazardous', 'maroon']
-    if (pm25 <= 500.5) return [lerp(401, 500, 350.5, 500.4, pm25), 'hazardous', 'maroon']
-    return [500, 'hazardous', 'maroon']
-}
-
 // Called when the device is first created
 void installed() {
     log.info "${device.displayName} driver installed"
@@ -431,7 +416,7 @@ void processUnprocessed(Map description) {
     String prefix = isInfoMode ? "[${descMap.cluster}_${descMap.attrId}] " : ""
     
     switch (descMap.cluster + '_' + descMap.attrId) {
-        case '005B_0000': // attribute 'airQuality', 'enum', ['good', 'moderate', 'unhealthy for sensitive groups', 'unhealthy', 'hazardous']
+        case '005B_0000': // attribute 'airQuality', 'enum' - see AirQualityEnum
             eventValue= AirQualityEnum[Integer.parseInt(descMap.value, 16)]
             // Check if value changed from last report
             String lastAirQuality = state.lastAirQuality

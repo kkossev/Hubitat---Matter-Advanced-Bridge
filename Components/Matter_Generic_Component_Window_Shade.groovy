@@ -32,7 +32,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentWindowShadeVersion = '1.2.5'
-@Field static final String matterComponentWindowShadeStamp   = '2026/07/23 4:49 PM'
+@Field static final String matterComponentWindowShadeStamp   = '2026/07/23 5:17 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -526,7 +526,7 @@ void close() {
     sendWindowShadeEvent('closing', "${device.displayName} windowShade is closing [digital]")
 }
 
-void setLevel(BigDecimal targetPosition) { setPosition(targetPosition) }
+void setLevel(BigDecimal targetPosition, BigDecimal duration = null) { setPosition(targetPosition) }   // duration (fade rate) is ignored - dashboards may send it
 
 // Component command to set position of device
 void setPosition(BigDecimal targetPosition) {

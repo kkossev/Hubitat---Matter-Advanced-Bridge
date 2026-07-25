@@ -24,7 +24,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentPowerEnergyVersion = '1.1.4'
-@Field static final String matterComponentPowerEnergyStamp   = '2026/07/25 8:58 PM'
+@Field static final String matterComponentPowerEnergyStamp   = '2026/07/25 5:17 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom%20Component_Power_Energy.groovy') {
@@ -331,13 +331,13 @@ void processPowerEnergyAttributeReport(Map descMap) {
             // EnergyMeasurementStruct: [energy (mWh), startTimestamp, endTimestamp, ...]
             Map energyData = parseEnergyMeasurementStruct(descMap.data)
             if (energyData.energy != null) {
-                BigDecimal energyWh = (energyData.energy / 1000000).toBigDecimal().setScale(3, BigDecimal.ROUND_HALF_UP)
-                descriptionText = "${device.displayName} PeriodicEnergyImported is ${energyWh} Wh"
+                BigDecimal energyKWh = (energyData.energy / 1000000).toBigDecimal().setScale(3, BigDecimal.ROUND_HALF_UP)
+                descriptionText = "${device.displayName} PeriodicEnergyImported is ${energyKWh} kWh"
                 if (energyData.startTime && energyData.endTime) {
                     Integer periodSeconds = energyData.endTime - energyData.startTime
                     descriptionText += " (period: ${periodSeconds}s)"
                 }
-                message = "${prefix}PeriodicEnergyImported: ${energyWh} Wh"
+                message = "${prefix}PeriodicEnergyImported: ${energyKWh} kWh"
                 //if (txtEnable) { log.info "${descriptionText}" }
             } else {
                 log.warn "processPowerEnergyAttributeReport: failed to parse EnergyMeasurementStruct for 0091_0003: ${descMap.data}"
@@ -348,13 +348,13 @@ void processPowerEnergyAttributeReport(Map descMap) {
             // EnergyMeasurementStruct: [energy (mWh), startTimestamp, endTimestamp, ...]
             Map energyData = parseEnergyMeasurementStruct(descMap.data)
             if (energyData.energy != null) {
-                BigDecimal energyWh = (energyData.energy / 1000000).toBigDecimal().setScale(3, BigDecimal.ROUND_HALF_UP)
-                descriptionText = "${device.displayName} PeriodicEnergyExported is ${energyWh} Wh"
+                BigDecimal energyKWh = (energyData.energy / 1000000).toBigDecimal().setScale(3, BigDecimal.ROUND_HALF_UP)
+                descriptionText = "${device.displayName} PeriodicEnergyExported is ${energyKWh} kWh"
                 if (energyData.startTime && energyData.endTime) {
                     Integer periodSeconds = energyData.endTime - energyData.startTime
                     descriptionText += " (period: ${periodSeconds}s)"
                 }
-                message = "${prefix}PeriodicEnergyExported: ${energyWh} Wh"
+                message = "${prefix}PeriodicEnergyExported: ${energyKWh} kWh"
                 //if (txtEnable) { log.info "${descriptionText}" }
             } else {
                 log.warn "processPowerEnergyAttributeReport: failed to parse EnergyMeasurementStruct for 0091_0004: ${descMap.data}"
