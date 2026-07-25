@@ -39,7 +39,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterUtilitiesLibVersion = '1.3.4'
-@Field static final String matterUtilitiesLibStamp   = '2026/07/25 8:57 AM'
+@Field static final String matterUtilitiesLibStamp   = '2026/07/25 6:59 PM'
 
 metadata {
     // no capabilities
@@ -171,12 +171,6 @@ boolean utilities(String commandLine=null) {
 
 // NOTE: the former 'timePar' and 'fast' parameters are gone - the collector is now driven by the replies,
 // not by a fixed schedule, so there is nothing left to tune per call. See infoCollectStateMachine() below.
-void collectBasicInfo(Integer endpoint = 0) {
-    // Descriptor first (it fills in the ServerList), then the attribute lists of every ServerList cluster,
-    // then the BasicInformation / BridgedDeviceBasicInformation cluster - resolved once the ServerList is known.
-    startInfoCollect(endpoint, ['001D', 'SERVERLIST', 'BASICINFO'], 'Basic Bridge Discovery finished')
-}
-
 void requestExtendedInfo(Integer endpoint = 0) {
     List<String> serverList = state[getFingerprintName(endpoint)]?.ServerList
     if (serverList == null) {
@@ -272,7 +266,7 @@ void infoCollectStateMachine() {
                 String wanted = (endpoint == 0) ? '0028' : '0039'
                 List<String> knownServerList = state[getFingerprintName(endpoint)]?.ServerList ?: []
                 if (!(wanted in knownServerList)) {
-                    logWarn "collectBasicInfo(): cluster 0x${wanted} is <b>not in the ServerList</b> of endpoint ${endpoint} !"
+                    logWarn "infoCollectStateMachine(): cluster 0x${wanted} is <b>not in the ServerList</b> of endpoint ${endpoint} !"
                     state['stateMachines']['infoIndex'] = index + 1
                     break       // stays in INFO_STATE_NEXT
                 }

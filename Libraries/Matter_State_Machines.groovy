@@ -489,7 +489,7 @@ void discoverAllStateMachine(Map data = null) {
                 }
             }
             break
-        case DISCOVER_ALL_STATE_INIT: // start (collectBasicInfo())
+        case DISCOVER_ALL_STATE_INIT: // start
             sendInfoEvent('Starting Matter Bridge and Devices discovery ...<br><br><br>')
             if (!(state.bridgeDescriptor instanceof Map)) { state.bridgeDescriptor = [:] }
             state.states['isInfo'] = true

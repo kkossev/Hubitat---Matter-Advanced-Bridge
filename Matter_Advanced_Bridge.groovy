@@ -104,17 +104,17 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/25 6:08 PM' }
+static String timeStamp() { '2026/07/25 7:01 PM' }
 
 
-@Field static final Boolean _DEBUG = true                   // make it FALSE for production!
+@Field static final Boolean _DEBUG = false                   // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
-@Field static final Boolean DO_NOT_TRACE_FFFX = false        // make it  TRUE for production! (don't trace the FFFx global attributes)
-@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = false     // make it TRUE for production!
+@Field static final Boolean DO_NOT_TRACE_FFFX = true        // make it  TRUE for production! (don't trace the FFFx global attributes)
+@Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
 @Field static final Integer REFRESH_TIMER = 6000             // refresh time in miliseconds
 @Field static final Integer INFO_AUTO_CLEAR_PERIOD = 60      // automatically clear the Info attribute after 60 seconds
@@ -193,11 +193,8 @@ metadata {
         command 'reSubscribe', [[name: 're-subscribe to the Matter controller events']]
         command 'loadAllDefaults', [[name: 'panic button: Clear all States and scheduled jobs']]
         command 'identify'      // works with Nuki Lock!
+        command 'getInfo', [[name:'endpoint', type: 'STRING', description: 'Endpoint (decimal, or hex with a 0x prefix) - 0 is the Bridge itself', defaultValue: '0']]
         if (_DEBUG) {
-            command 'getInfo', [
-                    [name:'infoType', type: 'ENUM', description: 'Bridge Info Type', constraints: ['Basic', 'Extended']],   // if the parameter name is 'type' - shows a drop-down list of the available drivers!
-                    [name:'endpoint', type: 'STRING', description: 'Endpoint (decimal, or hex with a 0x prefix) - 0 is the Bridge itself', constraints: ['STRING']]
-            ]
             command 'test', [[name: 'test', type: 'STRING', description: 'test', defaultValue : '']]
         }
         // do not expose the known Matter Bridges fingerprints for now ... Let the stock driver be assigned automatically.
@@ -1236,8 +1233,7 @@ void parsePowerSource(final Map descMapPar) {
     }
 }
 
-// Cluster 0x0028 is called in collectBasicInfo() and in the stateMachine DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_LIST 
-// TODO - use it in getInfo() new command !
+// Cluster 0x0028 is read by the stateMachine DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_LIST and by the getInfo() collector
 /**
  * Decode the BasicInformation CapabilityMinima attribute (0x0028:0x0013) - a struct of two uint16 fields.
  *
@@ -2703,27 +2699,19 @@ void requestAndCollectServerListAttributesList(Map data)
 
 /*
  *  getInfo - collects and logs the attribute values of an endpoint (endpoint 0 = the Bridge itself).
- *  'Basic'    - the Descriptor, the ServerList clusters attribute lists and the BasicInformation cluster.
- *  'Extended' - every cluster in the endpoint's ServerList (slow!).
+ *  Always collects the Extended info - every cluster in the endpoint's ServerList (slow!).
  *
  *  NOTE: the Info mode bookkeeping (state.states['isInfo'], state.states['cluster'], state.tmp) is armed by
  *  requestMatterClusterAttributesList() and cleared by logRequestedClusterAttrResult() - do NOT set it here,
  *  arming it too early makes unrelated inbound reports accumulate into state.tmp.
  */
-void getInfo() { getInfoPatched('Basic', '0') }        // patch for HE platform version 2.4.0.x
-void getInfo(String infoType, String endpointPar = '0') { getInfoPatched(infoType, endpointPar) }
-void getInfoPatched(String infoType, String endpointPar = '0') {
+void getInfo() { getInfoPatched('0') }        // patch for HE platform version 2.4.0.x
+void getInfo(String endpointPar) { getInfoPatched(endpointPar) }
+void getInfoPatched(String endpointPar = '0') {
     Integer endpoint = safeNumberToInt(endpointPar ?: '0', 0)
-    String infoTypePar = infoType ?: 'Basic'
-    logInfo "getInfo(${infoTypePar}) endpoint:${endpoint} ..."
-    if (infoTypePar == 'Extended') {
-        sendInfoEvent("Collecting the Extended info for endpoint ${endpoint} ...")
-        requestExtendedInfo(endpoint)
-    }
-    else {
-        sendInfoEvent("Collecting the Basic info for endpoint ${endpoint} ...")
-        collectBasicInfo(endpoint)
-    }
+    logInfo "getInfo() endpoint:${endpoint} ..."
+    sendInfoEvent("Collecting the Extended info for endpoint ${endpoint} ...")
+    requestExtendedInfo(endpoint)
 }
 
 /*
