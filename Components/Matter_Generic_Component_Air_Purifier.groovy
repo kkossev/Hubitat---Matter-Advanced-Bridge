@@ -30,7 +30,7 @@ import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 
 @Field static final String matterComponentAirPurifierVersion = '1.2.4'
-@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 9:53 AM'
+@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 2:08 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 
@@ -149,6 +149,30 @@ preferences {
 ]
 
 
+
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
+void parse(Map descMap) {
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleInvokeResponse(descMap)
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
+    }
+}
+
+private void handleInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+
+    if (invokeStatus == 0) {
+        logDebug "Matter command completed: endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+    else {
+        logWarn "Matter command failed: status=${invokeStatus} endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+}
 
 // parse commands from parent
 void parse(List<Map> description) {

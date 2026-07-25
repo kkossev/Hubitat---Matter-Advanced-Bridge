@@ -124,7 +124,7 @@
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1765
+      "version": 1768
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Door_Lock",
@@ -178,7 +178,7 @@
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Air_Purifier.groovy",
       "id": 3429,
       "codeType": "driver",
-      "version": 53
+      "version": 55
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Battery.groovy",

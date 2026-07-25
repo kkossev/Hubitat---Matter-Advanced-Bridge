@@ -68,7 +68,11 @@
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
  * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
- * ver. 1.9.0  2026-07-25 kkossev   (dev. branch) callbackType:Invoke handling; added ping as a first step in the state machines before reading attributes
+ * ver. 1.9.0  2026-07-25 kkossev   (dev. branch) callbackType:Invoke handling; added ping as a first step in the state machines before reading attributes;
+ *                                  SupportedMatterClusters 'subscriptions' is now a Map keyed by attribute ID instead of a List of single-entry Maps; the per-attribute
+ *                                  min/max/delta values of the old format were never sent to the hub (cleanSubscribe takes one global min/max) and are replaced by an
+ *                                  'isSpammy' marker; new 'spammyAttributesMinInterval' preference (0 = off) sends the isSpammy attributes in a second subscription
+ *                                  with a longer minimum reporting interval, issued after the primary cleanSubscribe is confirmed by its SubscriptionResult callback;
  *
  *                                   TODO: 
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
@@ -88,7 +92,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/25 9:19 AM' }
+static String timeStamp() { '2026/07/25 2:40 PM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -108,9 +112,12 @@ static String timeStamp() { '2026/07/25 9:19 AM' }
 @Field static final String  UNKNOWN = 'UNKNOWN'
 @Field static final Integer SHORT_TIMEOUT  = 7      // unused since 1.9.0 - the getInfo() collector is reply-driven
 @Field static final Integer LONG_TIMEOUT   = 15     // unused since 1.9.0 - see infoCollectStateMachine()
-@Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 0    // was 1
+@Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 1    // 1 is also the enforced floor, see getPrimarySubscriptionMinInterval()
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT = 600
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL = 0xFFFF
+@Field static final Integer SPAMMY_ATTRIBUTES_MIN_INTERVAL_DEFAULT = 0
+@Field static final Integer SPAMMY_ATTRIBUTES_MIN_INTERVAL_MAX = 3600
+@Field static final Integer SPAMMY_SUBSCRIBE_FALLBACK_DELAY = 60   // seconds to wait for SubscriptionResult before sending the spammy subscription anyway
 @Field static final Integer defaultMinReportingTime = 10
 
 // Internal events that should be routed through parse() without requiring attribute declaration
@@ -184,8 +191,9 @@ metadata {
             input name: 'discoveryTimeoutScale', type: 'enum', title: '<b>Discovery timeout scale</b>', options: ['1':'1x (default)', '2':'2x', '3':'3x (slow/battery bridges)'], defaultValue: '2', required: true, description: '<i>Scales discovery/state-machine retry timeouts and discovery scheduling delays.</i>'
             input name: 'traceEnable', type: 'bool', title: '<b>Enable trace logging</b>', defaultValue: false, description: '<i>Turns on detailed extra trace logging for 30 minutes.</i>'
             input name: 'minimizeStateVariables', type: 'bool', title: '<b>Minimize State Variables</b>', defaultValue: MINIMIZE_STATE_VARIABLES_DEFAULT, description: '<i>Minimize the state variables size.</i>'
-            input name: 'cleanSubscribeMinInterval', type: 'number', title: '<b>Clean subscribe minimum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, required: true, description: '<i>Minimum reporting interval used when subscribing to Matter attributes/events.</i>'
-            input name: 'cleanSubscribeMaxInterval', type: 'number', title: '<b>Clean subscribe maximum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, required: true, description: '<i>Maximum reporting interval used when subscribing to Matter attributes/events.</i>'
+            input name: 'cleanSubscribeMinInterval', type: 'number', title: '<b>Clean subscribe minimum reporting interval (seconds)</b>', range: '1..65535', defaultValue: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, required: true, description: '<i>Minimum reporting interval used when subscribing to Matter attributes/events.</i>'
+            input name: 'cleanSubscribeMaxInterval', type: 'number', title: '<b>Clean subscribe maximum reporting interval (seconds)</b>', range: '1..65535', defaultValue: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, required: true, description: '<i>Maximum reporting interval used when subscribing to Matter attributes/events.</i>'
+            input name: 'spammyAttributesMinInterval', type: 'number', title: '<b>Spammy attributes minimum reporting interval (seconds)</b>', range: '0..3600', defaultValue: SPAMMY_ATTRIBUTES_MIN_INTERVAL_DEFAULT, required: true, description: '<i>0 keeps all attributes in the primary subscription. A positive value creates a second subscription for attributes marked isSpammy.</i>'
         }
     }
 }
@@ -203,189 +211,179 @@ metadata {
 @Field static final Map<Integer, Map> SupportedMatterClusters = [
     // On/Off Cluster
     0x0006 : [attributes: 'OnOffClusterAttributes', commands: 'OnOffClusterCommands',  parser: 'parseOnOffCluster',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [:]]
     ],
     // Level Control Cluster
     0x0008 : [attributes: 'LevelControlClusterAttributes', commands: 'LevelControlClusterCommands', parser: 'parseLevelControlCluster',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [:]]
     ],
     0x002F : [parser: 'parsePowerSource', attributes: 'PowerSourceClusterAttributes',
               subscriptions : [
-                            //   [0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Status - commented out 2026-01-29
-                            //   [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // Order
-                            //   [0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // Description
-                               [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // BatVoltage (11)
-                               [0x000C: [min: 0, max: 0xFFFF, delta: 0]],   // BatPercentRemaining (12)
-                            //   [0x000E: [min: 0, max: 0xFFFF, delta: 0]],   // BatChargeLevel (14)
-                            //   [0x000F: [min: 0, max: 0xFFFF, delta: 0]]    // BatReplacementNeeded (15)
+                            //   0x0000: [:],   // Status - commented out 2026-01-29
+                            //   0x0001: [:],   // Order
+                            //   0x0002: [:],   // Description
+                               0x000B: [:],   // BatVoltage (11)
+                               0x000C: [:]    // BatPercentRemaining (12)
+                            //   0x000E: [:],   // BatChargeLevel (14)
+                            //   0x000F: [:]    // BatReplacementNeeded (15)
               ]
     ],
 
      // General Diagnostics Cluster (bridge/node)
      0x0033 : [attributes: 'GeneralDiagnosticsClusterAttributes', parser: 'parseGeneralDiagnostics',
-                subscriptions : [
-                    [0x0001: [min: 60, max: 3600, delta: 60]],  // RebootCount
-                    [0x0002: [min: 60, max: 3600, delta: 60]]   // UpTime
+                 subscriptions : [
+                    0x0001: [:],                // RebootCount
+                    0x0002: [isSpammy: true]    // UpTime - free-running counter, reports constantly
                 ]
      ],
     /*
     0x0039 : [attributes: 'BridgedDeviceBasicAttributes', commands: 'BridgedDeviceBasicCommands', parser: 'parseBridgedDeviceBasic',            // BridgedDeviceBasic
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [:]]
     ],
     */
     
     0x003B : [parser: 'parseSwitch', attributes: 'SwitchClusterAttributes', events: 'SwitchClusterEvents',       // Switch
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // NumberOfPositions
-                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // CurrentPosition
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]],  // MultiPressMax
+              subscriptions : [0x0000: [:],   // NumberOfPositions
+                               0x0001: [:],   // CurrentPosition
+                               0x0002: [:]],  // MultiPressMax
               eventSubscriptions : [-1]  // -1 means subscribe to ALL events from this cluster
-              /*
-              eventSubscriptions : [//  [0x0000: [min: 0, max: 0xFFFF, delta: 0]],
-                                      [0x0001: [min: 0, max: 0xFFFF, delta: 0]],
-                                      [0x0002: [min: 0, max: 0xFFFF, delta: 0]],
-                                      [0x0003: [min: 0, max: 0xFFFF, delta: 0]],
-                                      [0x0004: [min: 0, max: 0xFFFF, delta: 0]],
-                                      [0x0005: [min: 0, max: 0xFFFF, delta: 0]],
-                                      [0x0006: [min: 0, max: 0xFFFF, delta: 0]]
-                                  ] */
-
     ],
     
     // Descriptor Cluster - subscribing to it seems to create a lot of issues!! :( 
     /*
     0x001D : [attributes: 'DescriptorClusterAttributes', parser: 'parseDescriptorCluster',      // decimal(29) manually subscribe to the Bridge device ep=0 0x001D 0x0003
-              subscriptions : [[0x0003: [min: 0, max: 0xFFFF, delta: 0]]]   // PartsList
+              subscriptions : [0x0003: [:]]   // PartsList
     ],
     */
     // Contact Sensor Cluster
     0x0045 : [attributes: 'BooleanStateClusterAttributes', parser: 'parseBooleanState',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [:]]
     ],
     // Boolean State Configuration Cluster (sensitivity, alarms config)
     0x0080 : [attributes: 'BooleanStateConfigurationClusterAttributes', parser: 'parseBooleanStateConfiguration',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // SensitivityLevel
-                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // SupportedSensitivityLevels
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // DefaultSensitivityLevel
+              subscriptions : [0x0000: [:],   // SensitivityLevel
+                               0x0001: [:],   // SupportedSensitivityLevels
+                               0x0002: [:]]   // DefaultSensitivityLevel
     ],
     // Air Quality Cluster
     0x005B : [attributes: 'AirQualityClusterAttributes', parser: 'parseAirQuality',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [isSpammy: true]]
     ],
     // HEPA Filter Monitoring Cluster (Resource Monitoring)
     0x0071 : [attributes: 'ResourceMonitoringClusterAttributes', parser: 'parseResourceMonitoring',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Condition
-                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // DegradationDirection
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // ChangeIndication
+              subscriptions : [0x0000: [:],   // Condition
+                               0x0001: [:],   // DegradationDirection
+                               0x0002: [:]]   // ChangeIndication
     ],
     // Activated Carbon Filter Monitoring Cluster (Resource Monitoring) - identical structure to 0x0071
     0x0072 : [attributes: 'ResourceMonitoringClusterAttributes', parser: 'parseResourceMonitoring',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // Condition
-                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // DegradationDirection
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 0]]]   // ChangeIndication
+              subscriptions : [0x0000: [:],   // Condition
+                               0x0001: [:],   // DegradationDirection
+                               0x0002: [:]]   // ChangeIndication
     ],
     // Electrical Power Measurement Cluster
     0x0090 : [attributes: 'ElectricalPowerMeasurementAttributes',  parser: 'parseElectricalPowerMeasurement',
-              subscriptions : [//[0x0004: [min: 0, max: 0xFFFF, delta: 0]],   // 'Voltage',
-                               //[0x0005: [min: 0, max: 0xFFFF, delta: 0]],   // 'ActiveCurrent',
-                               [0x0008: [min: 0, max: 0xFFFF, delta: 100]],   // 'ActivePower', (report every 0.1W change)
-                               [0x000B: [min: 0, max: 0xFFFF, delta: 1000]],  // 'RMSVoltage', (report every 1V change)
-                               [0x000C: [min: 0, max: 0xFFFF, delta: 10]],    // 'RMSCurrent', (report every 0.01A change)
-                               [0x000E: [min: 0, max: 0xFFFF, delta: 1000]],  // 'Frequency', (report every 1Hz change)
-                               [0x0011: [min: 0, max: 0xFFFF, delta: 500]]    // 'PowerFactor' (report every 0.5 change)
+              subscriptions : [//0x0004: [isSpammy: true],   // Voltage
+                               //0x0005: [isSpammy: true],   // ActiveCurrent
+                               0x0008: [isSpammy: true],   // ActivePower
+                               0x000B: [isSpammy: true],   // RMSVoltage
+                               0x000C: [isSpammy: true],   // RMSCurrent
+                               0x000E: [isSpammy: true],   // Frequency
+                               0x0011: [isSpammy: true]    // PowerFactor
               ]
     ],
     // Electrical Energy Measurement Cluster
     0x0091 : [attributes: 'ElectricalEnergyMeasurementAttributes', parser: 'parseElectricalEnergyMeasurement',
-              subscriptions : [[0x0001: [min: 0, max: 0xFFFF, delta: 1000]],   // 'CumulativeEnergyImported', report every 1Wh change
-                               [0x0002: [min: 0, max: 0xFFFF, delta: 1000]]    // 'CumulativeEnergyExported', report every 1Wh change
-                            // [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // (PeriodicEnergyImported)
-                            // [0x0004: [min: 0, max: 0xFFFF, delta: 0]]    // (PeriodicEnergyExported)
+              subscriptions : [0x0001: [:],   // CumulativeEnergyImported
+                               0x0002: [:]    // CumulativeEnergyExported
+                            // 0x0003: [:],   // PeriodicEnergyImported
+                            // 0x0004: [:]    // PeriodicEnergyExported
               ]
     ],
     // DoorLock Cluster
     0x0101 : [attributes: 'DoorLockClusterAttributes', commands: 'DoorLockClusterCommands', parser: 'parseDoorLock',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // LockState (Mandatory)
-                               //[0x0002: [min: 0, max: 0xFFFF, delta: 0]],   // ActuatorEnabled (Mandatory)
-                               //[0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // DoorState (Optional but recommended if supported)
-                               //[0x0025: [min: 0, max: 0xFFFF, delta: 0]]],  // OperatingMode (Mandatory)
+              subscriptions : [0x0000: [:]   // LockState (Mandatory)
+                               //0x0002: [:],   // ActuatorEnabled (Mandatory)
+                               //0x0003: [:],   // DoorState (Optional but recommended if supported)
+                               //0x0025: [:]    // OperatingMode (Mandatory)
               ],
               eventSubscriptions : [-1]  // Subscribe to ALL Door Lock events (DoorLockAlarm, DoorStateChange, LockOperation, LockOperationError, LockUserChange)
     ],
     // WindowCovering
     0x0102 : [attributes: 'WindowCoveringClusterAttributes', commands: 'WindowCoveringClusterCommands', parser: 'parseWindowCovering',
     
-              subscriptions : [[0x000A: [min: 0, max: 0xFFFF, delta: 0]],   // OperationalStatus
-                               [0x000B: [min: 0, max: 0xFFFF, delta: 0]],   // TargetPositionLiftPercent100ths
-                               [0x000E: [min: 0, max: 0xFFFF, delta: 0]]    // CurrentPositionLiftPercent100ths
+              subscriptions : [0x000A: [:],   // OperationalStatus
+                               0x000B: [:],   // TargetPositionLiftPercent100ths
+                               0x000E: [:]    // CurrentPositionLiftPercent100ths
               ]
     ],    
     // Thermostat
     0x0201 : [attributes: 'ThermostatClusterAttributes', commands: 'ThermostatClusterCommands', parser: 'parseThermostat',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // LocalTemperature +Aqara
-                               [0x0003: [min: 0, max: 0xFFFF, delta: 0]],   // AbsMinHeatSetpointLimit  +Aqaea
-                               [0x0004: [min: 0, max: 0xFFFF, delta: 0]],   // AbsMaxHeatSetpointLimit  +Aqara
-                               [0x0010: [min: 0, max: 0xFFFF, delta: 0]],   // LocalTemperatureCalibration
-                               [0x0011: [min: 0, max: 0xFFFF, delta: 0]],   // OccupiedCoolingSetpoint
-                               [0x0012: [min: 0, max: 0xFFFF, delta: 0]],   // OccupiedHeatingSetpoint  +Aqara
-                               [0x0015: [min: 0, max: 0xFFFF, delta: 0]],   // MinHeatSetpointLimit +Aqara
-                               [0x0016: [min: 0, max: 0xFFFF, delta: 0]],   // MaxHeatSetpointLimit +Aqara
-                               [0x001A: [min: 0, max: 0xFFFF, delta: 0]],   // RemoteSensing
-                               [0x001B: [min: 0, max: 0xFFFF, delta: 0]],   // ControlSequenceOfOperation   +Aqara
-                               [0x001C: [min: 0, max: 0xFFFF, delta: 0]],   // SystemMode   +Aqara
-                               [0x001D: [min: 0, max: 0xFFFF, delta: 0]],   // AlarmMask
-                               [0x001E: [min: 0, max: 0xFFFF, delta: 0]],   // ThermostatRunningMode
-                               [0x0029: [min: 0, max: 0xFFFF, delta: 0]]]   // ThermostatRunningState
+              subscriptions : [0x0000: [:],   // LocalTemperature +Aqara
+                               0x0003: [:],   // AbsMinHeatSetpointLimit  +Aqaea
+                               0x0004: [:],   // AbsMaxHeatSetpointLimit  +Aqara
+                               0x0010: [:],   // LocalTemperatureCalibration
+                               0x0011: [:],   // OccupiedCoolingSetpoint
+                               0x0012: [:],   // OccupiedHeatingSetpoint  +Aqara
+                               0x0015: [:],   // MinHeatSetpointLimit +Aqara
+                               0x0016: [:],   // MaxHeatSetpointLimit +Aqara
+                               0x001A: [:],   // RemoteSensing
+                               0x001B: [:],   // ControlSequenceOfOperation   +Aqara
+                               0x001C: [:],   // SystemMode   +Aqara
+                               0x001D: [:],   // AlarmMask
+                               0x001E: [:],   // ThermostatRunningMode
+                               0x0029: [:]]   // ThermostatRunningState
     ],
     // Fan Control Cluster
     0x0202 : [attributes: 'FanControlClusterAttributes', commands: 'FanControlClusterCommands', parser: 'parseFanControl',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]   // FanMode / SpeedSetting
+              subscriptions : [0x0000: [:]]   // FanMode / SpeedSetting
     ],
     // ColorControl Cluster
     0x0300 : [attributes: 'ColorControlClusterAttributes', commands: 'ColorControlClusterCommands', parser: 'parseColorControl',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]],   // CurrentHue
-                               [0x0001: [min: 0, max: 0xFFFF, delta: 0]],   // CurrentSaturation
-                               [0x0007: [min: 0, max: 0xFFFF, delta: 0]],   // ColorTemperatureMireds
-                               [0x0008: [min: 0, max: 0xFFFF, delta: 0]]]   // ColorMode
+              subscriptions : [0x0000: [:],   // CurrentHue
+                               0x0001: [:],   // CurrentSaturation
+                               0x0007: [:],   // ColorTemperatureMireds
+                               0x0008: [:]]   // ColorMode
     ],
     // IlluminanceMeasurement Cluster
     0x0400 : [attributes: 'IlluminanceMeasurementClusterAttributes', parser: 'parseIlluminanceMeasurement',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [isSpammy: true]]
     ],
     // TemperatureMeasurement Cluster
     0x0402 : [attributes: 'TemperatureMeasurementClusterAttributes', parser: 'parseTemperatureMeasurement',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [isSpammy: true]]
     ],
     // PressureMeasurement Cluster
     0x0403 : [attributes: 'PressureMeasurementClusterAttributes', parser: 'parsePressureMeasurement',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [isSpammy: true]]
     ],
     // HumidityMeasurement Cluster
     0x0405 : [attributes: 'RelativeHumidityMeasurementClusterAttributes', parser: 'parseHumidityMeasurement',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [isSpammy: true]]
     ],
     // OccupancySensing (motion) Cluster
     0x0406 : [attributes: 'OccupancySensingClusterAttributes', parser: 'parseOccupancySensing',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [:]]
     ],
     // CarbonDioxideConcentrationMeasurement Cluster
     0x040D : [attributes: 'ConcentrationMeasurementClustersAttributes', parser: 'parseCarbonDioxideConcentrationMeasurement',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [isSpammy: true]]
     ],
     // PM25ConcentrationMeasurement Cluster
     0x042A : [attributes: 'ConcentrationMeasurementClustersAttributes', parser: 'parseConcentrationMeasurement',
-              subscriptions : [[0x0000: [min: 0, max: 0xFFFF, delta: 0]]]
+              subscriptions : [0x0000: [isSpammy: true]]
     ],
     // Camera AV Stream Management Cluster (Matter 1.3+)
     0x0551 : [attributes: 'CameraAvStreamManagementClusterAttributes', parser: 'parseCameraAvStreamManagement',
-              subscriptions : [[0x0016: [min: 0, max: 0xFFFF, delta: 0]],   // NightVision
-                               [0x0019: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerMuted
-                               [0x001A: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerVolumeLevel
-                               [0x001B: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerMaxLevel
-                               [0x001C: [min: 0, max: 0xFFFF, delta: 0]],   // SpeakerMinLevel
-                               [0x001D: [min: 0, max: 0xFFFF, delta: 0]],   // MicrophoneMuted
-                               [0x001E: [min: 0, max: 0xFFFF, delta: 0]],   // MicrophoneVolumeLevel
-                               [0x001F: [min: 0, max: 0xFFFF, delta: 0]],   // MicrophoneMaxLevel
-                               [0x0020: [min: 0, max: 0xFFFF, delta: 0]]]   // MicrophoneMinLevel
+              subscriptions : [0x0016: [:],   // NightVision
+                               0x0019: [:],   // SpeakerMuted
+                               0x001A: [:],   // SpeakerVolumeLevel
+                               0x001B: [:],   // SpeakerMaxLevel
+                               0x001C: [:],   // SpeakerMinLevel
+                               0x001D: [:],   // MicrophoneMuted
+                               0x001E: [:],   // MicrophoneVolumeLevel
+                               0x001F: [:],   // MicrophoneMaxLevel
+                               0x0020: [:]]   // MicrophoneMinLevel
     ],
 ]
 
@@ -487,6 +485,10 @@ private void processParsedDescription(final Map descMap) {
     if (descMap?.callbackType == 'SubscriptionResult') {
         logInfo "parse: received SubscriptionResult callback with subscriptionId:${descMap.subscriptionId}"
         routeSubscriptionResultToDoorLockChildren(descMap)
+        if (state.states?.pendingSpammySubscribe == true) {
+            logDebug 'parse: primary subscription established; sending the deferred spammy subscription'
+            sendSpammySubscription()
+        }
         return
     }
     // 2026-02-11  [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
@@ -2636,6 +2638,21 @@ void updated() {
         minimizeStateVariables(['true'])
     }
     state.preferences['minimizeStateVariables'] = settings.minimizeStateVariables
+    Integer spammyAttributesMin = getSpammyAttributesMinInterval()
+    Integer previousSpammyAttributesMin = safeNumberToInt(state.preferences['spammyAttributesMinInterval'], SPAMMY_ATTRIBUTES_MIN_INTERVAL_DEFAULT)
+    boolean spammyAttributesMinChanged = previousSpammyAttributesMin != spammyAttributesMin
+    state.preferences['spammyAttributesMinInterval'] = spammyAttributesMin
+    if (spammyAttributesMinChanged) {
+        // initialize() calls updated() right after it has subscribed - do not subscribe a second time on top of it
+        if (state.states?.isSubscribe == true) {
+            logDebug "updated(): spammyAttributesMinInterval changed from ${previousSpammyAttributesMin} to ${spammyAttributesMin}; a subscription is already in progress, not re-subscribing"
+        }
+        else if (state.subscriptions) {
+            cancelPendingSpammySubscription()
+            logDebug "updated(): spammyAttributesMinInterval changed from ${previousSpammyAttributesMin} to ${spammyAttributesMin}; scheduling reSubscribe()"
+            runIn(1, 'reSubscribe', [overwrite:true])
+        }
+    }
     ensureNewParseFlag()
     
     if (settings?.minReportingTimeIllum == null) device.updateSetting("minReportingTimeIllum",  [value:10, type:"number"])
@@ -2709,16 +2726,13 @@ void initialize() {
         sendInfoEvent('initialize()...', 'full initialization - all settings are reset to default')
     }
     log.warn "initialize(): calling sendSubscribeList()! (last unsubscribe was more than ${timeSinceLastSubscribe} seconds ago)"
-    state.lastTx['subscribeTime'] = now()
     state.states['isUnsubscribe'] = false
     state.states['isSubscribe'] = true  // should be set to false in the parse() method
     sendEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} initializeCtr is ${state.stats['initializeCtr']}", type: 'digital'])
     scheduleCommandTimeoutCheck(delay = 55)
     // Starting from MAB version 1.6.0 we support only cleanSubscribe command. Hubitat platform versions older than '2.3.9.186' are not supported!
-    String cleanCmd = cleanSubscribeCmd()
-    if (cleanCmd != null) {
-        sendToDevice(cleanCmd)
-        sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device subscribe command')
+    if (sendSubscriptionCommands()) {
+        sendInfoEvent('Subscribing...Please wait.', 'sent device subscription command(s)')
     }
     updated()   // added 02/03/2024
 }
@@ -2731,12 +2745,9 @@ void clearStates() {
 void reSubscribe() {
     logDebug "reSubscribe() ...(${location.hub.firmwareVersionString >= '2.3.9.186'})"
     if (location.hub.firmwareVersionString >= '2.3.9.186') {
-        String cleanCmd = cleanSubscribeCmd()
-        if (cleanCmd != null) {
-            state.lastTx['subscribeTime'] = now()
-            sendToDevice(cleanCmd)
+        if (sendSubscriptionCommands()) {
+            sendInfoEvent('Subscribing...Please wait.', 'sent device reSubscribe command(s)')
         }
-        sendInfoEvent('cleanSubscribeCmd()...Please wait.', 'sent device reSubscribe command')
         runIn(3, 'clearInfoEvent')
     }
     else {
@@ -2801,11 +2812,8 @@ void sendSubscribeList() {
     sendInfoEvent('sendSubscribeList()...Please wait.', 'sent device subscribe command')
     // Use cleanSubscribe for better reliability with event subscriptions (buttons, switches)
     if (location.hub.firmwareVersionString >= '2.3.9.186') {
-        String cleanCmd = cleanSubscribeCmd()
-        if (cleanCmd != null) {
-            state.lastTx['subscribeTime'] = now()
-            sendToDevice(cleanCmd)
-            logDebug 'sendSubscribeList(): using cleanSubscribe'
+        if (sendSubscriptionCommands()) {
+            logDebug 'sendSubscribeList(): subscription command(s) sent'
         }
     }
     else {
@@ -2815,77 +2823,176 @@ void sendSubscribeList() {
 
 
 String subscribeCmd() {
-    log.warn 'subscribeCmd() is deprecated. Use cleanSubscribeCmd() instead.'
+    log.warn 'subscribeCmd() is deprecated. Use sendSubscriptionCommands() instead.'
     return null
 }
 
-// availabe from HE platform version [2.3.9.186]
-String cleanSubscribeCmd() {
-    List<Map<String, String>> paths = []
-    List<Map<String, String>> eventPaths = []       // Build attribute paths first, then event paths
+private Map getSubscriptionOptions(Integer cluster, Integer attrId) {
+    Object subscriptions = SupportedMatterClusters[cluster]?.subscriptions
+    if (!(subscriptions instanceof Map)) {
+        return [:]
+    }
+    Object options = (subscriptions as Map)[attrId]
+    if (options == null) {
+        return [:]
+    }
+    if (!(options instanceof Map)) {
+        logWarn "getSubscriptionOptions(): options for cluster ${cluster}, attribute ${attrId} must be a Map"
+        return [:]
+    }
+    return options as Map
+}
 
-    // Filter out attribute subscriptions for disabled child devices
-    List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
+private boolean isSpammySubscription(Integer cluster, Integer attrId) {
+    return getSubscriptionOptions(cluster, attrId)?.isSpammy == true
+}
+
+private Integer getPrimarySubscriptionMinInterval() {
+    Integer minimum = safeNumberToInt(settings?.cleanSubscribeMinInterval, CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT)
+    if (minimum < 1) { minimum = 1 }    // a floor of 0 lets devices report as fast as they like
+    if (minimum > CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL) { minimum = CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL }
+    return minimum
+}
+
+private Integer getSpammyAttributesMinInterval() {
+    Integer minimum = safeNumberToInt(settings?.spammyAttributesMinInterval, SPAMMY_ATTRIBUTES_MIN_INTERVAL_DEFAULT)
+    if (minimum < 0) { minimum = 0 }
+    if (minimum > SPAMMY_ATTRIBUTES_MIN_INTERVAL_MAX) { minimum = SPAMMY_ATTRIBUTES_MIN_INTERVAL_MAX }
+    return minimum
+}
+
+private Integer getSubscriptionMaxInterval(Integer minimum) {
+    Integer maximum = safeNumberToInt(settings?.cleanSubscribeMaxInterval, CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT)
+    if (maximum < 0) { maximum = 0 }
+    if (maximum < minimum) { maximum = minimum }
+    if (maximum > CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL) { maximum = CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL }
+    return maximum
+}
+
+private Map<String, List<Map<String, Object>>> buildSubscriptionPathGroups(boolean splitSpammy) {
+    List<Map<String, Object>> regularPaths = []
+    List<Map<String, Object>> spammyPaths = []
+    List<List> enabledSubscriptions = (state.subscriptions ?: []).findAll { sub ->
+        if (!(sub instanceof List) || sub.size() < 3) {
+            logWarn "buildSubscriptionPathGroups(): invalid subscription entry ${sub}"
+            return false
+        }
         Integer endpoint = sub[0] as Integer
         ChildDeviceWrapper childDevice = findChildByEndpoint(endpoint)
         if (childDevice?.disabled == true) {
-            logDebug "cleanSubscribeCmd(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
+            logDebug "buildSubscriptionPathGroups(): skipping disabled device endpoint ${endpoint} (${childDevice.displayName})"
             return false
         }
         return true
-    }?.collect { sub ->
-        matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
-    } ?: []
+    } as List<List>
 
-    // Add event subscriptions for clusters that have eventSubscriptions configured
-    LinkedHashMap<Integer, List<List<Integer>>> groupedSubscriptionsByCluster = state.subscriptions?.groupBy { it[1] }
-    groupedSubscriptionsByCluster?.each { Integer cluster, List<List<Integer>> endpointsList ->
-        if (SupportedMatterClusters[cluster]?.eventSubscriptions) {
-            // Extract event IDs from eventSubscriptions
-            // Supports two formats:
-            // 1. (wildcard): eventSubscriptions : [-1]  → subscribes to ALL events from cluster
-            // 2. (detailed): eventSubscriptions : [[0x0001:[min:0,max:0xFFFF,delta:0]], [0x0002:[...]], ...]
-            def eventSubscriptions = SupportedMatterClusters[cluster].eventSubscriptions
-            List<Integer> eventIds = eventSubscriptions.collect { eventSub ->
-                // If eventSub is a Map, extract the key (event ID)
-                // If eventSub is an Integer (wildcard), use it directly (-1 for wildcard or specific event ID)
-                eventSub instanceof Map ? (eventSub.keySet()[0] as Integer) : (eventSub as Integer)
-            }
-            // Get unique endpoints for this cluster
-            Set<Integer> clusterEndpoints = endpointsList*.get(0) as Set<Integer>
-            // Build event paths for each endpoint (skip disabled devices)
-            clusterEndpoints.each { Integer endpoint ->
-                ChildDeviceWrapper childDevice = findChildByEndpoint(endpoint)
-                if (childDevice?.disabled == true) {
-                    logDebug "cleanSubscribeCmd(): skipping disabled device events for endpoint ${endpoint} (${childDevice.displayName})"
-                    return  // continue to next endpoint
+    enabledSubscriptions.each { List sub ->
+        Integer endpoint = sub[0] as Integer
+        Integer cluster = sub[1] as Integer
+        Integer attrId = sub[2] as Integer
+        Map<String, Object> path = matter.attributePath(endpoint, cluster, attrId) as Map<String, Object>
+        if (splitSpammy && isSpammySubscription(cluster, attrId)) {
+            spammyPaths.add(path)
+        }
+        else {
+            regularPaths.add(path)
+        }
+    }
+
+    Map<Integer, List<List>> groupedSubscriptionsByCluster = enabledSubscriptions.groupBy { it[1] as Integer }
+    groupedSubscriptionsByCluster.each { Integer cluster, List<List> endpointSubscriptions ->
+        Object configuredEvents = SupportedMatterClusters[cluster]?.eventSubscriptions
+        if (configuredEvents instanceof Collection) {
+            List<Integer> eventIds = (configuredEvents as Collection).findResults { eventSub ->
+                if (eventSub instanceof Number) { return (eventSub as Number).intValue() }
+                if (eventSub instanceof Map && eventSub.size() == 1) {
+                    Object eventKey = eventSub.keySet().iterator().next()
+                    if (eventKey instanceof Number) { return (eventKey as Number).intValue() }
                 }
+                logWarn "buildSubscriptionPathGroups(): invalid event subscription ${eventSub} for cluster ${cluster}"
+                return null
+            }
+            Set<Integer> endpoints = endpointSubscriptions.collect { it[0] as Integer } as Set<Integer>
+            endpoints.each { Integer endpoint ->
                 eventIds.each { Integer eventId ->
-                    // eventId can be -1 (wildcard for ALL events) or specific event ID (0x0001, 0x0002, etc.)
-                    eventPaths.add(matter.eventPath(endpoint, cluster, eventId))
+                    regularPaths.add(matter.eventPath(endpoint, cluster, eventId) as Map<String, Object>)
                 }
             }
         }
     }
 
-    paths.addAll(attributePaths)
-    paths.addAll(eventPaths)
-    
-    if (paths.isEmpty()) {
-        logWarn 'cleanSubscribeCmd(): paths is empty!'
-        return null
+    return [regular: minimizeByWildcard(regularPaths), spammy: minimizeByWildcard(spammyPaths)]
+}
+
+boolean sendSubscriptionCommands() {
+    cancelPendingSpammySubscription()
+    Integer primaryMin = getPrimarySubscriptionMinInterval()
+    Integer configuredSpammyMin = getSpammyAttributesMinInterval()
+    Map<String, List<Map<String, Object>>> pathGroups = buildSubscriptionPathGroups(configuredSpammyMin > 0)
+    List<Map<String, Object>> regularPaths = pathGroups.regular ?: []
+    List<Map<String, Object>> spammyPaths = pathGroups.spammy ?: []
+
+    if (!regularPaths && !spammyPaths) {
+        logWarn 'sendSubscriptionCommands(): no subscription paths found; no command sent'
+        return false
     }
-    logDebug "paths for cleanSubscribe: ${paths}"
-    List<Map<String, String>> minimizedPaths = []
-    minimizedPaths = minimizeByWildcard(paths)
-    logDebug "minimizedPaths for cleanSubscribe: ${minimizedPaths}"
-    Integer cleanSubscribeMin = safeNumberToInt(settings?.cleanSubscribeMinInterval, CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT)
-    Integer cleanSubscribeMax = safeNumberToInt(settings?.cleanSubscribeMaxInterval, CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT)
-    if (cleanSubscribeMin < 1) { cleanSubscribeMin = 1 }
-    if (cleanSubscribeMax < cleanSubscribeMin) { cleanSubscribeMax = cleanSubscribeMin }
-    if (cleanSubscribeMax > CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL) { cleanSubscribeMax = CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL }
-    logDebug "cleanSubscribe intervals: min=${cleanSubscribeMin} max=${cleanSubscribeMax}"
-    return matter.cleanSubscribe(cleanSubscribeMin, cleanSubscribeMax, minimizedPaths)
+
+    if (state.states == null) { state.states = [:] }
+    if (state.lastTx == null) { state.lastTx = [:] }
+    state.states['isSubscribe'] = true
+    state.lastTx['subscribeTime'] = now()
+
+    if (!regularPaths && spammyPaths) {
+        Integer spammyMin = Math.max(configuredSpammyMin, primaryMin)
+        Integer spammyMax = getSubscriptionMaxInterval(spammyMin)
+        logDebug "cleanSubscribe spammy-only intervals: min=${spammyMin} max=${spammyMax}; paths=${spammyPaths}"
+        sendToDevice(matter.cleanSubscribe(spammyMin, spammyMax, spammyPaths))
+        return true
+    }
+
+    Integer primaryMax = getSubscriptionMaxInterval(primaryMin)
+    logDebug "cleanSubscribe primary intervals: min=${primaryMin} max=${primaryMax}; paths=${regularPaths}"
+    sendToDevice(matter.cleanSubscribe(primaryMin, primaryMax, regularPaths))
+    if (spammyPaths) {
+        // The second subscription must not be sent while the cleanSubscribe handshake is still in
+        // flight. Wait for the SubscriptionResult callback (see parse()); the timer is only a
+        // fallback for controllers that never report one.
+        state.states['pendingSpammySubscribe'] = true
+        runIn(SPAMMY_SUBSCRIBE_FALLBACK_DELAY, 'sendSpammySubscription', [overwrite:true])
+        logDebug "sendSubscriptionCommands(): spammy subscription deferred until SubscriptionResult (fallback in ${SPAMMY_SUBSCRIBE_FALLBACK_DELAY}s)"
+    }
+    return true
+}
+
+void cancelPendingSpammySubscription() {
+    if (state.states == null) { state.states = [:] }
+    state.states['pendingSpammySubscribe'] = false
+    unschedule('sendSpammySubscription')
+}
+
+/**
+ * Sends the secondary subscription covering the attributes marked isSpammy, using a longer minimum
+ * reporting interval than the primary subscription. Triggered by the SubscriptionResult callback of
+ * the preceding cleanSubscribe, or by the fallback timer if no such callback arrives.
+ */
+void sendSpammySubscription() {
+    cancelPendingSpammySubscription()
+    Integer configuredSpammyMin = getSpammyAttributesMinInterval()
+    if (configuredSpammyMin <= 0) {
+        logDebug 'sendSpammySubscription(): preference is zero; deferred subscription cancelled'
+        return
+    }
+    List<Map<String, Object>> spammyPaths = buildSubscriptionPathGroups(true).spammy ?: []
+    if (!spammyPaths) {
+        logDebug 'sendSpammySubscription(): no enabled spammy paths found'
+        return
+    }
+    Integer spammyMin = Math.max(configuredSpammyMin, getPrimarySubscriptionMinInterval())
+    Integer spammyMax = getSubscriptionMaxInterval(spammyMin)
+    if (state.lastTx == null) { state.lastTx = [:] }
+    state.lastTx['subscribeTime'] = now()
+    logDebug "subscribe spammy intervals: min=${spammyMin} max=${spammyMax}; paths=${spammyPaths}"
+    sendToDevice(matter.subscribe(spammyMin, spammyMax, spammyPaths))
 }
 
 List<Map<String, Object>> minimizeByWildcard(List<Map<String, Object>> paths) {
@@ -3016,8 +3123,21 @@ void fingerprintsToSubscriptionsList() {
                     logWarn "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} is not in the SupportedMatterClusters list!"
                     return  // continue with the next cluster
                 }
-                def supportedSubscriptions = SupportedMatterClusters[clusterInt]['subscriptions']
-                def supportedSubscriptionsKeys = supportedSubscriptions*.keySet()?.flatten()
+                Object supportedSubscriptionsObject = SupportedMatterClusters[clusterInt]['subscriptions']
+                if (supportedSubscriptionsObject instanceof Map) {
+                    logTrace "fingerprintsToSubscriptionsList: subscriptions configuration is valid for clusterInt:${clusterInt}"
+                }
+                else {
+                    logWarn "fingerprintsToSubscriptionsList: subscriptions configuration must be a Map keyed by attribute ID; skipping cluster ${clusterInt}"
+                    return
+                }
+                Map supportedSubscriptions = supportedSubscriptionsObject as Map
+                List subscriptionKeys = supportedSubscriptions.keySet().toList()
+                List invalidSubscriptionKeys = subscriptionKeys.findAll { !(it instanceof Number) }
+                if (invalidSubscriptionKeys) {
+                    logWarn "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} has non-numeric subscription keys ${invalidSubscriptionKeys}; skipping them"
+                }
+                List<Integer> supportedSubscriptionsKeys = subscriptionKeys.findAll { it instanceof Number }.collect { (it as Number).intValue() }
                 logDebug "fingerprintsToSubscriptionsList: clusterInt:${clusterInt} subscribeList=${subscribeList} supportedSubscriptions=${supportedSubscriptions} supportedSubscriptionsKeys=${supportedSubscriptionsKeys}"
                 String endpointId = fingerprintName.substring(fingerprintName.length() - 2, fingerprintName.length())
                 // Add the supported subscriptions to the state.subscriptions list
@@ -4411,6 +4531,10 @@ void initializeVars(boolean fullInit = false) {
     if (settings?.minimizeStateVariables == null) { device.updateSetting('minimizeStateVariables', [value: MINIMIZE_STATE_VARIABLES_DEFAULT, type: 'bool']) }
     if (settings?.cleanSubscribeMinInterval == null) { device.updateSetting('cleanSubscribeMinInterval', [value: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, type: 'number']) }
     if (settings?.cleanSubscribeMaxInterval == null) { device.updateSetting('cleanSubscribeMaxInterval', [value: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, type: 'number']) }
+    if (settings?.spammyAttributesMinInterval == null) { device.updateSetting('spammyAttributesMinInterval', [value: SPAMMY_ATTRIBUTES_MIN_INTERVAL_DEFAULT, type: 'number']) }
+    // seed the shadow copy so that the following updated() does not see a spurious change and re-subscribe
+    if (state.preferences == null) { state.preferences = [:] }
+    state.preferences['spammyAttributesMinInterval'] = getSpammyAttributesMinInterval()
     ensureNewParseFlag()
     if (device.currentValue('healthStatus') == null) { sendHealthStatusEvent('unknown') }
 }
