@@ -361,7 +361,8 @@ metadata {
     ],
     // Fan Control Cluster
     0x0202 : [attributes: 'FanControlClusterAttributes', commands: 'FanControlClusterCommands', parser: 'parseFanControl',
-              subscriptions : [0x0000: [:]]   // FanMode / SpeedSetting
+              subscriptions : [0x0000: [:],   // FanMode / SpeedSetting
+                               0x0001: [:]]   // FanModeSequence (static config - drives supportedFanSpeeds)
     ],
     // ColorControl Cluster
     0x0300 : [attributes: 'ColorControlClusterAttributes', commands: 'ColorControlClusterCommands', parser: 'parseColorControl',
@@ -442,6 +443,18 @@ metadata {
     0x040D : 'parseCarbonDioxideConcentrationMeasurement',
     0x042A : 'parseConcentrationMeasurement',
     0x0551 : 'parseCameraAvStreamManagement'           // Camera AV Stream Management (Matter 1.3+)
+]
+
+// FanControl cluster (0x0202) attribute 0x0001 FanModeSequence -> the Hubitat 'supportedFanSpeeds' list.
+// Values per the Matter spec (FanModeSequenceEnum); the Hubitat FanControl capability only accepts
+// 'low','medium-low','medium','medium-high','high','on','off','auto' - Matter has no medium-low/medium-high.
+@Field static final Map<Integer, List<String>> FanModeSequenceEnum = [
+    0 : ['off', 'low', 'medium', 'high'],           // OffLowMedHigh
+    1 : ['off', 'low', 'high'],                     // OffLowHigh
+    2 : ['off', 'low', 'medium', 'high', 'auto'],   // OffLowMedHighAuto
+    3 : ['off', 'low', 'high', 'auto'],             // OffLowHighAuto
+    4 : ['off', 'high', 'auto'],                    // OffHighAuto
+    5 : ['off', 'high']                             // OffHigh
 ]
 
 // Json Parsing Cache
@@ -2074,6 +2087,19 @@ void parseFanControl(final Map descMap) { // 0202
                 name: 'speed',
                 value: speed,
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} speed is ${speed}"
+            ], descMap, true)
+            break
+        case '0001' : // FanModeSequence - which FanModes the device actually supports
+            logTrace "parseFanControl: FanModeSequence = ${value} (raw=${descMap.value})"
+            List<String> supportedSpeeds = FanModeSequenceEnum[value]
+            if (supportedSpeeds == null) {
+                logWarn "parseFanControl: Unknown FanModeSequence value ${value} - defaulting to off/low/medium/high"
+                supportedSpeeds = FanModeSequenceEnum[0]
+            }
+            sendHubitatEvent([
+                name: 'supportedFanSpeeds',
+                value: JsonOutput.toJson(supportedSpeeds),
+                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} supportedFanSpeeds is ${supportedSpeeds}"
             ], descMap, true)
             break
         default:
@@ -3809,6 +3835,41 @@ void componentSetSpeed(DeviceWrapper dw, String speed) {
     List<Map<String, String>> attrWriteRequests = []
     attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x0202, 0x0000, DataType.UINT8, intToHexStr(fanMode, 1)))
     sendToDevice(matter.writeAttributes(attrWriteRequests))
+}
+
+// Advance to the next fan speed, cycling off -> low -> medium -> high -> off.
+// The cycle is restricted to the speeds the device reported via FanModeSequence (supportedFanSpeeds), so a
+// 3-speed fan steps off -> low -> high -> off instead of writing an unsupported 'medium'. 'auto' is never
+// part of the cycle even when supported - it stays reachable via setSpeed().
+void componentCycleSpeed(DeviceWrapper dw) {
+    if (!dw.hasCommand('cycleSpeed')) { logError "componentCycleSpeed(${dw}) driver '${dw.typeName}' does not have command 'cycleSpeed' in ${dw.supportedCommands}"; return }
+    List<String> cycle = ['off', 'low', 'medium', 'high']
+    List<String> supported = parseSupportedFanSpeeds(dw)
+    if (supported) {
+        List<String> restricted = cycle.findAll { it in supported }
+        if (restricted.size() >= 2) { cycle = restricted }
+        else { logDebug "componentCycleSpeed(): supportedFanSpeeds ${supported} too narrow to cycle; using ${cycle}" }
+    }
+    String currentSpeed = dw.currentValue('speed')
+    Integer idx = cycle.indexOf(currentSpeed)
+    // unknown / not yet reported ('on', 'auto', 'smart', null) -> start the cycle at the first speed after 'off'
+    String nextSpeed = idx < 0 ? cycle[1] : cycle[(idx + 1) % cycle.size()]
+    logDebug "componentCycleSpeed(): speed ${currentSpeed} -> ${nextSpeed} (cycle=${cycle}) for ${dw}"
+    componentSetSpeed(dw, nextSpeed)
+}
+
+// Read the child's supportedFanSpeeds attribute (a JSON list) back into a List. Returns null when the
+// device never reported FanModeSequence, so callers can fall back to the full off/low/medium/high cycle.
+private List<String> parseSupportedFanSpeeds(DeviceWrapper dw) {
+    String json = dw.currentValue('supportedFanSpeeds')
+    if (!json) { return null }
+    try {
+        Object parsed = new JsonSlurper().parseText(json)
+        return (parsed instanceof List) ? (parsed as List).collect { it.toString() } : null
+    } catch (Exception e) {
+        logWarn "parseSupportedFanSpeeds(${dw}): cannot parse '${json}' : ${e.message}"
+        return null
+    }
 }
 
 // prestage level : https://community.hubitat.com/t/sengled-element-color-plus-driver/21811/2
