@@ -94,19 +94,17 @@
  *
  *                                   TODO: 
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
- *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
  *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events ? (may not ne needed anymore after callbackType:SubscribeResult processing is implemented)
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
  *                                   TODO: thermostat component - supported modes JSON initialization after discovery
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
- *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
- *                                   TODO: reset statistics on Hub reboot
+ *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType
  *
  */
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/25 5:17 PM' }
+static String timeStamp() { '2026/07/25 6:08 PM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -1605,6 +1603,8 @@ String getEventName(final String cluster, String evtId) {
 @Field static final Integer IGNORE_RECENT_SUBSCRIBE_THRESHOLD_MS = 30000    // 30 seconds threshold for ignoring events after a recent subscribe
 @Field static final Integer HUB_BOOT_UPTIME_THRESHOLD_SEC = 300             // 5 minutes threshold for ignoring events after hub boot
 @Field static final Integer SUBSCRIBE_RECENT_THRESHOLD_MS = 60000           // 60 seconds threshold for considering a subscribe as recent (used in the dynamic subscribe intervals calculation)
+@Field static final Integer HUB_BOOT_TIME_TOLERANCE_MS = 120000             // 2 minutes tolerance when comparing the calculated hub boot time (uptime has a 1 second resolution) - see checkHubRebooted()
+@Field static final Integer BURST_DUPLICATE_WINDOW_MS = 5000                // how long an attribute value is remembered when filtering the repeats within one refresh / discovery burst - see isBurstDuplicate()
 
 
 
@@ -2398,6 +2398,34 @@ void parseThermostat(final Map descMap) {
 
 
 // Common code method for sending Hubitat events
+/**
+ * Remembers the last value emitted for each (device, attribute) pair during a refresh / discovery burst.
+ *
+ * Kept in memory rather than in state - this is touched only while a burst is in progress and the contents are
+ * worthless after it, so there is no point in paying for a state write. A @Field static is shared by all devices
+ * using this driver, hence the key includes the child dni. It is bounded by (child devices x attributes).
+ */
+@Field static final Map<String, String> burstEventValue = new ConcurrentHashMap<String, String>()
+@Field static final Map<String, Long>   burstEventTime  = new ConcurrentHashMap<String, Long>()
+
+/**
+ * @return true when this exact attribute value was already emitted for this device within the current burst,
+ *         i.e. it is a repeat that should be dropped. Records the value when it is not a repeat.
+ */
+private boolean isBurstDuplicate(final String dni, final String name, final Object value) {
+    if (name == null) { return false }
+    String key = "${dni ?: device.id}:${name}"     // dni is empty for the parent's own events - fall back to the device id, so that two bridges sharing this driver cannot collide
+    String valueStr = value?.toString() ?: ''
+    Long timeNow = now()
+    Long storedTime = burstEventTime[key]
+    if (storedTime != null && burstEventValue[key] == valueStr && (timeNow - storedTime) < BURST_DUPLICATE_WINDOW_MS) {
+        return true
+    }
+    burstEventValue[key] = valueStr
+    burstEventTime[key] = timeNow
+    return false
+}
+
 void sendHubitatEvent(final Map<String, String> eventParams, DeviceWrapper dw, ignoreDuplicates = false) {
     String id = dw?.getDataValue('id') ?: '00'
     sendHubitatEvent(eventParams, [endpoint: id], ignoreDuplicates)
@@ -2429,21 +2457,39 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
         descriptionText = "${getDeviceDisplayName(descMap?.endpoint)} ${name} is ${value}"
     }
     Map eventMap = [name: name, value: value, descriptionText: descriptionText, unit: unit, type: 'physical']
-    if (state.states['isRefresh'] == true) {
+    // state.states may be missing (upgrade path, minimizeStateVariables) - a missing flag means 'not active',
+    // so duplicate filtering stays ENABLED rather than being silently switched off.
+    Map states = state.states ?: [:]
+    boolean isRefreshActive   = (states['isRefresh'] == true)
+    boolean isDiscoveryActive = (states['isDiscovery'] == true)
+    if (isRefreshActive) {
         eventMap.descriptionText += ' [refresh]'
         eventMap.isStateChange = true   // force the event to be sent
         eventMap.isRefresh = true
     }
-    if (state.states['isDiscovery'] == true) {
+    if (isDiscoveryActive) {
         eventMap.descriptionText += ' [discovery]'
         eventMap.isStateChange = true   // force the event to be sent
         eventMap.isDiscovery = true
     }
     // TODO - use the child device wrapper to check the current value !!!!!!!!!!!!!!!!!!!!!
 
+    // A refresh / discovery pass bypasses the duplicate check below (it forces isStateChange, so that unchanged
+    // values are still reported back to the user). Attributes that are computed from more than one source report
+    // are therefore emitted several times per burst - e.g. 'colorName' is sent by the CurrentHue (0x0000),
+    // CurrentSaturation (0x0001) and ColorMode (0x0008) handlers of the same refresh, all with the same value.
+    // Keep the FIRST emission of each attribute per burst and drop the exact repeats that follow it.
+    if (ignoreDuplicates == true && (isRefreshActive || isDiscoveryActive) && descMap?.evtId == null) {
+        if (isBurstDuplicate(dni, name, value)) {
+            if (state.stats != null) { state.stats['duplicatedCtr'] = (state.stats['duplicatedCtr'] ?: 0) + 1 } else { state.stats = [:] }
+            logTrace "sendHubitatEvent: IGNORED burst duplicate: ${eventMap.descriptionText} (value:${value} duplicatedCtr:${state.stats?.duplicatedCtr})"
+            return
+        }
+    }
+
     // IMPORTANT: Never suppress Matter *events* (evtId present) as duplicates.
     // Button/Switch events often repeat the same payload (e.g. {"position":1}) and still represent a real action.
-    if (ignoreDuplicates == true && state.states['isRefresh'] == false && descMap?.evtId == null) {
+    if (ignoreDuplicates == true && !isRefreshActive && descMap?.evtId == null) {
         boolean isDuplicate = false
         // Check child device currentState if available, otherwise check parent device for bridge events
         Object latestEvent = dw?.device?.currentState(name) ?: device.currentState(name)
@@ -2476,7 +2522,8 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
             logWarn "sendHubitatEvent: error checking for duplicates: ${e}"
         }
         if (isDuplicate) {
-            logTrace "sendHubitatEvent: IGNORED duplicate event: ${eventMap.descriptionText} (value:${value} dataType:${latestEvent?.dataType})"
+            if (state.stats != null) { state.stats['duplicatedCtr'] = (state.stats['duplicatedCtr'] ?: 0) + 1 } else { state.stats = [:] }
+            logTrace "sendHubitatEvent: IGNORED duplicate event: ${eventMap.descriptionText} (value:${value} dataType:${latestEvent?.dataType} duplicatedCtr:${state.stats?.duplicatedCtr})"
             return
         }
         else {
@@ -2484,7 +2531,7 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
         }
     }
     else {
-        logTrace "sendHubitatEvent: <b>ignoreDuplicates=false</b> or isRefresh=${state.states['isRefresh'] } for event: ${eventMap.descriptionText} (value:${value})"
+        logTrace "sendHubitatEvent: <b>ignoreDuplicates=false</b> or isRefresh=${isRefreshActive} for event: ${eventMap.descriptionText} (value:${value})"
     }
     if (dw != null && dw?.disabled != true) {
         // Always route Matter *events* (evtId present) through the child parse() so component drivers can translate them.
@@ -2755,7 +2802,9 @@ void installed() {
 
 void updated() {
     log.info 'updated...'
+    clearDriverVersionCache()   // the device data the version string is built from may have changed
     checkDriverVersion()
+    checkHubRebooted()
     logInfo "debug logging is: ${logEnable == true} description logging is: ${txtEnable == true}"
     if (settings.logEnable)   { runIn(86400, logsOff) }   // 24 hours
     if (settings.traceEnable) { logTrace settings; runIn(7200, traceOff) }   // 7200 = 2 hours
@@ -3347,6 +3396,7 @@ void setSwitch(String commandPar, String deviceNumberPar/*, extraPar = null*/) {
 void refresh() {
     logInfo 'refresh() ...'
     checkDriverVersion()
+    checkHubRebooted()      // fallback hook - deviceHealthCheck() is not scheduled when healthCheckMethod is 'Disabled'
 
     // Build attribute paths from state.subscriptions, filtering out disabled child devices
     List<Map<String, String>> attributePaths = state.subscriptions?.findAll { sub ->
@@ -4414,6 +4464,41 @@ void checkDriverVersion() {
 }
 
 /**
+ * Resets the accumulated statistics when the hub has been rebooted since the last check.
+ *
+ * There is no reboot callback available - 'capability Initialize' is intentionally NOT declared (it would
+ * re-subscribe to everything on each reboot), so this is polled from deviceHealthCheck() and checkDriverVersion().
+ * Detection compares the hub's boot timestamp (now() - uptime) rather than testing for a small uptime value,
+ * so a reboot is still detected when the poll interval is much longer than any 'recently booted' window.
+ * Only state.stats is cleared - NOT the parent resetStats(), which also wipes state.subscriptions,
+ * state.bridgeDescriptor, state.stateMachines and state.preferences (that would need a full re-discovery).
+ */
+private void checkHubRebooted() {
+    Long bootTime
+    try {
+        bootTime = now() - ((location.hub.uptime ?: 0L) as Long) * 1000L
+    } catch (Exception e) {
+        logDebug "checkHubRebooted(): hub uptime is not available (${e.message}) - skipped"
+        return
+    }
+    Long previousBootTime = state.hubBootTime as Long
+    if (previousBootTime == null) {
+        // first run after upgrading to this version - remember the boot time, but do NOT reset the statistics
+        state.hubBootTime = bootTime
+        logDebug "checkHubRebooted(): hub boot time ${bootTime} recorded (statistics were not reset)"
+        return
+    }
+    if (Math.abs(bootTime - previousBootTime) <= HUB_BOOT_TIME_TOLERANCE_MS) {
+        return      // same boot - uptime has a 1 second resolution, so the calculated boot time jitters a little
+    }
+    state.hubBootTime = bootTime
+    logWarn "checkHubRebooted(): the hub was rebooted (uptime ${formatUpTime()}) - resetting the statistics"
+    List<String> noParameters = []
+    resetStats(noParameters)    // matterUtilitiesLib - resets state.stats only
+    sendInfoEvent('Statistics were reset', "${device.displayName} statistics were reset after a hub reboot")
+}
+
+/**
  * Removes the leftovers of the driver-side illuminance throttling patch (removed in 1.9.0).
  * Illuminance reporting is now throttled at the source - cluster 0x0400 is marked isSpammy and is
  * governed by the 'spammyAttributesMinInterval' preference.
@@ -4514,6 +4599,7 @@ void checkHealthStatusForOffline() {
 // checkCtr3 is cleared when some event is received from the device.
 void deviceHealthCheck() {
     checkDriverVersion()
+    checkHubRebooted()
     checkHealthStatusForOffline()
     if (((settings.healthCheckMethod as Integer) ?: 0) == 2) { //    [0: 'Disabled', 1: 'Activity check', 2: 'Periodic polling']
         ping()          // TODO - ping() results in initialize() call if the device is switched off !
@@ -4619,7 +4705,33 @@ String secondsToDHMS(Long ut = null) {
     }
 }
 
-String driverVersionAndTimeStamp() { version() + ' ' + timeStamp() + ((_DEBUG) ? ' (debug version!) ' : ' ') + "(${device.getDataValue('model') } ${device.getDataValue('manufacturer') }) (${getModel()} ${location.hub.firmwareVersionString}) " }
+/**
+ * The driver version string, as used by checkDriverVersion() to detect a driver code update.
+ *
+ * checkDriverVersion() runs on EVERY received Matter message (parse() -> prepareForParse()), and building this
+ * string costs several platform calls (two getDataValue(), getModel() and location.hub.firmwareVersionString)
+ * plus the GString concatenation - so the result is cached per device instead of being rebuilt per message.
+ * The cache is a @Field static, which the platform re-initializes whenever the driver code is saved, so a real
+ * driver update still produces a fresh string and is detected normally. It is keyed by device id because a
+ * @Field static is shared by ALL devices using this driver and the string contains device-specific data.
+ */
+@Field static final Map<String, String> driverVersionCache = new ConcurrentHashMap<String, String>()
+
+String driverVersionAndTimeStamp() {
+    String key = device?.id?.toString() ?: 'unknown'
+    String cached = driverVersionCache[key]
+    if (cached != null) { return cached }
+    String computed = version() + ' ' + timeStamp() + ((_DEBUG) ? ' (debug version!) ' : ' ') + "(${device.getDataValue('model') } ${device.getDataValue('manufacturer') }) (${getModel()} ${location.hub.firmwareVersionString}) "
+    driverVersionCache[key] = computed
+    return computed
+}
+
+// Drop the cached driver version string - called when the device data it is built from may have changed.
+void clearDriverVersionCache() {
+    String key = device?.id?.toString() ?: 'unknown'
+    driverVersionCache.remove(key)
+    logDebug 'clearDriverVersionCache(): the cached driver version string was cleared'
+}
 
 String getDeviceInfo() {
     return "model=${device.getDataValue('model')} manufacturer=${device.getDataValue('manufacturer')} <b>deviceProfile=${state.deviceProfile ?: UNKNOWN}</b>"
@@ -4649,6 +4761,7 @@ void initializeVars(boolean fullInit = false) {
         logDebug 'forcing fullInit = true'
         state.clear()
         unschedule()
+        clearDriverVersionCache()
         resetStats()
         state.comment = 'Matter Advanced Bridge driver'
 
