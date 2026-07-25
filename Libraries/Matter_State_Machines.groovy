@@ -377,6 +377,8 @@ void discoverGlobalElementsStateMachine(Map data) {
 
 @Field static final Integer DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS               = 14
 @Field static final Integer DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS_WAIT          = 15
+@Field static final Integer DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE                      = 16
+@Field static final Integer DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE_WAIT                 = 17
 
 @Field static final Integer DISCOVER_ALL_STATE_GET_PARTS_LIST_START                     = 20
 @Field static final Integer DISCOVER_ALL_STATE_GET_PARTS_LIST_NEXT_DEVICE_STATE         = 21
@@ -602,14 +604,14 @@ void discoverAllStateMachine(Map data = null) {
             }
             else {
                 logWarn "discoverAllStateMachine: st:${st} - General Diagnostics cluster 0x0033 is not in the ServerList"
-                st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
+                st = DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE
             }
             break
         case DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS_WAIT :
             if (state['stateMachines']['Confirmation'] == true) {
                 logDebug "discoverAllStateMachine: st:${st} - received General Diagnostics AttributeList confirmation"
                 logRequestedClusterAttrResult([cluster: 0x0033, endpoint: 0])
-                st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
+                st = DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE
             }
             else {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
@@ -618,6 +620,53 @@ void discoverAllStateMachine(Map data = null) {
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     state['stateMachines']['errorText'] = 'state BRIDGE_GENERAL_DIAGNOSTICS_WAIT timeout !'
                     st = DISCOVER_ALL_STATE_ERROR
+                }
+            }
+            break
+
+        // The root node (endpoint 0) may expose its own PowerSource cluster - IKEA Thread devices report
+        // their battery there instead of on the application endpoint. Optional: never abort the discovery.
+        case DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE :
+            List<String> rootServerList = state.bridgeDescriptor['ServerList']
+            boolean hasPowerSource = rootServerList?.any { String c ->
+                try {
+                    return HexUtils.hexStringToInt(c) == 0x002F
+                } catch (ignored) {
+                    return false
+                }
+            } ?: false
+
+            logDebug "discoverAllStateMachine: DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE - serverList:${rootServerList} hasPowerSource=${hasPowerSource}"
+            if (hasPowerSource) {
+                logDebug "discoverAllStateMachine: st:${st} - reading root node PowerSource AttributeList (0x002F/0xFFFB)"
+                state.states['isInfo'] = true
+                state.tmp = null
+                state.states['cluster'] = '002F'
+                // Read ONLY AttributeList for 0x002F; parseGlobalElements will store it as state.bridgeDescriptor['002F_FFFB'].
+                state['stateMachines']['toBeConfirmed'] = [0, 0x002F, 0xFFFB]
+                state['stateMachines']['Confirmation'] = false
+                readAttribute(0, 0x002F, 0xFFFB)
+                retry = 0
+                st = DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE_WAIT
+            }
+            else {
+                logDebug "discoverAllStateMachine: st:${st} - PowerSource cluster 0x002F is not in the root node ServerList"
+                st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
+            }
+            break
+        case DISCOVER_ALL_STATE_BRIDGE_POWER_SOURCE_WAIT :
+            if (state['stateMachines']['Confirmation'] == true) {
+                logDebug "discoverAllStateMachine: st:${st} - received root node PowerSource AttributeList confirmation"
+                logRequestedClusterAttrResult([cluster: 0x002F, endpoint: 0])
+                st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
+            }
+            else {
+                logTrace "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
+                retry++
+                if (retry > maxRetries) {
+                    // an optional cluster read must not abort the whole discovery - carry on without it
+                    logWarn "discoverAllStateMachine: st:${st} - timeout reading the root node PowerSource AttributeList; continuing without it"
+                    st = DISCOVER_ALL_STATE_GET_PARTS_LIST_START
                 }
             }
             break
@@ -966,12 +1015,16 @@ void discoverAllStateMachine(Map data = null) {
             logDebug "discoverAllStateMachine: st:${st} - error"
             state.states['isInfo'] = false
             state['stateMachines']['discoverAllResult'] = ERROR
+            schedulePeriodicJobs()      // an aborted discovery must not leave the periodic jobs unscheduled either
             sendInfoEvent("<b>ERROR during the Matter Bridge and Devices discovery : ${state['stateMachines']['errorText']}</b>")
             st = 0
             break
         case DISCOVER_ALL_STATE_END : // 99 - end
             state.states['isInfo'] = false
             logDebug "discoverAllStateMachine: st:${st} - THE END"
+            // DISCOVER_ALL_STATE_INIT ran initializeVars(fullInit = true), whose bare unschedule() cancelled
+            // the periodic jobs - restore them, otherwise the health check stays dead until the next save.
+            schedulePeriodicJobs()
             sendInfoEvent('*** END of the Matter Bridge and Devices discovery ***')
             //sendInfoEvent('<b>Please wait for the re-subscribe process to complete...</b>')
             state['stateMachines']['discoverAllResult'] = SUCCESS

@@ -73,18 +73,32 @@
  *                                  min/max/delta values of the old format were never sent to the hub (cleanSubscribe takes one global min/max) and are replaced by an
  *                                  'isSpammy' marker; new 'spammyAttributesMinInterval' preference (0 = off) sends the isSpammy attributes in a second subscription
  *                                  with a longer minimum reporting interval, issued after the primary cleanSubscribe is confirmed by its SubscriptionResult callback;
+ *                                  <b>removed the driver-side illuminance throttling patch</b> (illumEvent/sendDelayedEventIllum/resetStats2/stringToJsonMap/mapToJsonString) together with the
+ *                                  'minReportingTimeIllum' preference and the stats2/lastRx2 state variables - all are deleted from existing installations on upgrade. Illuminance (0x0400) is now
+ *                                  marked isSpammy and is throttled at the source by the Matter subscription instead of by delaying events in the driver.
+ *                                  <b>NOTE: 'spammyAttributesMinInterval' defaults to 0 (off), so the previous 10 seconds illuminance throttling is NOT applied until you set the preference!</b>
+ *                                  illuminance 0 bug fixed: a null MeasuredValue (measurement invalid) was reported as 0 lux because safeToInt() defaults to 0 - such reports are now ignored;
+ *                                  the same null-becomes-zero bug is fixed for temperature (0x0402, reported a fake 0.0 degrees), pressure (0x0403, 0 kPa) and humidity (0x0405, 0%) - all four
+ *                                  nullable MeasuredValue attributes now go through nullableMeasuredValue(), which never substitutes a 0; the Thermostat LocalTemperature (0x0201/0x0000) is
+ *                                  nullable too and no longer reports a fake 0.0 degrees when the thermostat says the temperature is unavailable;
+ *                                  MeasuredValue 0 ('too dark to measure') still reports 0 lux; the lux conversion now rounds instead of truncating (raw 10000 was reported as 9 lux instead of 10)
+ *                                  and the range check uses the Matter limit 0xFFFE instead of an arbitrary 100000 lux, which was discarding direct sunlight readings (~120000 lux);
+ *                                  the periodic jobs (health check / ping) are finally scheduled automatically: added the missing installed() method - the driver had none, so a fresh installation
+ *                                  scheduled nothing until the user pressed 'Save Preferences' (this was NOT a side effect of the disabled Initialize capability, which only affects hub reboots);
+ *                                  _DiscoverAll now re-schedules them as well - DISCOVER_ALL_STATE_INIT runs initializeVars(fullInit=true), whose bare unschedule() was silently killing the
+ *                                  health check for the rest of the session; the health check scheduling was extracted from updated() into schedulePeriodicJobs();
+ *                                  IKEA Thread devices battery reporting: the root node (endpoint 0) PowerSource cluster 0x002F is now discovered and subscribed - previously only General Diagnostics
+ *                                  0x0033 was read from the root node, so a battery reported there was never subscribed at all. The root node subscriptions are driven by ROOT_NODE_SUBSCRIPTIONS and
+ *                                  are only requested when the root node AttributeList actually exposes them. For a single-node Matter device the battery is delivered to its application endpoint child
+ *                                  (redirectRootNodePowerSource()); for a real bridge it stays on the parent, which now declares the Battery capability and a batteryVoltage attribute;
  *
  *                                   TODO: 
- *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
- *                                   TODO: Scheduled jobs (ping) is not started automatically after driver installation ! (side effect of disabling the Initialize capability?)
  *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events ? (may not ne needed anymore after callbackType:SubscribeResult processing is implemented)
- *                                   TODO: _discoverAll to call updated() or to start the periodic jobs
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
  *                                   TODO: thermostat component - supported modes JSON initialization after discovery
  *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
- *                                   TODO: IKEA Thread devices - handle the Battery reproting (EP=00) + ALPSTUGA air quality monitor
  *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType	
  *                                   TODO: reset statistics on Hub reboot
  *
@@ -92,7 +106,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/25 2:40 PM' }
+static String timeStamp() { '2026/07/25 4:15 PM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -118,7 +132,17 @@ static String timeStamp() { '2026/07/25 2:40 PM' }
 @Field static final Integer SPAMMY_ATTRIBUTES_MIN_INTERVAL_DEFAULT = 0
 @Field static final Integer SPAMMY_ATTRIBUTES_MIN_INTERVAL_MAX = 3600
 @Field static final Integer SPAMMY_SUBSCRIBE_FALLBACK_DELAY = 60   // seconds to wait for SubscriptionResult before sending the spammy subscription anyway
-@Field static final Integer defaultMinReportingTime = 10
+
+/**
+ * Clusters of the root node (endpoint 0) that are subscribed in addition to the application endpoints,
+ * and the attributes to subscribe when the root node actually exposes them (checked against its AttributeList).
+ * PowerSource is here because IKEA Thread devices report their battery on the root node, not on the
+ * application endpoint - see redirectRootNodePowerSource() for where those reports are delivered.
+ */
+@Field static final Map<Integer, Map<Integer, String>> ROOT_NODE_SUBSCRIPTIONS = [
+    0x0033 : [0x0001: 'RebootCount', 0x0002: 'UpTime'],
+    0x002F : [0x000B: 'BatVoltage',  0x000C: 'BatPercentRemaining']
+]
 
 // Internal events that should be routed through parse() without requiring attribute declaration
 @Field static final List<String> INTERNAL_EVENTS = ['unprocessed', 'handleInChildDriver']
@@ -141,7 +165,9 @@ metadata {
         // capability 'Initialize' // commented out to avoid automatic initialize() call on driver update and hub reboot, resulting in subscribing to all Matter attributes and events again!
         capability 'Refresh'
         capability 'Health Check'
+        capability 'Battery'        // a bridge may expose a PowerSource cluster on its root node (endpoint 0)
 
+        attribute 'batteryVoltage', 'number'
         attribute 'healthStatus', 'enum', ['unknown', 'offline', 'online']
         attribute 'rtt', 'number'
         attribute 'Status', 'string'
@@ -184,7 +210,6 @@ metadata {
         input name:'txtEnable', type: 'bool', title: '<b>Enable descriptionText logging</b>', defaultValue: true
         input name:'logEnable', type: 'bool', title: '<b>Enable debug logging</b>', defaultValue: DEFAULT_LOG_ENABLE
         input name: 'advancedOptions', type: 'bool', title: '<b>Advanced Options</b>', description: '<i>These advanced options should be already automatically set in an optimal way for your device...</i>', defaultValue: false
-        input name: "minReportingTimeIllum", type: "number", title: "Minimum time between illumination/lux reports", description: "Minimum time between illumination/lux reporting, seconds", defaultValue: 10, range: "1..3600",  limit:['ALL']
         if (device && advancedOptions == true) {
             input name: 'healthCheckMethod', type: 'enum', title: '<b>Healthcheck Method</b>', options: HealthcheckMethodOpts.options, defaultValue: HealthcheckMethodOpts.defaultValue, required: true, description: '<i>Method to check device online/offline status.</i>'
             input name: 'healthCheckInterval', type: 'enum', title: '<b>Healthcheck Interval</b>', options: HealthcheckIntervalOpts.options, defaultValue: HealthcheckIntervalOpts.defaultValue, required: true, description: '<i>How often the hub will check the device health.<br>3 consecutive failures will result in status "offline"</i>'
@@ -1120,7 +1145,33 @@ void parseGeneralDiagnostics(final Map descMap) {
 }
 
 
-void parsePowerSource(final Map descMap) {
+/**
+ * PowerSource (0x002F) on endpoint 0 belongs to the root node, not to any bridged endpoint - IKEA Thread
+ * devices report their battery there. On a single-node Matter device the reading belongs on the one
+ * application endpoint child; on a real bridge the root node battery is not attributable to any single
+ * child, so it stays on the parent device (which declares the Battery capability for exactly this case).
+ *
+ * @return descMap unchanged, or a copy with the endpoint rewritten to the application endpoint child
+ */
+private Map redirectRootNodePowerSource(final Map descMap) {
+    if (descMap?.endpoint != '00') { return descMap }
+    if (state.deviceType != 'MATTER_DEVICE') { return descMap }
+    List<ChildDeviceWrapper> applicationChildren = childDevices?.findAll { ChildDeviceWrapper it ->
+        String id = it.getDataValue('id')
+        return id != null && id != '00'
+    } ?: []
+    if (applicationChildren.size() != 1) {
+        logDebug "redirectRootNodePowerSource: ${applicationChildren.size()} application endpoint children - the root node report stays on the parent"
+        return descMap
+    }
+    ChildDeviceWrapper dw = applicationChildren[0]
+    String childEndpoint = dw.getDataValue('id')
+    logDebug "redirectRootNodePowerSource: root node PowerSource report redirected to ${dw.displayName} (endpoint ${childEndpoint})"
+    return descMap + [endpoint: childEndpoint]
+}
+
+void parsePowerSource(final Map descMapPar) {
+    final Map descMap = redirectRootNodePowerSource(descMapPar)
     logTrace "parsePowerSource: descMap:${descMap}"
     String attrName = getAttributeName(descMap)
     //log.trace "after getAttributeName:${attrName}"
@@ -1667,27 +1718,45 @@ void parseBooleanStateConfiguration(final Map descMap) {
     }
 }
 
+/**
+ * Returns the raw MeasuredValue of a nullable measurement attribute, or null when the report carries a
+ * Matter null (measurement invalid) or a value that cannot be parsed.
+ *
+ * It never substitutes a 0: safeToInt() defaults null to 0, which is indistinguishable from a genuine
+ * reading of 0 and used to fabricate '0 lux' / '0 °C' / '0 kPa' / '0 %' events (fixed in 1.9.0).
+ */
+private Integer nullableMeasuredValue(final Map descMap, final String caller) {
+    if (descMap?.value == null) {
+        logDebug "${caller}: MeasuredValue is null (measurement invalid) - no event sent"
+        return null
+    }
+    Integer value = safeToInt(descMap.value, Integer.MIN_VALUE)
+    if (value == Integer.MIN_VALUE) {
+        logWarn "${caller}: MeasuredValue:${descMap.value} could not be parsed"
+        return null
+    }
+    return value
+}
+
 // Method for parsing illuminance measurement
 void parseIlluminanceMeasurement(final Map descMap) { // 0400
     if (descMap.cluster != '0400') { logWarn "parseIlluminanceMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Illuminance
-        Integer valueInt = safeToInt(descMap.value)
-        Integer valueLux = Math.pow( 10, (valueInt -1) / 10000)  as Integer
-        if (valueLux < 0 || valueLux > 100000) {
-            logWarn "parseIlluminanceMeasurement: valueInt:${valueInt} is out of range"
+        Integer valueInt = nullableMeasuredValue(descMap, 'parseIlluminanceMeasurement')
+        if (valueInt == null) { return }
+        if (valueInt < 0 || valueInt > 0xFFFE) {
+            logWarn "parseIlluminanceMeasurement: MeasuredValue:${descMap.value} is out of range"
             return
         }
-        int lux = valueLux.toInteger()
-        illumEvent(lux, descMap)
-        /*
+        // Matter: MeasuredValue = 10000 x log10(lux) + 1 over 1..0xFFFE; MeasuredValue 0 means 'too dark to measure' (< 1 lux)
+        Integer valueLux = (valueInt == 0) ? 0 : Math.round(Math.pow(10, (valueInt - 1) / 10000.0)) as Integer
+        // No driver-side throttling here - cluster 0x0400 is marked isSpammy, see the 'spammyAttributesMinInterval' preference.
         sendHubitatEvent([
             name: 'illuminance',
             value: valueLux as int,
             unit: 'lx',
             descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  illuminance is ${valueLux} lux"
         ], descMap, true)
-        
-        */
     } else {
         logTrace "parseIlluminanceMeasurement: ${(IlluminanceMeasurementClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
     }
@@ -1697,7 +1766,9 @@ void parseIlluminanceMeasurement(final Map descMap) { // 0400
 void parseTemperatureMeasurement(final Map descMap) { // 0402
     if (descMap.cluster != '0402') { logWarn "parseTemperatureMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Temperature
-        Double valueInt = safeToInt(descMap.value) / 100.0
+        Integer rawValue = nullableMeasuredValue(descMap, 'parseTemperatureMeasurement')
+        if (rawValue == null) { return }
+        Double valueInt = rawValue / 100.0
         String unit
         //log.debug "parseTemperatureMeasurement: location.temperatureScale:${location.temperatureScale}"
         if (valueInt < -100 || valueInt > 300) {
@@ -1727,8 +1798,9 @@ void parseTemperatureMeasurement(final Map descMap) { // 0402
 void parsePressureMeasurement(final Map descMap) { // 0403
     if (descMap.cluster != '0403') { logWarn "parsePressureMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // MeasuredValue (in 0.1 kPa units)
-        Integer rawValue = safeToInt(descMap.value)
-        if (rawValue == null || rawValue < 0) {
+        Integer rawValue = nullableMeasuredValue(descMap, 'parsePressureMeasurement')
+        if (rawValue == null) { return }
+        if (rawValue < 0) {
             logWarn "parsePressureMeasurement: invalid value:${descMap.value}"
             return
         }
@@ -1749,7 +1821,9 @@ void parsePressureMeasurement(final Map descMap) { // 0403
 void parseHumidityMeasurement(final Map descMap) { // 0405
     if (descMap.cluster != '0405') { logWarn "parseHumidityMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Humidity
-        Double valueInt = safeToInt(descMap.value) / 100.0
+        Integer rawValue = nullableMeasuredValue(descMap, 'parseHumidityMeasurement')
+        if (rawValue == null) { return }
+        Double valueInt = rawValue / 100.0
         if (valueInt < 0 || valueInt > 100) {
             logWarn "parseHumidityMeasurement: valueInt:${valueInt} is out of range"
             return
@@ -2193,6 +2267,11 @@ void parseThermostat(final Map descMap) {
     String unit = getTemperatureUnit()
     switch (descMap.attrId) {
         case '0000' : // LocalTemperature -> temperature
+            // LocalTemperature is nullable - null means the temperature is unavailable and must not be sent as 0.0
+            if (descMap.value == null) {
+                logDebug 'parseThermostat: LocalTemperature is null (unavailable) - no event sent'
+                break
+            }
             valueIntCorrected = convertTemperature(descMap)
             sendHubitatEvent([
                 name: 'temperature',
@@ -2610,21 +2689,21 @@ void configure() {
     sendInfoEvent('configure()...', 'sent device subscribe command')
 }
 
-//lifecycle commands
-void updated() {
-    log.info 'updated...'
-    checkDriverVersion()
-    logInfo "debug logging is: ${logEnable == true} description logging is: ${txtEnable == true}"
-    if (settings.logEnable)   { runIn(86400, logsOff) }   // 24 hours
-    if (settings.traceEnable) { logTrace settings; runIn(7200, traceOff) }   // 7200 = 2 hours
-
+/**
+ * (Re)schedules the periodic jobs from the current preferences.
+ *
+ * Must be called by every code path that runs initializeVars(fullInit = true), because that does a bare
+ * unschedule() which silently cancels deviceHealthCheck. initialize() gets away with it by calling
+ * updated() afterwards; _DiscoverAll does not, hence the explicit call from DISCOVER_ALL_STATE_END.
+ */
+void schedulePeriodicJobs() {
     final int healthMethod = (settings.healthCheckMethod as Integer) ?: 0
     if (healthMethod == 1 || healthMethod == 2) {                            //    [0: 'Disabled', 1: 'Activity check', 2: 'Periodic polling']
         // schedule the periodic timer
         final int interval = (settings.healthCheckInterval as Integer) ?: 0
         if (interval > 0) {
             logTrace "healthMethod=${healthMethod} interval=${interval}"
-            log.info "scheduling health check every ${interval} minutes by ${HealthcheckMethodOpts.options[healthCheckMethod as int]} method"
+            log.info "scheduling health check every ${interval} minutes by ${HealthcheckMethodOpts.options[healthMethod]} method"
             scheduleDeviceHealthCheck(interval, healthMethod)
         }
     }
@@ -2632,6 +2711,30 @@ void updated() {
         unScheduleDeviceHealthCheck()        // unschedule the periodic job, depending on the healthMethod
         log.info 'Health Check is disabled!'
     }
+}
+
+//lifecycle commands
+
+/**
+ * Called by the platform once, when the driver is assigned to the device.
+ * updated() is deferred: device.updateSetting() writes made by initializeVars() are not visible to
+ * settings within this same execution, so scheduling the periodic jobs here would read null and skip them.
+ */
+void installed() {
+    log.info 'installed()...'
+    initializeVars(fullInit = true)
+    runIn(3, 'updated')
+    sendInfoEvent('Installed...', 'run <b>_DiscoverAll</b> to discover the bridged devices')
+}
+
+void updated() {
+    log.info 'updated...'
+    checkDriverVersion()
+    logInfo "debug logging is: ${logEnable == true} description logging is: ${txtEnable == true}"
+    if (settings.logEnable)   { runIn(86400, logsOff) }   // 24 hours
+    if (settings.traceEnable) { logTrace settings; runIn(7200, traceOff) }   // 7200 = 2 hours
+
+    schedulePeriodicJobs()
     // compare state.preferences.minimizeStateVariables with settings.minimizeStateVariables was changed and call the minimizeStateVariables()
     if (state.preferences == null) { state.preferences = [:] }
     if ((state.preferences['minimizeStateVariables'] ?: false) != settings?.minimizeStateVariables && settings?.minimizeStateVariables == true) {
@@ -2654,10 +2757,7 @@ void updated() {
         }
     }
     ensureNewParseFlag()
-    
-    if (settings?.minReportingTimeIllum == null) device.updateSetting("minReportingTimeIllum",  [value:10, type:"number"])
-    resetStats2()
-   
+    removeObsoleteIlluminanceThrottling()
 }
 
 // delete all Preferences
@@ -3081,27 +3181,24 @@ void fingerprintsToSubscriptionsList() {
     //updateStateSubscriptionsList('add', 0, 0x001D, 0x0003)
 
     // Bridge/node endpoint (00) subscriptions (not part of fingerprintXX)
-    // Subscribe to General Diagnostics attrs only if exposed in the bridge attribute list.
-    List bridgeAttrList0033 = state?.bridgeDescriptor?.get('0033_FFFB') as List
-    if (bridgeAttrList0033) {
-        List<Integer> bridgeAttrInts0033 = bridgeAttrList0033.collect { safeHexToInt(it) }
-        if (bridgeAttrInts0033.contains(0x0001)) {
-            logDebug 'fingerprintsToSubscriptionsList: adding bridge subscription endpoint 0 cluster 0x0033 attr 0x0001 (RebootCount)'
-            updateStateSubscriptionsList(addOrRemove = 'add', endpoint = 0, cluster = 0x0033, attrId = 0x0001)
+    // Subscribe to the root node (endpoint 0) clusters, but only to the attributes it actually exposes.
+    ROOT_NODE_SUBSCRIPTIONS.each { Integer cluster, Map<Integer, String> attributes ->
+        String attrListKey = String.format('%04X_FFFB', cluster)
+        List rootAttrList = state?.bridgeDescriptor?.get(attrListKey) as List
+        if (!rootAttrList) {
+            logTrace "fingerprintsToSubscriptionsList: bridgeDescriptor ${attrListKey} attribute list not available"
+            return  // continue with the next root node cluster
         }
-        else {
-            logDebug "fingerprintsToSubscriptionsList: bridge 0x0033 AttributeList does not contain 0x0001 (RebootCount): ${bridgeAttrInts0033}"
+        List<Integer> rootAttrInts = rootAttrList.collect { safeHexToInt(it) }
+        attributes.each { Integer attrId, String attrName ->
+            if (rootAttrInts.contains(attrId)) {
+                logDebug "fingerprintsToSubscriptionsList: adding root node subscription endpoint 0 cluster 0x${String.format('%04X', cluster)} attr 0x${String.format('%04X', attrId)} (${attrName})"
+                updateStateSubscriptionsList(addOrRemove = 'add', endpoint = 0, cluster = cluster, attrId = attrId)
+            }
+            else {
+                logDebug "fingerprintsToSubscriptionsList: root node ${attrListKey} does not contain 0x${String.format('%04X', attrId)} (${attrName}): ${rootAttrInts}"
+            }
         }
-        if (bridgeAttrInts0033.contains(0x0002)) {
-            logDebug 'fingerprintsToSubscriptionsList: adding bridge subscription endpoint 0 cluster 0x0033 attr 0x0002 (UpTime)'
-            updateStateSubscriptionsList(addOrRemove = 'add', endpoint = 0, cluster = 0x0033, attrId = 0x0002)
-        }
-        else {
-            logDebug "fingerprintsToSubscriptionsList: bridge 0x0033 AttributeList does not contain 0x0002 (UpTime): ${bridgeAttrInts0033}"
-        }
-    }
-    else {
-        logTrace 'fingerprintsToSubscriptionsList: bridgeDescriptor 0033_FFFB attribute list not available'
     }
 
     // For each fingerprint in the state, check if the fingerprint has entries in the SupportedMatterClusters list. Then, add these entries to the state.subscriptions map
@@ -4279,6 +4376,25 @@ void checkDriverVersion() {
         setStateDriverVersion(driverVersionAndTimeStamp())
         final boolean fullInit = false
         initializeVars(fullInit)
+        removeObsoleteIlluminanceThrottling()
+    }
+}
+
+/**
+ * Removes the leftovers of the driver-side illuminance throttling patch (removed in 1.9.0).
+ * Illuminance reporting is now throttled at the source - cluster 0x0400 is marked isSpammy and is
+ * governed by the 'spammyAttributesMinInterval' preference.
+ */
+private void removeObsoleteIlluminanceThrottling() {
+    unschedule('sendDelayedEventIllum')
+    if (settings?.minReportingTimeIllum != null) {
+        device.removeSetting('minReportingTimeIllum')
+        logDebug 'removeObsoleteIlluminanceThrottling: the obsolete minReportingTimeIllum preference was removed'
+    }
+    if (state.stats2 != null || state.lastRx2 != null) {
+        state.remove('stats2')
+        state.remove('lastRx2')
+        logDebug 'removeObsoleteIlluminanceThrottling: the obsolete stats2 and lastRx2 state variables were removed'
     }
 }
 
@@ -4501,8 +4617,6 @@ void initializeVars(boolean fullInit = false) {
         state.clear()
         unschedule()
         resetStats()
-
-        resetStats2() 
         state.comment = 'Matter Advanced Bridge driver'
 
         logInfo 'all states and scheduled jobs cleared!'
@@ -4635,102 +4749,6 @@ private void finalizeDeviceType() {
 }
 */
 
-// lgk 03/26 add delayed illum
-
-def illumEvent( illum, descMap) {
-    logDebug "In lgk illum event"
-    def map = [:] 
-    //def newMap = [:]
-    Map statsMap = stringToJsonMap(state.stats2); try {statsMap['illumCtr']++ } catch (e) {statsMap['illumCtr']=1}; state.stats2 = mapToJsonString(statsMap)
-    int lux = illum
-    if (lux < 0) {
-        log.warn "ignored invalid illum/lux ${lux}"
-        return
-    }
-    map.value = lux
-    map.name = "illumination"
-    map.unit = "lx"
-    map.type = "digital"
-    map.isStateChange = true
-    map.descriptionText = "${map.name} is ${lux} ${map.unit}"
-    Integer reportingInterval = (minReportingTimeIllum ?: 10) as Integer
-    Map lastRxMap = stringToJsonMap(state.lastRx2)
-    Long illumTime = (lastRxMap['illumTime'] ?: (now() - reportingInterval * 1000L)) as Long
-    lastRxMap['illumTime'] = illumTime
-    def timeElapsed = Math.round((now() - illumTime) / 1000)
-    Integer timeRamaining = (reportingInterval - timeElapsed) as Integer
-    if (timeElapsed >= reportingInterval) {
-       // if (settings?.txtEnable) {log.info "${device.displayName} ${map.descriptionText}"}
-        unschedule("sendDelayedEventIllum")
-        lastRxMap['illumTime'] = now()
-        logDebug "Not delaying sending $map"
-        
-       sendHubitatEvent([ 
-            name: 'illuminance',
-            value: illum,
-            unit: 'lx',
-            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  illuminance is ${illum} lux"
-            ], descMap, true)       
-    }
-    else { // queue the event 
-    	map.type = "delayed"
-        logDebug "${device.displayName} DELAYING ${timeRamaining} seconds event : ${map}"   
-        
-        map.descMap = descMap
-        // [callbackType:Report, endpointInt:9, clusterInt:1024, attrInt:0, data:[0:UINT:13586], value:13586, cluster:0400, endpoint:09, attrId:0000]
-        runIn(timeRamaining, 'sendDelayedEventIllum',  [overwrite: true, data: map ])
-    }
-    state.lastRx2 = mapToJsonString(lastRxMap)
-}
-
-private void sendDelayedEventIllum(Map map) {
-    def descMap = [:]
- 
-    Map lastRxMap = stringToJsonMap(state.lastRx2); try {lastRxMap['illumTime'] = now()} catch (e) {lastRxMap['illumTime']=now()-(minReportingTimeIllum * 2000)}; state.lastRx2 = mapToJsonString(lastRxMap)
-    logInfo "In Send/Processing delayed map = $map"
-   
-    int illum = map.value
-    descMap = map.descMap 
-    
-    sendHubitatEvent([
-            name: 'illuminance',
-            value: illum,
-            unit: 'lx',
-            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  illuminance is ${illum} lux"
-            ], descMap, true)
-}
-
-def resetStats2() {
-    Map stats2 = [
-        date : new Date().format('yyyy-MM-dd', location.timeZone),
-        rxCtr : 0,
-        txCtr : 0,
-        rejoins: 0
-    ]
-    
-    Map lastRx2 = [
-        illumTime : now() - defaultMinReportingTime * 1000,
-        illumCfg : '-1,-1,-1'
-    ]
-    
- 
-    state.stats2  =  mapToJsonString( stats2 )
-    state.lastRx2 =  mapToJsonString( lastRx2 )
-    log.info "${device.displayName} Statistics were reset."
-}
-
-String mapToJsonString( Map map) {
-    if (map==null || map==[:]) return ""
-    String str = JsonOutput.toJson(map)
-    return str
-}
-
-Map stringToJsonMap( String str) {
-    if (str==null) return [:]
-    def jsonSlurper = new JsonSlurper()
-    def map = jsonSlurper.parseText( str )
-    return map
-}
 
 // -------- libraries here --------
 /* groovylint-disable-next-line NglParseError */
