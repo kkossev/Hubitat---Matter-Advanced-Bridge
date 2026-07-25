@@ -19,7 +19,7 @@
   * ver. 1.0.3  2026-01-25 kkossev + + GPT-5.2 : newParse=true fixes (evtId as Integer)
   * ver. 1.0.4  2026-01-29 kkossev  - common libraries
   * ver. 1.1.0  2026-02-21 kkossev  - added getInfo() command; code refactoring
-  * ver. 1.1.1  2026-07-23 kkossev  - (dev. branch) - bug fixes
+  * ver. 1.1.1  2026-07-25 kkossev  - (dev. branch) - bug fixes
   *
   *                                 TODO: featureMap in deviceFingerprintData is in decimal, maybe should be stored in hex for better readability?
   *                                 TODO: add getFeatureMap(cluster) method in the commonLib
@@ -30,7 +30,7 @@ import groovy.transform.Field
 import groovy.json.JsonSlurper
 
 @Field static final String matterComponentButtonVersion = '1.1.1'
-@Field static final String matterComponentButtonStamp   = '2026/07/23 11:05 PM'
+@Field static final String matterComponentButtonStamp   = '2026/07/25 9:12 AM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -56,7 +56,6 @@ preferences {
     }
 }
 
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
 void parse(List<Map> description) {

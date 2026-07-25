@@ -17,13 +17,14 @@
  * ver. 1.0.0  2025-05-24 kkosev     - first version
  * ver. 1.1.0  2025-01-10 kkossev    - added ping command and RTT monitoring via matterHealthStatusLib; removed unused setState/getState methods
  * ver. 1.1.1  2025-01-29 kkossev    - common libraries
+ * ver. 1.1.2  2026-07-25 kkossev    - bug fixes
  *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentSignalVersion = '1.1.1'
-@Field static final String matterComponentSignalStamp   = '2025/01/29 10:40 PM'
+@Field static final String matterComponentSignalVersion = '1.1.2'
+@Field static final String matterComponentSignalStamp   = '2026/07/25 8:58 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Signal', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom_Component_Signal.groovy') {
@@ -51,7 +52,6 @@ preferences {
     }
 }
 
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
 void parse(List<Map> description) {

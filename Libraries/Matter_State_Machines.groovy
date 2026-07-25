@@ -42,7 +42,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterStateMachinesLib = '1.1.3'
-@Field static final String matterStateMachinesLibStamp   = '2026/07/25 8:24 AM'
+@Field static final String matterStateMachinesLibStamp   = '2026/07/25 9:19 AM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'

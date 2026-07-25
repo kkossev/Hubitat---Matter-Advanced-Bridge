@@ -20,7 +20,8 @@
  * ver. 1.2.0  2025-01-18 kkossev   - added ALPSTUGA Air Quality Monitor support
  * ver. 1.2.1  2026-01-29 kkossev   - added common library matterCommonLib
  * ver. 1.2.2  2026-02-19 kkossev   - moved common methods to matterCommonLib
- * ver. 1.2.3  2026-05-24 kkossev   - (dev.branch) featureMap bug fix
+ * ver. 1.2.3  2026-05-24 kkossev   - featureMap bug fix
+ * ver. 1.2.4  2026-07-25 kkossev   - bug fixes
  * 
  *                                   TODO: use safeToHex methods;  decodeIeee754Float method float value
  *                                   TODO: add cluster 0071 'HEPAFilterMonitoring' endpointId:"0B"
@@ -32,8 +33,8 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import hubitat.helper.HexUtils
 
-@Field static final String matterComponentAirPurifierVersion = '1.2.3'
-@Field static final String matterComponentAirPurifierStamp   = '2026/05/24 6:57 PM'
+@Field static final String matterComponentAirPurifierVersion = '1.2.4'
+@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 6:57 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 
@@ -149,7 +150,6 @@ preferences {
 ]
 
 
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
 void parse(List<Map> description) {

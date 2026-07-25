@@ -31,24 +31,20 @@ library(
   * ver. 1.3.1  2026-01-06 GPT-5.2 - added discoveryTimeoutScale
   * ver. 1.3.2  2026-01-26 GPT-5.2 - Minimal fix: make decodeTLVContainer() handle nested containers; reduced warning level logging
   * ver. 1.3.3  2026-02-18 kkossev   -(dev.branch)
-  * ver. 1.3.4  2026-07-23 kkossev   -(dev.branch) - bug fixes;
+  * ver. 1.3.4  2026-07-25 kkossev   -(dev.branch) - bug fixes;
   * 
-  *                        TODO: remove the custom decodeTLV() !!!!!!!!!!
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterUtilitiesLibVersion = '1.3.4'
-@Field static final String matterUtilitiesLibStamp   = '2026/07/23 10:03 PM'
+@Field static final String matterUtilitiesLibStamp   = '2026/07/25 8:57 AM'
 
 metadata {
     // no capabilities
     // no attributes
     command 'utilities', [[name:'command', type: 'STRING', description: 'for advanced users: ? for help', constraints: ['STRING']]]
-    if (_DEBUG == true) {
-        command 'testParse', [[name: 'testParse', type: 'STRING', description: 'testParse', defaultValue : '']]
-    }
 // no preferences
 }
 
@@ -62,7 +58,6 @@ metadata {
     'minimizeStateVariables': 'minimizeStateVariables',
     'resetStats': 'resetStats',
     'testMatter': 'testMatter',
-    'decodeTLV': 'testDecodeTLV',
     'help': 'utilitiesHelp'
 ]
 
@@ -270,14 +265,6 @@ void resetStats(List<String> parameters) {
     sendEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} statistics were reset!", type: 'digital', isStateChange: true])
 }
 
-void testParse(String par) {
-    log.trace '------------------------------------------------------'
-    log.warn "testParse - <b>START</b> (${par})"
-    parse(par)
-    log.warn "testParse -   <b>END</b> (${par})"
-    log.trace '------------------------------------------------------'
-}
-
 void testMatter(String parameters) {
     log.warn "testMatter(${parameters})"
     /*
@@ -302,343 +289,4 @@ void testMatter(String parameters) {
     log.warn "testMatter(): sending : ${xxx}"
     //def xxx = 'he cleanSubscribe 0x00 0xFFFF [{"ep":"0xFFFFFFFF","cluster":"0xFFFFFFFF","evt":"0xFFFFFFFF", "priority": "1", "pri": "1"}]'
     sendToDevice(xxx)
-}
-
-
-/**
- * Decodes Matter TLV (Tag-Length-Value) encoded data
- * @param tlvHex The hex string containing TLV encoded data
- * @return List of decoded values
- */
-List<Integer> decodeTLV(String tlvHex) {
-    if (!tlvHex) return []
-    if (tlvHex in ['1518','1618','1818']) return []
-
-    try {
-        byte[] bytes = HexUtils.hexStringToByteArray(tlvHex)
-        List<Integer> values = []
-        int pos = 0
-
-        while (pos < bytes.length) {
-            int controlByte = bytes[pos] & 0xFF
-            if (controlByte == 0x18) { // end-of-container at top-level, just consume it
-                pos++
-                continue
-            }
-
-            int elementType = controlByte & 0x1F
-            int tagControl  = (controlByte >> 5) & 0x07
-            pos++
-
-            pos += getTagBytes(tagControl)
-            if (pos >= bytes.length) break
-
-            if (elementType in [0x15, 0x16, 0x17]) {
-                values.addAll(decodeTLVContainer(bytes, pos))
-                pos = skipToEndOfContainer(bytes, pos)
-            }
-            else {
-                // primitive element at top-level: reuse your container parser by “peeking”:
-                // simplest: handle the same primitive types here
-                switch (elementType) {
-                    case 0x04: if (pos < bytes.length) { values.add(bytes[pos] & 0xFF); pos += 1 } ; break
-                    case 0x05: if (pos + 1 < bytes.length) { values.add(((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)); pos += 2 } ; break
-                    case 0x06: if (pos + 3 < bytes.length) { values.add(((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)); pos += 4 } ; break
-                    case 0x08: values.add(0); break
-                    case 0x09: values.add(1); break
-                    case 0x14: /* null/undefined - skip */ break
-                    default: pos = skipUnknownElement(bytes, pos, elementType); break
-                }
-            }
-        }
-        return values
-    } catch (Exception e) {
-        logWarn "decodeTLV: error decoding TLV data '${tlvHex}': ${e}"
-        return []
-    }
-}
-
-
-
-/**
- * Decodes TLV data and converts to hex strings (commonly used for attribute IDs)
- * @param tlvHex The hex string containing TLV encoded data
- * @return List of hex strings
- */
-List<String> decodeTLVToHex(String tlvHex) {
-    List<Integer> values = decodeTLV(tlvHex)
-    return values.collect { HexUtils.integerToHexString(it, 2).toUpperCase() }
-}
-
-void testDecodeTLV(List<String> parameters) {
-    if (parameters == null || parameters.size() != 1) {
-        logInfo 'usage: decodeTLV <tlvHexString>'
-        logInfo 'example: decodeTLV 041D041E041F042804300431043304360437043C043E043F18'
-        return
-    }
-    
-    String tlvHex = parameters[0]
-    logInfo "testDecodeTLV: decoding TLV hex string: ${tlvHex}"
-    
-    List<Integer> decodedInts = decodeTLV(tlvHex)
-    List<String> decodedHex = decodeTLVToHex(tlvHex)
-    
-    logInfo "testDecodeTLV: decoded integers: ${decodedInts}"           //  decoded integers: [29, 30, 31, 40, 48, 49, 51, 54, 55, 60, 62, 63]
-    logInfo "testDecodeTLV: decoded hex strings: ${decodedHex}"         //  decoded hex strings: [001D, 001E, 001F, 0028, 0030, 0031, 0033, 0036, 0037, 003C, 003E, 003F]
-    
-    // If this looks like an attribute list, show the attribute names too
-    if (decodedHex.size() > 0) {
-        logInfo "testDecodeTLV: attribute names (if applicable):"
-        decodedHex.each { hexValue ->
-            Integer clusterInt = HexUtils.hexStringToInt(hexValue)
-            def obj = matter.clusterLookup(clusterInt)
-            //log.warn "Returned object class: ${obj?.class}"      // clusterEnum = DESCRIPTOR_CLUSTER clusterInt = 29 clusterLabel = Descriptor
-            //String attrName = GlobalElementsAttributes[attrInt] ?: "Unknown"
-            String clusterName = obj?.clusterLabel ?: "Unknown"
-            //String clusterName = matter.getClusterName(clusterInt as Long) ?: "Unknown"
-            logInfo "  0x${hexValue} (${clusterInt}) = ${clusterName}"
-        }
-    }
-}
-
-
-/**
- * Helper method to get value length from length control field
- */
-private int getLengthFromControl(int lengthControl) {
-    switch (lengthControl) {
-        case 0: return 1  // 1 byte
-        case 1: return 2  // 2 bytes  
-        case 2: return 4  // 4 bytes
-        case 3: return 8  // 8 bytes
-        default: return 0  // Variable or special length
-    }
-}
-
-/**
- * Helper method to read signed integer values from TLV data
- */
-private int readSignedInt(byte[] bytes, int pos, int length) {
-    if (length == 1) {
-        int value = bytes[pos] & 0xFF
-        return (value & 0x80) ? value - 256 : value
-    } else if (length == 2) {
-        int value = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-        return (value & 0x8000) ? value - 65536 : value
-    } else if (length == 4) {
-        return ((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | 
-               ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-    }
-    return 0
-}
-
-/**
- * Helper method to read unsigned integer values from TLV data
- */
-private int readUnsignedInt(byte[] bytes, int pos, int length) {
-    if (length == 1) {
-        return bytes[pos] & 0xFF
-    } else if (length == 2) {
-        return ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-    } else if (length == 4) {
-        return ((bytes[pos+3] & 0xFF) << 24) | ((bytes[pos+2] & 0xFF) << 16) | 
-               ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-    }
-    return 0
-}
-
-/**
- * Helper method to get string length from TLV data
- */
-private int getStringLength(byte[] bytes, int pos, int lengthControl) {
-    if (lengthControl == 0) {
-        // 1-byte length
-        if (pos < bytes.length) {
-            return bytes[pos] & 0xFF
-        }
-    } else if (lengthControl == 1) {
-        // 2-byte length
-        if (pos + 1 < bytes.length) {
-            return ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-        }
-    }
-    return -1
-}
-
-/**
- * Helper method to get how many bytes the string length field takes
- */
-private int getStringLengthBytes(int lengthControl) {
-    return lengthControl == 0 ? 1 : (lengthControl == 1 ? 2 : 0)
-}
-
-/**
- * Helper method to determine number of tag bytes based on tag control
- */
-private int getTagBytes(int tagControl) {
-    switch (tagControl) {
-        case 0: return 0  // Anonymous tag
-        case 1: return 1  // Context-specific tag (1 byte)
-        case 2: return 2  // Common profile tag (2 bytes)
-        case 3: return 4  // Common profile tag (4 bytes)
-        case 4: return 2  // Implicit profile tag (2 bytes)
-        case 5: return 4  // Implicit profile tag (4 bytes)
-        case 6: return 6  // Fully qualified tag (6 bytes)
-        case 7: return 8  // Fully qualified tag (8 bytes)
-        default: return 0
-    }
-}
-
-/**
- * Helper method to decode contents of a TLV container (structure, array, list)
- */
-private List<Integer> decodeTLVContainer(byte[] bytes, int startPos) {
-    List<Integer> values = []
-    int pos = startPos
-
-    while (pos < bytes.length) {
-        int controlByte = bytes[pos] & 0xFF
-
-        // end of current container
-        if (controlByte == 0x18) {
-            break
-        }
-
-        int elementType = controlByte & 0x1F
-        int tagControl  = (controlByte >> 5) & 0x07
-
-        pos++ // move past control byte
-
-        // skip tag field
-        int tagBytes = getTagBytes(tagControl)
-        if (pos + tagBytes > bytes.length) break
-        pos += tagBytes
-
-        switch (elementType) {
-            case 0x04: // UInt8
-                if (pos < bytes.length) {
-                    values.add(bytes[pos] & 0xFF)
-                    pos += 1
-                }
-                break
-
-            case 0x05: // UInt16
-                if (pos + 1 < bytes.length) {
-                    int v = ((bytes[pos+1] & 0xFF) << 8) | (bytes[pos] & 0xFF)
-                    values.add(v)
-                    pos += 2
-                }
-                break
-
-            case 0x06: // UInt32
-                if (pos + 3 < bytes.length) {
-                    int v = ((bytes[pos+3] & 0xFF) << 24) |
-                            ((bytes[pos+2] & 0xFF) << 16) |
-                            ((bytes[pos+1] & 0xFF) << 8)  |
-                            (bytes[pos] & 0xFF)
-                    values.add(v)
-                    pos += 4
-                }
-                break
-
-            case 0x15: // Structure (container)
-            case 0x16: // Array (container)
-            case 0x17: // List (container)
-                // decode nested contents
-                values.addAll(decodeTLVContainer(bytes, pos))
-                // skip over nested container to its matching end marker
-                pos = skipToEndOfContainer(bytes, pos)
-                break
-
-            case 0x08: // Boolean false
-                values.add(0)
-                break
-            case 0x09: // Boolean true
-                values.add(1)
-                break
-
-            case 0x14: // Null
-                // no value bytes
-                            break
-            case 0x0C: // UTF8 string  (VERIFY elementType for your payloads)
-            case 0x10: // Byte string  (VERIFY elementType for your payloads)
-                // NOTE: Matter TLV string length handling is not the same as tagControl.
-                // We'll do a conservative skip: treat next byte as length (1-byte length), then skip.
-                if (pos < bytes.length) {
-                    int len = bytes[pos] & 0xFF
-                    pos += 1 + len
-                }
-                break
-
-            default:
-                // skip unknown primitive types
-                pos = skipUnknownElement(bytes, pos, elementType)
-                break
-        }
-    }
-
-    return values
-}
-
-
-/**
- * Helper method to skip to the end of a container
- */
-private int skipToEndOfContainer(byte[] bytes, int startPos) {
-    int pos = startPos
-    int containerDepth = 1
-    
-    while (pos < bytes.length && containerDepth > 0) {
-        int controlByte = bytes[pos] & 0xFF
-        
-        if (controlByte == 0x18) {
-            // End of container
-            containerDepth--
-            pos++
-        } else {
-            int elementType = controlByte & 0x1F
-            int tagControl = (controlByte >> 5) & 0x07
-            
-            pos++ // skip control byte
-            
-            // Skip tag
-            pos += getTagBytes(tagControl)
-            
-            // Check if this starts a new container
-            if (elementType in [0x15, 0x16, 0x17]) {
-                containerDepth++
-            } else {
-                // Skip value
-                pos = skipUnknownElement(bytes, pos, elementType)
-            }
-        }
-    }
-    
-    return pos
-}
-
-/**
- * Helper method to skip an unknown element safely
- */
-private int skipUnknownElement(byte[] bytes, int pos, int elementType) {
-    // Skip based on element type
-    switch (elementType) {
-        case 0x00: return pos + 1  // Int8
-        case 0x01: return pos + 2  // Int16
-        case 0x02: return pos + 4  // Int32
-        case 0x03: return pos + 8  // Int64
-        case 0x04: return pos + 1  // UInt8
-        case 0x05: return pos + 2  // UInt16
-        case 0x06: return pos + 4  // UInt32
-        case 0x07: return pos + 8  // UInt64
-        case 0x08: // Boolean false
-        case 0x09: // Boolean true
-        case 0x14: // Null
-            return pos // No value bytes
-        case 0x0A: return pos + 4  // Float32
-        case 0x0B: return pos + 8  // Float64
-        default:
-            // For unknown types, try to skip safely
-            return Math.min(pos + 1, bytes.length)
-    }
 }

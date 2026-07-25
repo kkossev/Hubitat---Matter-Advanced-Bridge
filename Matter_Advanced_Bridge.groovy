@@ -93,7 +93,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/25 8:24 AM' }
+static String timeStamp() { '2026/07/25 9:19 AM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -189,7 +189,6 @@ metadata {
             input name: 'discoveryTimeoutScale', type: 'enum', title: '<b>Discovery timeout scale</b>', options: ['1':'1x (default)', '2':'2x', '3':'3x (slow/battery bridges)'], defaultValue: '2', required: true, description: '<i>Scales discovery/state-machine retry timeouts and discovery scheduling delays.</i>'
             input name: 'traceEnable', type: 'bool', title: '<b>Enable trace logging</b>', defaultValue: false, description: '<i>Turns on detailed extra trace logging for 30 minutes.</i>'
             input name: 'minimizeStateVariables', type: 'bool', title: '<b>Minimize State Variables</b>', defaultValue: MINIMIZE_STATE_VARIABLES_DEFAULT, description: '<i>Minimize the state variables size.</i>'
-            input name: 'newParse', type: 'bool', title: '<b>Use new parse(Map) handler</b>', defaultValue: true, description: '<i>Enable Hubitat"s new parse(Map) callback instead of the legacy description text.</i>'
             input name: 'cleanSubscribeMinInterval', type: 'number', title: '<b>Clean subscribe minimum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, required: true, description: '<i>Minimum reporting interval used when subscribing to Matter attributes/events.</i>'
             input name: 'cleanSubscribeMaxInterval', type: 'number', title: '<b>Clean subscribe maximum reporting interval (seconds)</b>', defaultValue: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, required: true, description: '<i>Maximum reporting interval used when subscribing to Matter attributes/events.</i>'
         }
@@ -425,41 +424,25 @@ metadata {
 // Random number generator
 @Field static final Random random = new Random()
 
-// old parser
+// The legacy parse(String) path was removed in this version - this driver is parse(Map) only.
+// Hubitat dispatches here only if the 'newParse' device data value was lost - repair it and drop the message.
 void parse(final String description) {
-    prepareForParse()
-
-    Map descMap
-    try {
-        descMap = myParseDescriptionAsMap(description)
-    } catch (e) {
-        logWarn "parse: exception ${e} <br> Failed to parse description: ${description}"
-        return
-    }
-    if (descMap == null) {
-        logWarn "parse: descMap is null description:${description}"
-        return
-    }
-
-    processParsedDescription(descMap, description)
+    logWarn "parse(String) is no longer supported by this driver - restoring the newParse flag! (${description})"
+    forceNewParseFlag()
 }
 
 
-// New parse(Map) method to handle events (and attribute reports) when Device Data.newParse	is set to true
-// example : [callbackType:Report, endpointInt:2, clusterInt:59, attrInt:1, data:[1:UINT:0], value:0] 
+// parse(Map) handles the events (and the attribute reports) - requires the Device Data 'newParse' to be set to true
+// example : [callbackType:Report, endpointInt:2, clusterInt:59, attrInt:1, data:[1:UINT:0], value:0]
 // example:  [callbackType:WriteAttributes, endpointInt:82, clusterInt:513, attrInt:28, sucess:true, cluster:0201, endpoint:52, attrId:001C]
 // example : [endpoint:01, cluster:003B, evtId:0006, clusterInt:59, evtInt:6, values:[0:[type:04, isContextSpecific:true, value:01], 1:[type:04, isContextSpecific:true, value:01]]]
 
 void parse(Map msg) {
-    if (!isNewParseEnabled()) {
-        logWarn 'parse(Map) received but newParse preference is disabled; enable the option to allow map parsing.'
-        return
-    }
     Map patchedNewParseMap = [:]
     logTrace "parse(Map) called with msg: ${msg}"
     patchedNewParseMap = newParseCompatibilityPatch(msg)
     prepareForParse()
-    processParsedDescription(patchedNewParseMap, "new Parse/Map payload: ${patchedNewParseMap}")
+    processParsedDescription(patchedNewParseMap)
 }
 
 private void prepareForParse() {
@@ -469,10 +452,9 @@ private void prepareForParse() {
     setHealthStatusOnline()
 }
 
-// TODO! old pares description text parsing code should be removed after the new parse(Map) is fully tested and stable! (and newParse=true is enforced by default)
-private void processParsedDescription(final Map descMap, final String description) {
+private void processParsedDescription(final Map descMap) {
     if (descMap == null || descMap?.isEmpty()) {
-        logDebug "processParsedDescription: descMap is null or empty  description: ${description}"
+        logDebug 'processParsedDescription: descMap is null or empty'
         return
     }
 
@@ -536,11 +518,11 @@ private void processParsedDescription(final Map descMap, final String descriptio
             try {
                 this."${parserFunc}"(descMap)
             } catch (e) {
-                logWarn "parserFunc: exception ${e} <br> Failed to parse description: ${description}"
+                logWarn "parserFunc: exception ${e} <br> Failed to parse descMap: ${descMap}"
             }
         }
     } else {
-        logWarn "parserFunc: NOT PROCESSED: ${descMap} description:${description}"
+        logWarn "parserFunc: NOT PROCESSED: ${descMap}"
     }
 }
 
@@ -549,21 +531,20 @@ void deviceTypeUpdated() {
 
 }
 
-private boolean isNewParseEnabled() {
-    return settings?.newParse == true
-}
-
+// The 'newParse' device data value is what makes the Hubitat platform call parse(Map) instead of parse(String).
+// This driver is parse(Map) only, so the flag must always be true.
 private void ensureNewParseFlag() {
-    String desiredValue = isNewParseEnabled() ? 'true' : 'false'
-    if (device.getDataValue('newParse') != desiredValue) {
-        device.updateDataValue('newParse', desiredValue)
-        logDebug "ensureNewParseFlag: newParse flag set to ${desiredValue}"
+    if (device.getDataValue('newParse') != 'true') {
+        device.updateDataValue('newParse', 'true')
+        logDebug 'ensureNewParseFlag: newParse device data value set to true'
+    }
+    if (settings?.newParse != null) {
+        device.removeSetting('newParse')    // the obsolete preference is removed from the existing installations
+        logDebug 'ensureNewParseFlag: the obsolete newParse preference was removed'
     }
 }
 
 private void forceNewParseFlag() {
-    device.updateSetting('newParse', [value: true, type: 'bool'])
-    // the device data value is set directly - settings?.newParse is still stale in this execution
     device.updateDataValue('newParse', 'true')
     sendInfoEvent 'forceNewParseFlag: newParse flag forced to <b>true</b>'
 }
@@ -617,118 +598,12 @@ void checkChildDevicePingResponse(final Map descMap) {
 }
 
 
-// OBSOLETE - to be removed ! TODO ! 
-Map myParseDescriptionAsMap(description) {
-    Map descMap
-    try {
-        descMap = matter.parseDescriptionAsMap(description)
-        //log.trace "myParseDescriptionAsMap: descMap:${descMap} description:${description}"
-    } catch (e) {
-        logDebug "myParseDescriptionAsMap: platform parser failed with ${e.class.simpleName}, attempting custom fallback parser"
-        // For global attributes that commonly cause parsing issues, create a basic descMap manually
-        if (true) {
-            logTrace "myParseDescriptionAsMap: attempting basic parsing for global attribute"
-            try {
-                Map result = [:]
-                if (description.contains('endpoint:')) {
-                    result.endpoint = description.split('endpoint:')[1].split(',')[0].trim()
-                }
-                if (description.contains('cluster:')) {
-                    String clusterStr = description.split('cluster:')[1].split(',')[0].trim()
-                    result.cluster = clusterStr
-                    result.clusterInt = HexUtils.hexStringToInt(clusterStr)
-                }
-                if (description.contains('attrId:')) {
-                    String attrIdStr = description.split('attrId:')[1].split(',')[0].trim()
-                    result.attrId = attrIdStr
-                    result.attrInt = HexUtils.hexStringToInt(attrIdStr)
-                }
-                if (description.contains('value:')) {
-                    result.value = description.split('value:')[1].trim()
-                    // For AttributeList (FFFB) and other list attributes, try to decode TLV data
-                    if (/*result.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && */result.value?.length() > 4) {
-                        try {
-                            
-                            List<String> decodedAttrs = decodeTLVToHex(result.value)    // TODO !!!!!!
-                            if (decodedAttrs.size() > 0) {
-                                result.value = decodedAttrs
-                                logTrace "myParseDescriptionAsMap: decoded TLV for ${result.attrId}: ${decodedAttrs}"
-                            }
-                        } catch (Exception ex) {
-                            logWarn "myParseDescriptionAsMap: TLV decoding failed for ${result.attrId}: ${ex} - keeping raw value"
-                            // Keep the raw value rather than crashing
-                        }
-                    }
-                }
-                logTrace "myParseDescriptionAsMap: basic parsing result: ${result}"
-                return result
-            } catch (Exception ex) {
-                logWarn "myParseDescriptionAsMap: basic parsing also failed: ${ex}"
-            }
-        }
-        return null
-    }
-    if (descMap == null) {
-        logWarn "myParseDescriptionAsMap: descMap is null description:${description}"
-        return null
-    }
-    // descMap:[endpoint:00, cluster:0028, attrId:0000, value:01, clusterInt:40, attrInt:0] description:read attr - endpoint: 00, cluster: 0028, attrId: 0000, value: 0401
-    
-    // Handle TLV decoding for list attributes even when normal parsing succeeds
-    if (descMap.value != null && descMap.attrId != null) {
-        // Check for AttributeList and other list attributes that use TLV encoding
-        if (descMap.attrId in ['FFFB', 'FFF8', 'FFF9', 'FFFA'] && descMap.value instanceof String && descMap.value.length() > 4) {
-            //logTrace "myParseDescriptionAsMap: (newParse=false) attempting TLV decoding for ${descMap.attrId}"
-            try {
-                // TODO !!!!!!
-                List<String> decodedAttrs = decodeTLVToHex(descMap.value)   // TODO !!!!!!
-                if (decodedAttrs.size() > 0) {
-                    descMap.value = decodedAttrs
-                    logTrace "myParseDescriptionAsMap: decoded TLV for normal parsing ${descMap.attrId}: ${decodedAttrs}"
-                }
-            } catch (Exception ex) {
-                logTrace "myParseDescriptionAsMap: TLV decoding skipped for ${descMap.attrId}: ${ex} - keeping raw value"
-            }
-        }
-        // Handle legacy empty list detection
-        else if (descMap.value in ['1518', '1618', '1818'] 
-            && ( descMap.attrId in ['FFF8', 'FFF9','FFFA', 'FFFB', 'FFFC', 'FFFD', 'FFFE', 'FFFF']
-            || descMap.cluster == '001D')
-        ) {
-            descMap.value = []
-            if (settings?.traceEnable) { log.warn "myParseDescriptionAsMap: legacy empty list detected: ${descMap} description:${description}" }
-        }
-    }
-    // handle the case when parse returns null value: descMap:[endpoint:00, cluster:001D, attrId:0003, encoding:16, value:null, clusterInt:29, attrInt:3] description:read attr - endpoint: 00, cluster: 001D, attrId: 0003, encoding: 16, value: 0401042E0429042A042B042C042D042F0439043A041104120413043004310432040304040405040A040B040C04330434043504360437043818
-    // -> call the custome TLV decoder
-    if (descMap.cluster == '001D') {
-         String descriptionValue = description.split('value:')[1].trim()
-        //log.warn "myParseDescriptionAsMap: descMap.value is null, trying to decode it: ${descMap} descriptionValue=${descriptionValue}"
-        try {
-            //log.trace "myParseDescriptionAsMap: descriptionValue=${descriptionValue} for Parts List (attr 0003)"
-            // TODO !!!!!!
-            List<String> decodedAttrs = decodeTLVToHex(descriptionValue)   // TODO !!!!!!
-            logTrace "myParseDescriptionAsMap: decoded TLV for Parts List (attr 0003): descriptionValue=${descriptionValue},   decodedAttrs=${decodedAttrs}"
-            if (decodedAttrs.size() > 0) {
-                descMap.value = decodedAttrs
-                logTrace "myParseDescriptionAsMap: decoded TLV for Parts List (attr 0003): ${decodedAttrs}"
-            }
-        } catch (Exception ex) {
-            logWarn "myParseDescriptionAsMap: TLV decoding failed for Parts List (attr 0003): ${ex} - keeping raw value"
-        }
-    }
-
-    return descMap
-} // myParseDescriptionAsMap
 
 
-// This method applies compatibility patches to the descMap when newParse is enabled, to handle differences in parsing between the old and new methods, especially for Events and Reports. It ensures that cluster, endpoint, and attrId are consistently available in both hex string and integer formats, 
-// and also handles TLV decoding for list attributes. TODO - check whether this is still neccessary!
+// This method normalizes the descMap received from the parse(Map) callback : it ensures that cluster, endpoint and attrId are consistently
+// available in both hex string and integer formats, and converts the list values to hex strings, as expected by the parsers and the child drivers.
 Map newParseCompatibilityPatch(final Map descMap) {
     Map patchedMap = descMap.clone()
-    if (settings.newParse != true) {
-        return patchedMap
-    }
     if (descMap?.callbackType == 'SubscriptionResult') {
         return patchedMap   // no mods for SubscriptionResult messages
     }
@@ -1042,31 +917,17 @@ void gatherAttributesValuesInfo(final Map descMap) {
                     return
                 }
                 // Normalize DeviceTypeList for display (show device types only, no revision numbers)
-                // TODO - remove this patch when newParse is fully adopted !
                 def displayValue = descMap.value
                 String deviceTypeNamesStr = ''
-                
+
                 // Only process DeviceTypeList from Descriptor cluster (0x001D)
                 if (descMap.cluster == '001D' && attrName == 'DeviceTypeList' && descMap.value instanceof List) {
-                    List rawList = []
-                    
-                    if (settings.newParse == true) {
-                        // Extract device type IDs from newParse format: [[[tag:0, value:22], [tag:1, value:1]]]
-                        // TODO: !!!!
-                        descMap.value.each { structEntry ->
-                            if (structEntry instanceof List && structEntry.size() >= 1) {
-                                def deviceTypeEntry = structEntry[0]
-                                if (deviceTypeEntry instanceof Map && deviceTypeEntry.value != null) {
-                                    rawList.add(HexUtils.integerToHexString((Integer) deviceTypeEntry.value, 2))
-                                }
-                            }
-                        }
-                    } else {
-                        // Extract device type IDs from legacy format (even-indexed elements only)
-                        List fullList = descMap.value as List
-                        rawList = (0..<fullList.size()).findAll { (it % 2) == 0 }.collect { fullList[it] }
+                    List rawList = normalizeDeviceTypeList(descMap.value as List)
+                    if (rawList.isEmpty() && !(descMap.value as List).isEmpty()) {
+                        logWarn "gatherAttributesValuesInfo: unexpected DeviceTypeList format - displaying the raw value: ${descMap.value}"
+                        rawList = descMap.value as List
                     }
-                    
+
                     displayValue = rawList
                     
                     // Add human-readable device type names
@@ -1315,6 +1176,33 @@ void parseBridgedDeviceBasic(final Map descMap) {       // 0x0039 BridgedDeviceB
     }
 }
 
+/**
+ * Normalizes a Descriptor (0x001D) DeviceTypeList to a list of 4-char uppercase hex device type ids.
+ * The parse(Map) callback delivers the DeviceTypeList structs in different shapes, depending on the
+ * Hubitat platform version and on the bridge :
+ *      [[0:19, 1:1], [0:263, 1:1]]                 - list of maps keyed by the tag number (Zemismart M1)
+ *      [[[tag:0, value:22], [tag:1, value:1]]]     - list of lists of tag/value maps
+ *      ['0013', 19]                                - already normalized ids
+ * Tag 0 is the DeviceType, tag 1 is the revision (which is discarded here).
+ * @return the device type ids only, e.g. ['0013', '0107'] - an empty list if nothing could be extracted.
+ */
+List<String> normalizeDeviceTypeList(final List rawList) {
+    if (rawList == null) { return [] }
+    return rawList.collect { entry ->
+        def rawId = entry
+        if (entry instanceof List) {            // [[tag:0, value:22], [tag:1, value:1]]
+            def firstStruct = entry ? entry[0] : null
+            rawId = (firstStruct instanceof Map) ? (firstStruct['value'] ?: firstStruct[0] ?: firstStruct['0']) : firstStruct
+        }
+        else if (entry instanceof Map) {        // [0:19, 1:1]
+            rawId = entry[0] ?: entry['0'] ?: entry.values()?.find { it != null }
+        }
+        if (rawId == null) { return null }
+        Integer deviceTypeId = (rawId instanceof Number) ? ((Number)rawId).intValue() : safeHexToInt(rawId.toString(), -1)
+        return deviceTypeId >= 0 ? HexUtils.integerToHexString(deviceTypeId, 2).toUpperCase() : null
+    }.findAll { it != null }
+}
+
 void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
     logTrace "parseDescriptorCluster: descMap:${descMap}"
     String attrName = getAttributeName(descMap)    //= DescriptorClusterAttributes[descMap.attrInt as int] ?: GlobalElementsAttributes[descMap.attrInt as int] ?: UNKNOWN
@@ -1329,24 +1217,13 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
     switch (descMap.attrId) {
         case ['0000', '0001', '0002', '0003'] :
             if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
-            // Normalize DeviceTypeList at storage time for both legacy and newParse formats
-            // TODO: !!!!
+            // Normalize DeviceTypeList at storage time
             if (attrName == 'DeviceTypeList' && descMap.value instanceof List) {
                 List rawList = descMap.value as List
-                List deviceTypesOnly = []
-                if (settings?.newParse == true && rawList && rawList[0] instanceof List && rawList[0][0] instanceof Map && rawList[0][0].containsKey('value')) {
-                    // newParse format: list of lists of maps
-                    rawList.each { structEntry ->
-                        if (structEntry instanceof List && structEntry.size() >= 1) {
-                            def deviceTypeEntry = structEntry[0]
-                            if (deviceTypeEntry instanceof Map && deviceTypeEntry.value != null) {
-                                deviceTypesOnly.add(HexUtils.integerToHexString((Integer) deviceTypeEntry.value, 2))
-                            }
-                        }
-                    }
-                } else {
-                    // Legacy format: even-indexed elements only
-                    deviceTypesOnly = (0..<rawList.size()).findAll { (it % 2) == 0 }.collect { rawList[it] }
+                List<String> deviceTypesOnly = normalizeDeviceTypeList(rawList)
+                if (deviceTypesOnly.isEmpty() && !rawList.isEmpty()) {
+                    logWarn "parseDescriptorCluster: unexpected DeviceTypeList format - storing the raw value: ${rawList}"
+                    deviceTypesOnly = rawList
                 }
                 state[fingerprintName][attrName] = deviceTypesOnly
                 logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> normalized and stored</b> ${deviceTypesOnly} (from raw ${rawList})"
@@ -1438,7 +1315,7 @@ Integer getLuxValue(rawValue) {
 
 
 void parseLevelControlCluster(final Map descMap) {
-    // starting from MAB 1.8.0, we support only the new parsing format (newParse=true), which provides the attribute value as an integer.
+    // the parse(Map) callback provides the attribute value as an integer.
     if (descMap.cluster != '0008') { logWarn "parseLevelControlCluster: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (routeInvokeToCustomChild(descMap)) { return }
     Integer scaledValue = safeToInt(descMap.value)
@@ -1446,14 +1323,9 @@ void parseLevelControlCluster(final Map descMap) {
     Integer value
     switch (descMap.attrId) {
         case '0000' : // CurrentLevel
-            if (descMap.callbackType == 'Report') {
-                // newParse : [callbackType:Report, endpointInt:23, clusterInt:8, attrInt:0, data:[0:UINT:53], value:53, cluster:0008, endpoint:17, attrId:0000]
-                value = int256ToInt100(scaledValue ?: 0)
-                logTrace "parseLevelControlCluster: newParse:true : CurrentLevel Report scaledValue:${scaledValue} value:${value}"
-            } else {
-                value = int256ToInt100(scaledValue ?: 0)
-                logTrace "parseLevelControlCluster: newParse:false : CurrentLevel Report scaledValue:${scaledValue} value:${value}"
-            }
+            // descMap : [callbackType:Report, endpointInt:23, clusterInt:8, attrInt:0, data:[0:UINT:53], value:53, cluster:0008, endpoint:17, attrId:0000]
+            value = int256ToInt100(scaledValue ?: 0)
+            logTrace "parseLevelControlCluster: CurrentLevel Report scaledValue:${scaledValue} value:${value}"
             sendHubitatEvent([
                 name: 'level',
                 value: value, //.toString(),
@@ -1507,11 +1379,11 @@ String getEventName(final Map descMap) {
     Integer evtInt = null
     Object evtIdVal = descMap.evtId
 
-    // newParse=true: Hubitat provides evtId as a Number (typically Long)
+    // Hubitat usually provides evtId as a Number (typically Long)
     if (evtIdVal instanceof Number) {
         evtInt = ((Number)evtIdVal).intValue()
     }
-    // newParse=false: evtId is typically a 4-char hex String (e.g. '0006')
+    // ... but some platform versions supply it as a 4-char hex String (e.g. '0006')
     else {
         evtInt = safeHexToInt(evtIdVal?.toString(), null)
     }
@@ -2478,12 +2350,6 @@ void _DiscoverAll() { _DiscoverAllPatched('All') }     // patch for HE platform 
 void _DiscoverAllPatched(String statePar/* = null*/) {
     logWarn "_DiscoverAll()"
     updated()   // 2026-02-09
-    // the bridge ping below is confirmed in parse(Map), which silently drops everything when newParse is disabled.
-    // initializeVars(fullInit=true) used to repair this in DISCOVER_ALL_STATE_INIT, but the ping now runs before it.
-    if (!isNewParseEnabled()) {
-        logWarn '_DiscoverAll(): the newParse preference was disabled - forcing it to true, otherwise no reply can be received!'
-        forceNewParseFlag()
-    }
     Integer stateSt = DISCOVER_ALL_STATE_INIT
     state.stateMachines = [:]
     // ['All', 'BasicInfo', 'PartsList']]
@@ -3761,12 +3627,7 @@ Map fingerprintToData(String fingerprint) {
         data['ProductLabel'] = fingerprintMap['ProductLabel']
         data['NodeLabel'] = fingerprintMap['NodeLabel']
         List rawDeviceTypeList = fingerprintMap['DeviceTypeList'] ?: []
-        List<String> deviceTypeIds = rawDeviceTypeList.collect { entry ->
-            def rawId = entry instanceof Map ? (entry[0] ?: entry['0'] ?: entry.values()?.first()) : entry
-            if (rawId == null) { return null }
-            Integer deviceTypeId = rawId instanceof Number ? rawId.intValue() : safeHexToInt(rawId, -1)
-            return deviceTypeId >= 0 ? HexUtils.integerToHexString(deviceTypeId, 2).toUpperCase() : null
-        }.findAll { it != null }
+        List<String> deviceTypeIds = normalizeDeviceTypeList(rawDeviceTypeList)
         data['DeviceType'] = deviceTypeIds
         
         // Fallback: If ProductName, ProductLabel, and NodeLabel are all empty/null, use bridge's ProductName
@@ -4033,7 +3894,6 @@ void checkDriverVersion() {
         setStateDriverVersion(driverVersionAndTimeStamp())
         final boolean fullInit = false
         initializeVars(fullInit)
-        // forceNewParseFlag() // uncomment to force re-parsing all child devices on driver update
     }
 }
 
@@ -4284,7 +4144,6 @@ void initializeVars(boolean fullInit = false) {
     if (fullInit || settings?.healthCheckMethod == null) { device.updateSetting('healthCheckMethod', [value: HealthcheckMethodOpts.defaultValue.toString(), type: 'enum']) }
     if (fullInit || settings?.healthCheckInterval == null) { device.updateSetting('healthCheckInterval', [value: HealthcheckIntervalOpts.defaultValue.toString(), type: 'enum']) }
     if (settings?.minimizeStateVariables == null) { device.updateSetting('minimizeStateVariables', [value: MINIMIZE_STATE_VARIABLES_DEFAULT, type: 'bool']) }
-    if (fullInit || settings?.newParse == null) { device.updateSetting('newParse', [value: true, type: 'bool']) }
     if (settings?.cleanSubscribeMinInterval == null) { device.updateSetting('cleanSubscribeMinInterval', [value: CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT, type: 'number']) }
     if (settings?.cleanSubscribeMaxInterval == null) { device.updateSetting('cleanSubscribeMaxInterval', [value: CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT, type: 'number']) }
     ensureNewParseFlag()
@@ -4321,11 +4180,6 @@ String fmtHelpInfo(String str) {
 }
 
 
-void parseTest(par) {
-    log.warn "parseTest(${par})"
-    parse(par)
-}
-
 void updateStateStats(Map descMap) {
     if (state.stats  != null) { state.stats['rxCtr'] = (state.stats['rxCtr'] ?: 0) + 1 } else { state.stats =  [:] }
     if (state.lastRx != null) { state.lastRx['checkInTime'] = new Date().getTime() }     else { state.lastRx = [:] }
@@ -4333,23 +4187,6 @@ void updateStateStats(Map descMap) {
 
 /* groovylint-disable-next-line UnusedMethodParameter */
 void test(par) {
-    //par = "16152400432401011818"
-    //def x = decodeTLVToHex(par)
-    //decodeTLVToHex(16152400432401011818 -> [0043, 0001])
-    //def x = matter.TLVparser(par)
-   // par = ["041D041E041F042804300431043304360437043C043E043F18"]
-//    def x = testDecodeTLV(par)
-    /*
-    // decodeTLVToHex(16152400432401011818 -> 
-    [
-    21:[type:16, isContextSpecific:false, 
-        values:[0:[type:04, isContextSpecific:true, value:43],
-                1:[type:04, isContextSpecific:true, value:01]]
-       ]
-    ]
-    */
-    //log.warn "decodeTLVToHex(${par} -> ${x})"
-
     // Subscribe to Switch cluster InitialPress event for endpoint 0x57
     Integer endpoint = 0x57  // 87 decimal
     Integer cluster = 0x3B   // 59 decimal (Switch cluster)

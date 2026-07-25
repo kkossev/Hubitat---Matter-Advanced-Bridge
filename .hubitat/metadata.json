@@ -124,25 +124,25 @@
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1755
+      "version": 1757
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Door_Lock",
       "id": 3188,
       "codeType": "driver",
-      "version": 479
+      "version": 480
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
       "id": 162,
       "codeType": "library",
-      "version": 109
+      "version": 112
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Libraries/Matter_State_Machines.groovy",
       "id": 146,
       "codeType": "library",
-      "version": 223
+      "version": 226
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Window_Shade.groovy",
@@ -154,13 +154,55 @@
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom Component_Power_Energy.groovy",
       "id": 3802,
       "codeType": "driver",
-      "version": 66
+      "version": 67
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Button.groovy",
       "id": 4764,
       "codeType": "driver",
-      "version": 89
+      "version": 90
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom_Component_Contact_Sensor.groovy",
+      "id": 5157,
+      "codeType": "driver",
+      "version": 5
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Custom_Component_Signal.groovy",
+      "id": 3947,
+      "codeType": "driver",
+      "version": 20
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Air_Purifier.groovy",
+      "id": 3429,
+      "codeType": "driver",
+      "version": 51
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Battery.groovy",
+      "id": 2805,
+      "codeType": "driver",
+      "version": 21
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Camera_AV_Stream.groovy",
+      "id": 5195,
+      "codeType": "driver",
+      "version": 10
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Motion_Sensor.groovy",
+      "id": 2765,
+      "codeType": "driver",
+      "version": 30
+    },
+    {
+      "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Switch.groovy",
+      "id": 2768,
+      "codeType": "driver",
+      "version": 30
     }
   ]
 }

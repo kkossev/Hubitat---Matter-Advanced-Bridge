@@ -13,6 +13,7 @@
   *  for the specific language governing permissions and limitations under the License.
   *
   * ver. 1.0.0  2026-05-30 kkossev + Claude Sonnet 4.6 : first version - Aqara G350 Matter Camera AV Stream Management cluster 0x0551 support
+  * ver. 1.0.1  2026-07-25 kkossev : bug fixes
   *
   *             TODO: snapshot capture workflow (CaptureSnapshot 0x000C + CaptureSnapshotResponse 0x000D)
   *             TODO: privacy mode controls if attributes 0x0013/0x0014/0x0015 appear in AttributeList
@@ -25,8 +26,8 @@ import groovy.transform.Field
 import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
-@Field static final String CAMERA_DRIVER_VERSION = '1.0.0'
-@Field static final String CAMERA_DRIVER_STAMP   = '2026/05/30 12:00 AM'
+@Field static final String CAMERA_DRIVER_VERSION = '1.0.1'
+@Field static final String CAMERA_DRIVER_STAMP   = '2026/07/25 9:13 AM'
 
 @Field static final Boolean _DEBUG_CAMERA   = false         // set true only for development
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
@@ -203,7 +204,6 @@ private void logsOff() {
 // --------------------------------------------------------------------------------------------
 // parse() — receives events forwarded from parent driver
 // --------------------------------------------------------------------------------------------
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 void parse(List<Map> parsedEvents) {
     parsedEvents.each { d ->

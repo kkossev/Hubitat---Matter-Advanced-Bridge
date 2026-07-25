@@ -17,14 +17,14 @@
  * ver. 1.1.1  2025-01-29 kkossev  - common libraries
  * ver. 1.1.2  2026-02-14 kkossev  - getInfo(); bugfix: Power/Energy processing exceptions;
  * ver. 1.1.3  2026-02-19 kkossev  -  moved common methods to matterCommonLib
- * ver. 1.1.4  2026-07-23 kkossev  - (dev. branch) bug fixes
+ * ver. 1.1.4  2026-07-25 kkossev  - (dev. branch) bug fixes
 *
 */
 
 import groovy.transform.Field
 
 @Field static final String matterComponentPowerEnergyVersion = '1.1.4'
-@Field static final String matterComponentPowerEnergyStamp   = '2026/07/23 4:46 PM'
+@Field static final String matterComponentPowerEnergyStamp   = '2026/07/25 8:58 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom%20Component_Power_Energy.groovy') {
@@ -60,7 +60,6 @@ preferences {
     }
 }
 
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
 void parse(List<Map> description) {

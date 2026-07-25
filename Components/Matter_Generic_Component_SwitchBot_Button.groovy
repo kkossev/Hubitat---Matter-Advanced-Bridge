@@ -48,8 +48,6 @@ preferences {
     }
 }
 
-/* groovylint-disable-next-line UnusedMethodParameter */
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
 void parse(List<Map> description) {

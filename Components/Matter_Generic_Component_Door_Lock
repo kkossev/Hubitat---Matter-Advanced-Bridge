@@ -27,7 +27,7 @@
   * ver. 1.4.1  2026-05-27 kkossev   fixed EZ dashboards unhappy face; added unlockWithTimeout command; added UnboltDoor command; 
   *                                  DuplicateDoorLockEventFilter; added the needed data: Map required by the LCM; added overwriteCodes option; getInfo improvements; 
   *                                  added operation source 'Aliro' (UWB/Apple Watch); added auto discovery for new lock codes reported by the lock;
-  * ver. 1.5.0  2026-07-23 kkossev  (dev.branch) callbackType:Invoke handling;
+  * ver. 1.5.0  2026-07-25 kkossev  (dev.branch) callbackType:Invoke handling; bugs fixes;
   * 
   *                                  TODO: 
   *                                  TODO: 
@@ -50,7 +50,7 @@ import groovy.json.JsonOutput
 
 
 @Field static final String matterComponentLockVersion = '1.5.0'
-@Field static final String matterComponentLockStamp   = '2026/07/23 7:35 PM'
+@Field static final String matterComponentLockStamp   = '2026/07/25 9:14 AM'
 
 @Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true     // disable on production
@@ -155,7 +155,6 @@ preferences {
 }
 
 
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
 void parse(Map descMap) {

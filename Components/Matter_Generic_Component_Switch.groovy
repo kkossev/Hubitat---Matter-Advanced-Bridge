@@ -16,13 +16,14 @@
  * ver. 1.0.0  2024-03-16 kkossev  - first release
  * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.1.1  2025-01-29 kkossev  - common libraries
+ * ver. 1.1.2  2026-07-25 kkossev  - bug fixes
  *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentSwitchVersion = '1.1.1'
-@Field static final String matterComponentSwitchStamp   = '2025/01/29 10:32 PM'
+@Field static final String matterComponentSwitchVersion = '1.1.2'
+@Field static final String matterComponentSwitchStamp   = '2026/07/25 9:19 AM'
 
 metadata {
     definition(name: 'Matter Generic Component Switch', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Switch.groovy') {
@@ -48,7 +49,6 @@ preferences {
     }
 }
 
-void parse(String description) { log.warn 'parse(String description) not implemented' }
 
 // parse commands from parent
 void parse(List<Map> description) {
