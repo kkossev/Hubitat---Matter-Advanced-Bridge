@@ -52,7 +52,7 @@ import groovy.json.JsonOutput
 @Field static final String matterComponentLockVersion = '1.5.0'
 @Field static final String matterComponentLockStamp   = '2026/07/23 7:35 PM'
 
-@Field static final Boolean _DEBUG_LOCK = true             // MAKE IT false for PRODUCTION !   
+@Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true     // disable on production
 
 @Field static final Integer DELETE_TIMEOUT_SECONDS = 5      // time to wait for lock code deletion confirmation event before removing code from lockCodes attribute (to avoid ghost codes in case of failed deletion)
@@ -2386,7 +2386,7 @@ void installed() {
     log.info "${device.displayName} driver installed"
     // Seed attributes with safe defaults so dashboards and automations
     // never see null before the first Matter report arrives.
-    sendEvent(name: 'lock',              value: 'closed',       descriptionText: "${device.displayName} lock initialized to closed")
+    sendEvent(name: 'lock',              value: 'unknown',      descriptionText: "${device.displayName} lock initialized to unknown")
     sendEvent(name: 'lockCodes',         value: '{}',           descriptionText: "${device.displayName} lockCodes initialized")
     sendEvent(name: 'codeLength',        value: 4,              descriptionText: "${device.displayName} codeLength defaulted to 4 (pending discovery)")
     sendEvent(name: 'maxCodes',          value: 10,             descriptionText: "${device.displayName} maxCodes defaulted to 10 (pending discovery)")

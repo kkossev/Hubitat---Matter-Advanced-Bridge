@@ -191,57 +191,33 @@ void toggle() {
 
 void setSpeed(String speed) {
     if (logEnable) { log.debug "Setting speed to: ${speed}" }
-    Integer newSpeed = 0x00
-    switch (speed) {
-        case 'on':
-        case 'auto':
-            newSpeed = 1
-            break
-        case 'low':
-            newSpeed = 10
-            break
-        case 'medium-low':
-            newSpeed = 20
-            break
-        case 'medium':
-            newSpeed = 30
-            break
-        case 'medium-high':
-            newSpeed = 40
-            break
-        case 'high':
-            newSpeed = 50
-            break
-        case 'off':
-            newSpeed = 0
-            break
-        default:
-            if (logEnable) { log.warn "Unknown speed: ${speed}" }
-            return
+    if (!(speed in ['off', 'low', 'medium-low', 'medium', 'medium-high', 'high', 'on', 'auto'])) {
+        if (logEnable) { log.warn "Unknown speed: ${speed}" }
+        return
     }
-    parent?.componentSetSpeed(device, newSpeed)
+    parent?.componentSetSpeed(device, speed)
 }
 
 void cycleSpeed() {
     String curSpeed = device.currentValue('speed', true)
     if (logEnable) { log.debug "Current speed is: ${curSpeed}" }
-    Integer newSpeed = 0x00
+    String newSpeed
     switch (curSpeed) {
         case 'high':
         case 'off':
-            newSpeed = 10
+            newSpeed = 'low'
             break
         case 'low':
-            newSpeed = 20
+            newSpeed = 'medium-low'
             break
         case 'medium-low':
-            newSpeed = 30
+            newSpeed = 'medium'
             break
         case 'medium':
-            newSpeed = 40
+            newSpeed = 'medium-high'
             break
         case 'medium-high':
-            newSpeed = 50
+            newSpeed = 'high'
             break
         default:
             if (logEnable) { log.warn "Unknown current speed: ${curSpeed}" }

@@ -25,7 +25,7 @@ import groovy.transform.Field
 @Field static final String matterComponentSwitchBotButtonStamp   = '2026/02/21 11:29 AM'
 
 metadata {
-    definition(name: 'Matter Generic Component SwitchBot Button', namespace: 'kkossev', author: 'Yves Mercier', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_SwitchBot_Button.groovy') {
+    definition(name: 'Matter Generic Component SwitchBot Button', namespace: 'kkossev', author: 'Yves Mercier', description: 'DEPRECATED: use Matter Generic Component Button instead', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_SwitchBot_Button.groovy') {
         capability 'Refresh'
         capability 'PushableButton'
         attribute 'currentPosition', 'string'
@@ -53,6 +53,7 @@ void parse(String description) { log.warn 'parse(String description) not impleme
 
 // parse commands from parent
 void parse(List<Map> description) {
+    logDeprecationWarning()
     if (logEnable) { log.debug "${description}" }
     description.each { d ->
         if (d.name == 'currentPosition') {
@@ -91,6 +92,7 @@ void ping() {
 // Called when the device is first created
 void installed() {
     log.info "${device.displayName} driver installed"
+    logDeprecationWarning()
 }
 
 // Called when the device is removed
@@ -101,11 +103,18 @@ void uninstalled() {
 // Called when the settings are updated
 void updated() {
     log.info "${device.displayName} driver configuration updated"
+    logDeprecationWarning()
     sendEvent(name: 'numberOfButtons', value: 1)
     if (logEnable) {
         log.debug settings
         runIn(86400, 'logsOff')
     }
+}
+
+private void logDeprecationWarning() {
+    if (state.deprecationWarningLogged == true) { return }
+    log.warn "${device.displayName}: 'Matter Generic Component SwitchBot Button' is deprecated and no longer compatible with the parent event routing. Change the device driver to 'Matter Generic Component Button'."
+    state.deprecationWarningLogged = true
 }
 
 /* groovylint-disable-next-line UnusedPrivateMethod */

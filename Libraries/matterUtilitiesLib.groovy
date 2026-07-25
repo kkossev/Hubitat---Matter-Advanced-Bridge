@@ -114,6 +114,7 @@ void subscribeSingleAttribute(List<String> parameters /*String addOrRemove, Stri
         logInfo 'usage: subscribeSingleAttribute addOrRemove endpoint cluster attribute'
         return
     }
+    String addOrRemove = parameters[0]
     Integer endpoint = safeNumberToInt(parameters[1])
     Integer cluster = safeNumberToInt(parameters[2])
     Integer attrId = safeNumberToInt(parameters[3])
@@ -266,7 +267,7 @@ void resetStats(List<String> parameters) {
     state.stats = [:]
     // stats : {duplicatedCtr=0, pingsMax=288, rxCtr=264, pingsMin=80, pingsAvg=135, txCtr=51, pingsOK=6, pingsFail=1, initializeCtr=5}
     state.stats = [initializeCtr: 0, rxCtr: 0, txCtr: 0, duplicatedCtr: 0, pingsOK: 0, pingsFail: 0, pingsMin: 0, pingsMax: 0, pingsAvg: 0]
-    sendMatterEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} statistics were reset!", type: 'digital'])
+    sendEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} statistics were reset!", type: 'digital', isStateChange: true])
 }
 
 void testParse(String par) {

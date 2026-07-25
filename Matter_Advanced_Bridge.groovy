@@ -68,9 +68,9 @@
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
  * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
- * ver. 1.9.0  2026-07-23 kkossev   (dev. branch) callbackType:Invoke handling
+ * ver. 1.9.0  2026-07-25 kkossev   (dev. branch) callbackType:Invoke handling; added ping as a first step in the state machines before reading attributes
  *
- *                                   TODO: add ping as a first step in the state machines before reading attributes
+ *                                   TODO: 
  *                                   TODO: remove stringToJsonMap; check illuminance 0 bug
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: check for duplicate colorMode events after resubscribe/reboot and filter them out 
@@ -93,7 +93,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/23 2:08 PM' }
+static String timeStamp() { '2026/07/25 8:24 AM' }
 
 
 @Field static final Boolean _DEBUG = true                   // make it FALSE for production!
@@ -562,9 +562,10 @@ private void ensureNewParseFlag() {
 }
 
 private void forceNewParseFlag() {
-    device.updateSettings(updateSettings('newParse', true))
-    ensureNewParseFlag()
-    sendInfoEvent "forceNewParseFlag: newParse flag forced to <b>true</b>"
+    device.updateSetting('newParse', [value: true, type: 'bool'])
+    // the device data value is set directly - settings?.newParse is still stale in this execution
+    device.updateDataValue('newParse', 'true')
+    sendInfoEvent 'forceNewParseFlag: newParse flag forced to <b>true</b>'
 }
 
 /**
@@ -811,7 +812,7 @@ Map newParseCompatibilityPatch(final Map descMap) {
             || patchedMap.cluster == '001D')
         ) {
             patchedMap.value = []
-            if (settings?.traceEnable) { log.warn "myParseDescriptionAsMap: legacy empty list detected: ${patchedMap} description:${description}" }
+            if (settings?.traceEnable) { log.warn "newParseCompatibilityPatch: legacy empty list detected: ${patchedMap}" }
         }
         // Normalize scalar FeatureMap (FFFC) and ClusterRevision (FFFD) to uppercase hex strings
         // for consistency with list attributes which are already stored as hex string arrays.
@@ -1195,6 +1196,7 @@ void parseIdentifyCluster(final Map descMap) {
 // TODO: refactor! 
 void parseGeneralDiagnostics(final Map descMap) {
     //logTrace "parseGeneralDiagnostics: descMap:${descMap}"
+    String attrName = getAttributeName(descMap)
     Integer value
     switch (descMap.attrId) {
         case '0001' :   // RebootCount -  a best-effort count of the number of times the Node has rebooted
@@ -1377,6 +1379,7 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
 }
 
 void parseOnOffCluster(final Map descMap) {
+    String attrName = getAttributeName(descMap)
     logTrace "parseOnOffCluster: descMap:${descMap}"
     if (descMap.cluster != '0006') { logWarn "parseOnOffCluster: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return  }
     if (routeInvokeToCustomChild(descMap)) { return }
@@ -1734,7 +1737,7 @@ void parseHumidityMeasurement(final Map descMap) { // 0405
     if (descMap.cluster != '0405') { logWarn "parseHumidityMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (descMap.attrId == '0000') { // Humidity
         Double valueInt = safeToInt(descMap.value) / 100.0
-        if (valueInt <= 0 || valueInt > 100) {
+        if (valueInt < 0 || valueInt > 100) {
             logWarn "parseHumidityMeasurement: valueInt:${valueInt} is out of range"
             return
         }
@@ -2022,8 +2025,9 @@ void parseColorControl(final Map descMap) { // 0300
             // TODO - remove this patch !!!!!!!!!!!!!!!!!!!!!!!!!!!!
             if (descMap.attrId == 'FFFB' && descMap.value instanceof List) {
                 List colorAttrList = descMap.value
-                boolean hasHue = colorAttrList?.contains('00')
-                boolean hasSaturation = colorAttrList?.contains('01')
+                List<Integer> colorAttrIds = colorAttrList.collect { safeHexToInt(it, -1) }
+                boolean hasHue = colorAttrIds.contains(0x0000)
+                boolean hasSaturation = colorAttrIds.contains(0x0001)
                 
                 // If AttributeList has hue + saturation, check if child device needs upgrading
                 if (hasHue && hasSaturation) {
@@ -2058,10 +2062,10 @@ void parseColorControl(final Map descMap) { // 0300
             String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
             if (attrName in ColorControlClusterAttributes.values().toList()) {
                 eventMap = [name: eventName, value:descMap.value, descriptionText: "${eventName} is: ${descMap.value}"]
-                if (logEnable) { logInfo "parseLevelControlCluster: ${attrName} = ${descMap.value}" }
+                if (logEnable) { logInfo "parseColorControl: ${attrName} = ${descMap.value}" }
             }
             else {
-                logDebug "parseLevelControlCluster: unsupported LevelControl: ${attrName} = ${descMap.value}"
+                logDebug "parseColorControl: unsupported ColorControl: ${attrName} = ${descMap.value}"
             }
             if (eventMap != [:]) {
                 eventMap.type = 'physical'; eventMap.isStateChange = true
@@ -2410,7 +2414,7 @@ void requestMatterClusterAttributesValues(final Map data) {
         listMapName = HexUtils.integerToHexString(data.cluster, 2) + '_' + 'FFFB'
     }
 
-    attributeList = state[fingerprintName][listMapName]
+    List attributeList = state[fingerprintName][listMapName]
 
     logDebug "requestMatterClusterAttributesValues: (requesting cluster 0x${HexUtils.integerToHexString(data.cluster, 2)}) fingerprintName=${fingerprintName} listMapName=${listMapName} attributeList=${attributeList}"
     if (attributeList == null) {
@@ -2474,6 +2478,12 @@ void _DiscoverAll() { _DiscoverAllPatched('All') }     // patch for HE platform 
 void _DiscoverAllPatched(String statePar/* = null*/) {
     logWarn "_DiscoverAll()"
     updated()   // 2026-02-09
+    // the bridge ping below is confirmed in parse(Map), which silently drops everything when newParse is disabled.
+    // initializeVars(fullInit=true) used to repair this in DISCOVER_ALL_STATE_INIT, but the ping now runs before it.
+    if (!isNewParseEnabled()) {
+        logWarn '_DiscoverAll(): the newParse preference was disabled - forcing it to true, otherwise no reply can be received!'
+        forceNewParseFlag()
+    }
     Integer stateSt = DISCOVER_ALL_STATE_INIT
     state.stateMachines = [:]
     // ['All', 'BasicInfo', 'PartsList']]
@@ -2487,7 +2497,8 @@ void _DiscoverAllPatched(String statePar/* = null*/) {
         return
     }
 
-    discoverAllStateMachine([action: START, goToState: stateSt])
+    // the state machine always starts with a ping of the bridge - the discovery continues with 'afterPingState' only if the bridge responds
+    discoverAllStateMachine([action: START, goToState: DISCOVER_ALL_STATE_PING_BRIDGE, afterPingState: stateSt])
 }
 
 void readAttribute(Integer endpoint, Integer cluster, Integer attrId) {
@@ -2967,7 +2978,7 @@ void setSwitch(String commandPar, String deviceNumberPar/*, extraPar = null*/) {
 
     // find the command in the OnOffClusterCommands map
     Integer onOffcmd = OnOffClusterCommands.find { k, v -> v == command }?.key
-    logTrace "setSwitch(): command = ${command}, onOffcmd = ${onOffcmd}, onOffCommandsList = ${onOffCommandsList}"
+    logTrace "setSwitch(): command = ${command}, onOffcmd = ${onOffcmd}, onOffCommandsList = ${OnOffClusterCommands.values()}"
     if (onOffcmd == null) {
         logWarn "setSwitch(): command '${command}' is not valid for ${getDeviceDisplayName(deviceNumber)} !"
         return
@@ -3092,7 +3103,15 @@ Map mapMatterCategory(Map d) {
     logDebug "mapMatterCategory: ServerList=${d.ServerList} DeviceType=${d.DeviceType}"
     
     // DeviceType is already normalized (device types only, no revision numbers)
-    List<String> deviceTypes = d.DeviceType ?: []
+    List<String> deviceTypes = (d.DeviceType ?: []).collectMany { entry ->
+        List values = entry instanceof List ? entry : [entry]
+        values.collect { item ->
+            def rawId = item instanceof Map ? (item.containsKey(0) ? item[0] : item.containsKey('0') ? item['0'] : item.values()?.first()) : item
+            if (rawId == null) { return null }
+            Integer deviceTypeId = rawId instanceof Number ? rawId.intValue() : safeHexToInt(rawId, -1)
+            return deviceTypeId >= 0 ? HexUtils.integerToHexString(deviceTypeId, 2).toUpperCase() : null
+        }
+    }.findAll { it != null }
 
     if ('0300' in d.ServerList) {
         // Check for Extended Color Light (0x010D or decimal 13/0x0D) or Color Temperature Light (0x010C)
@@ -3156,10 +3175,13 @@ Map mapMatterCategory(Map d) {
     if ('0406' in d.ServerList) {   // OccupancySensing (motion)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Motion Sensor', product_name: 'Motion Sensor' ]
     }
+    if ('040D' in d.ServerList) {   // Carbon Dioxide Concentration Measurement
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Quality Sensor' ]
+    }
     if ('042A' in d.ServerList) {   // Concentration Measurement Sensor
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Quality Sensor' ]
     }
-    if ('0090' in d.ServerList) {   // Electrical Power Measurement Cluster
+    if ('0090' in d.ServerList || '0091' in d.ServerList) {   // Electrical Power / Energy Measurement Cluster
         return [ namespace: 'kkossev', driver: 'Matter Custom Component Power Energy', product_name: 'Power Measurement' ]
     }
     if ('0006' in d.ServerList) {   // OnOff
@@ -3411,7 +3433,7 @@ void componentOpen(DeviceWrapper dw) {
     if (!dw.hasCommand('open')) { logError "componentOpen(${dw}) driver '${dw.typeName}' does not have command 'open' in ${dw.supportedCommands}"; return }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logDebug "sending Open command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentOpen(): deviceNumber ${deviceNumberPar} is not valid!"; return }
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentOpen(): deviceNumber ${deviceNumber} is not valid!"; return }
     String cmd = matter.invoke(deviceNumber, 0x0102, 0x00) // 0x0102 = Window Covering Cluster, 0x00 = UpOrOpen
     logTrace "componentOpen(): sending command '${cmd}'"
     sendToDevice(cmd)
@@ -3422,7 +3444,7 @@ void componentClose(DeviceWrapper dw) {
     if (!dw.hasCommand('close')) { logError "componentClose(${dw}) driver '${dw.typeName}' does not have command 'close' in ${dw.supportedCommands}"; return }
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logDebug "sending Close command to device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentClose(): deviceNumber ${deviceNumberPar} is not valid!"; return }
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentClose(): deviceNumber ${deviceNumber} is not valid!"; return }
     String cmd = matter.invoke(deviceNumber, 0x0102, 0x01) // 0x0102 = Window Covering Cluster, 0x01 = DownOrClose
     logTrace "componentClose(): sending command '${cmd}'"
     sendToDevice(cmd)
@@ -3469,8 +3491,7 @@ void componentSetLevel(DeviceWrapper dw, BigDecimal levelPar, BigDecimal duratio
     List<Map<String, String>> cmdFields = []
     cmdFields.add(matter.cmdField(0x04, 0x00, HexUtils.integerToHexString(levelHex, 1)))
     cmdFields.add(matter.cmdField(0x05, 0x01, zigbee.swapOctets(HexUtils.integerToHexString(duration, 2))))
-    cmd = matter.invoke(deviceNumber, 0x0008, 0x04, cmdFields)  // 0x0008 = Level Control Cluster, 0x04 = MoveToLevelWithOnOff
-    def stock = matter.setLevel(level, duration)                             //    {152400 0C2501 0A0018}'
+    String cmd = matter.invoke(deviceNumber, 0x0008, 0x04, cmdFields)  // 0x0008 = Level Control Cluster, 0x04 = MoveToLevelWithOnOff
     sendToDevice(cmd)
 }
 
@@ -3568,9 +3589,8 @@ void componentSetColor(DeviceWrapper dw, Map colormap) {
     }
     Integer hueScaled = Math.round(Math.max(0, Math.min((double)(colormap.hue * 2.54), 254.0)))
     Integer saturationScaled = Math.round(Math.max(0, Math.min((colormap.saturation * 2.54).toInteger(), 254)))
-    Integer levelScaled = Math.round(Math.max(0, Math.min((colormap.level * 2.54).toInteger(), 254)))
     Integer transitionTime = 1
-    logDebug    "Setting color hue ${hueScaled} saturation ${saturationScaled} level ${levelScaled} for device# ${dw.getDataValue('id')} ${dw}"
+    logDebug    "Setting color hue ${hueScaled} saturation ${saturationScaled} for device# ${dw.getDataValue('id')} ${dw}"
     List<Map<String, String>> cmdFields = [
         matter.cmdField(DataType.UINT8, 0, byteReverseParameters(HexUtils.integerToHexString(hueScaled as int, 1))),
         matter.cmdField(DataType.UINT8, 1, byteReverseParameters(HexUtils.integerToHexString(saturationScaled as int, 1))),
@@ -3578,6 +3598,9 @@ void componentSetColor(DeviceWrapper dw, Map colormap) {
     ]
     String cmd = matter.invoke(HexUtils.hexStringToInt(dw.getDataValue('id')), 0x0300, 0x06, cmdFields)  // 0x0300 = Color Control Cluster, 0x06 = MoveToHueAndSaturation ;0x07 = MoveToColor
     sendToDevice(cmd)
+    if (colormap.level != null) {
+        componentSetLevel(dw, colormap.level as BigDecimal)
+    }
 }
 
 void componentSetEffect(DeviceWrapper dw, BigDecimal effect) {
@@ -3606,7 +3629,7 @@ void componentSetPosition(DeviceWrapper dw, BigDecimal positionPar) {
     logDebug "Setting position ${position} for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
     List<Map<String, String>> cmdFields = []
     cmdFields.add(matter.cmdField(0x05, 0x00, zigbee.swapOctets(HexUtils.integerToHexString(position * 100, 2))))
-    cmd = matter.invoke(deviceNumber, 0x0102, 0x05, cmdFields)  // 0x0102 = Window Covering Cluster, 0x05 = GoToLiftPercentage
+    String cmd = matter.invoke(deviceNumber, 0x0102, 0x05, cmdFields)  // 0x0102 = Window Covering Cluster, 0x05 = GoToLiftPercentage
     sendToDevice(cmd)
 }
 
@@ -3626,7 +3649,7 @@ void componentStartPositionChange(DeviceWrapper dw, String direction) {
 void componentStopPositionChange(DeviceWrapper dw) {
     Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
     logDebug "Stopping position change for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentStopPositionChange(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentStopPositionChange(): deviceNumber ${deviceNumber} is not valid!"; return; }
     String cmd = matter.invoke(deviceNumber, 0x0102, 0x02) // 0x0102 = Window Covering Cluster, 0x02 = StopMotion
     logTrace "componentStopPositionChange(): sending command '${cmd}'"
     sendToDevice(cmd)
@@ -3638,7 +3661,7 @@ void componentSetThermostatMode(DeviceWrapper dw, String mode) {
     Integer key = ThermostatSystemModes.find { k, v -> v == mode }?.key
     Boolean isSupportedMode = dw.currentValue('supportedThermostatModes')?.contains(mode)
     logDebug "componentSetThermostatMode: setting thermostatMode to <b>${mode}</b> (key=${key}) for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
-    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetThermostatMode(): deviceNumber ${deviceNumberPar} is not valid!"; return; }
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetThermostatMode(): deviceNumber ${deviceNumber} is not valid!"; return; }
     if (key == null || !isSupportedMode) { logWarn "componentSetThermostatMode(): mode '${mode}' is not valid!" ; return }
     List<Map<String, String>> attrWriteRequests = []
     attrWriteRequests.add(matter.attributeWriteRequest(deviceNumber, 0x201, 0x001C, DataType.UINT8, intToHexStr(key,1))) // 0x0201 = Thermostat Cluster, 0x001C = SetThermostatMode
@@ -3717,7 +3740,7 @@ void initializeThermostat(DeviceWrapper dw) {
 void removeAllDevices() {
     logInfo 'Removing all child devices'
     childDevices.each { device -> deleteChildDevice(device.deviceNetworkId) }
-    sendEvent(name: 'deviceCount', value: '0', descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} All child devices removed")
+    sendEvent(name: 'deviceCount', value: '0', descriptionText: "${device.displayName} All child devices removed")
     sendInfoEvent('All child devices removed')
 }
 
@@ -3737,7 +3760,14 @@ Map fingerprintToData(String fingerprint) {
         data['VendorName'] = fingerprintMap['VendorName']
         data['ProductLabel'] = fingerprintMap['ProductLabel']
         data['NodeLabel'] = fingerprintMap['NodeLabel']
-        data['DeviceType'] = fingerprintMap['DeviceTypeList'] ?: []
+        List rawDeviceTypeList = fingerprintMap['DeviceTypeList'] ?: []
+        List<String> deviceTypeIds = rawDeviceTypeList.collect { entry ->
+            def rawId = entry instanceof Map ? (entry[0] ?: entry['0'] ?: entry.values()?.first()) : entry
+            if (rawId == null) { return null }
+            Integer deviceTypeId = rawId instanceof Number ? rawId.intValue() : safeHexToInt(rawId, -1)
+            return deviceTypeId >= 0 ? HexUtils.integerToHexString(deviceTypeId, 2).toUpperCase() : null
+        }.findAll { it != null }
+        data['DeviceType'] = deviceTypeIds
         
         // Fallback: If ProductName, ProductLabel, and NodeLabel are all empty/null, use bridge's ProductName
         if (!data['ProductName'] && !data['ProductLabel'] && !data['NodeLabel']) {
@@ -3781,7 +3811,7 @@ private Integer createChildDevices() {
             logTrace "createChildDevices(): fingerprintName: ${fingerprintName} SKIPPED"
         }
     }
-    sendHubitatEvent([name: 'deviceCount', value: deviceCount, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} number of devices exposing known clusters is ${deviceCount}"])
+    sendHubitatEvent([name: 'deviceCount', value: deviceCount, descriptionText: "${device.displayName} number of devices exposing known clusters is ${deviceCount}"])
     return deviceCount
 }
 
@@ -4250,7 +4280,7 @@ void initializeVars(boolean fullInit = false) {
     if (fullInit || settings?.logEnable == null) { device.updateSetting('logEnable', DEFAULT_LOG_ENABLE) }
     if (fullInit || settings?.traceEnable == null) { device.updateSetting('traceEnable', false) }
     if (settings?.advancedOptions == null) { device.updateSetting('advancedOptions', [value:false, type:'bool']) }
-    if (settings?.discoveryTimeoutScale == null) { device.updateSetting('discoveryTimeoutScale', [value: '1', type: 'enum']) }
+    if (settings?.discoveryTimeoutScale == null) { device.updateSetting('discoveryTimeoutScale', [value: '2', type: 'enum']) }
     if (fullInit || settings?.healthCheckMethod == null) { device.updateSetting('healthCheckMethod', [value: HealthcheckMethodOpts.defaultValue.toString(), type: 'enum']) }
     if (fullInit || settings?.healthCheckInterval == null) { device.updateSetting('healthCheckInterval', [value: HealthcheckIntervalOpts.defaultValue.toString(), type: 'enum']) }
     if (settings?.minimizeStateVariables == null) { device.updateSetting('minimizeStateVariables', [value: MINIMIZE_STATE_VARIABLES_DEFAULT, type: 'bool']) }

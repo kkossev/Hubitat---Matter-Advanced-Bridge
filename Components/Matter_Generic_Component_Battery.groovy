@@ -63,8 +63,12 @@ void parse(String description) { log.warn 'parse(String description) not impleme
 void parse(List<Map> description) {
     if (logEnable) { log.debug "${device.displayName} ${description}" }
     description.each { d ->
-        if (d.descriptionText && txtEnable) { log.info "${d.descriptionText}" }
-        sendEvent(d)
+        if (d.name == 'rtt') {
+            parseRttEvent(d)
+        } else {
+            if (d.descriptionText && txtEnable) { log.info "${d.descriptionText}" }
+            sendEvent(d)
+        }
     }
 }
 

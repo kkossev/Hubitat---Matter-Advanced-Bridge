@@ -241,7 +241,7 @@ private void handleSwitchEvent(Map descMap) {
             state.lastEvent = 'multiPressComplete'
             break
         default:
-            logDebug "unhandled Switch event evtId=${evtIdStr} (normalized=${evtIdInt})"
+            logDebug "unhandled Switch event evtId=${descMap.evtId} (normalized=${safeToInt(descMap.evtId, -1)})"
             break
     }
 }
@@ -259,7 +259,7 @@ private void handleSwitchAttribute(Map descMap) {
 
 
     String value = descMap.value
-    Map attrData = [name: 'unknown', value: value, descriptionText: "${device.displayName} attribute ${attrIdStr ?: attrIdRaw} = ${value}"]
+    Map attrData = [name: 'unknown', value: value, descriptionText: "${device.displayName} attribute ${descMap.attrId ?: descMap.attrInt} = ${value}"]
 
     switch (descMap.attrInt) {
         case 0x0000: // numberOfPositions

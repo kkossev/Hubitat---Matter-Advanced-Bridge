@@ -34,7 +34,7 @@ library(
   * ver. 1.1.0  2026-01-17 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine; added finalizeDeviceType() call
   * ver. 1.1.1  2026-01-17 GPT-5.2  - restored DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
   * ver. 1.1.2  2026-02-21 kkossev  - potential bug fix in discovering global elements (including FeatureMap); added 0xFFFA
-  * ver. 1.1.3  2026-07-23 kkossev  - (dev. branch) bug fixes
+  * ver. 1.1.3  2026-07-25 kkossev  - (dev. branch) bug fixes; ping the bridge before starting the discovery;
   *
 */
 
@@ -42,7 +42,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterStateMachinesLib = '1.1.3'
-@Field static final String matterStateMachinesLibStamp   = '2026/07/23 10:03 PM'
+@Field static final String matterStateMachinesLibStamp   = '2026/07/25 8:24 AM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -66,6 +66,7 @@ void initializeStateMachineVars() {
     if (state['stateMachines']['discoverAllState'] == null) { state['stateMachines']['discoverAllState'] = DISCOVER_ALL_STATE_IDLE }
     if (state['stateMachines']['discoverAllRetry'] == null) { state['stateMachines']['discoverAllRetry'] = 0 }
     if (state['stateMachines']['discoverAllResult'] == null) { state['stateMachines']['discoverAllResult'] = UNKNOWN }
+    if (state['stateMachines']['discoverAllPingAttempt'] == null) { state['stateMachines']['discoverAllPingAttempt'] = 0 }
 }
 
 void readSingleAttrStateMachine(Map data = null) {
@@ -358,6 +359,13 @@ void discoverGlobalElementsStateMachine(Map data) {
 @Field static final Integer DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS                    = 101
 @Field static final Integer DISCOVER_ALL_STATE_BRIDGE_GLOBAL_ELEMENTS_WAIT               = 102
 
+// the bridge is pinged first - the discovery is started only if the bridge responds
+@Field static final Integer DISCOVER_ALL_STATE_PING_BRIDGE                               = 110
+@Field static final Integer DISCOVER_ALL_STATE_PING_BRIDGE_WAIT                          = 111
+
+@Field static final Integer DISCOVER_ALL_PING_MAX_ATTEMPTS = 3     // total bridge ping attempts before aborting the discovery
+@Field static final Integer DISCOVER_ALL_PING_MAX_TICKS    = 15    // ~5 seconds per attempt at STATE_MACHINE_PERIOD = 330 ms
+
 @Field static final Integer DISCOVER_ALL_STATE_DESCIPTOR_ATTRIBUTE_LIST                 = 2
 @Field static final Integer DISCOVER_ALL_STATE_DESCIPTOR_ATTRIBUTE_LIST_WAIT            = 3
 @Field static final Integer DISCOVER_ALL_STATE_DESCIPTOR_GLOBAL_ELEMENTS                = 4
@@ -422,6 +430,7 @@ void discoverAllStateMachine(Map data = null) {
             }
             state['stateMachines']['discoverAllRetry']  = 0
             state['stateMachines']['discoverAllResult'] = UNKNOWN
+            state['stateMachines']['discoverAllPingAttempt'] = 0
             state['stateMachines']['errorText'] = 'none'
             data['action'] = RUNNING
             logInfo '_DiscoverAll(): started!'
@@ -438,6 +447,45 @@ void discoverAllStateMachine(Map data = null) {
         case DISCOVER_ALL_STATE_IDLE :
             logWarn "discoverAllStateMachine: st:${st} - idle -> unscheduling!"
             unschedule('discoverAllStateMachine')
+            break
+        case DISCOVER_ALL_STATE_PING_BRIDGE :
+            // ping the bridge BEFORE the DISCOVER_ALL_STATE_INIT state, because INIT calls initializeVars(fullInit=true),
+            // which clears all the states and resets the preferences to their default values!
+            Integer pingAttempt = safeToInt(state['stateMachines']['discoverAllPingAttempt'], 0) + 1
+            state['stateMachines']['discoverAllPingAttempt'] = pingAttempt
+            sendInfoEvent("Checking whether the Matter Bridge responds (attempt ${pingAttempt} of ${DISCOVER_ALL_PING_MAX_ATTEMPTS}) ...")
+            state['states']['isInfo'] = false       // the ping reply must not be swallowed by the Info collector
+            state['stateMachines']['pingStartTime'] = new Date().getTime()
+            // here we fill in 'toBeConfirmed' and 'Confirmation', because the readAttribute() is called directly !
+            state['stateMachines']['toBeConfirmed'] = [0, 0x0028, 0x0000];  state['stateMachines']['Confirmation'] = false
+            readAttribute(0, 0x0028, 0x0000)        // Basic Information cluster 0x0028 : DataModelRevision (the same read as pingCmd())
+            retry = 0; st = DISCOVER_ALL_STATE_PING_BRIDGE_WAIT
+            break
+        case DISCOVER_ALL_STATE_PING_BRIDGE_WAIT :
+            if (state['stateMachines']['Confirmation'] == true) {
+                Long pingRtt = new Date().getTime() - ((state['stateMachines']['pingStartTime'] ?: new Date().getTime()) as Long)
+                logDebug "discoverAllStateMachine: st:${st} - the Matter Bridge responded in ${pingRtt} ms"
+                sendInfoEvent("Matter Bridge responded in ${pingRtt} ms - starting the discovery ...")
+                state['stateMachines']['discoverAllPingAttempt'] = 0
+                retry = 0; st = safeToInt(data?.afterPingState, DISCOVER_ALL_STATE_INIT)
+            }
+            else {
+                logTrace "discoverAllStateMachine: st:${st} - waiting for the Matter Bridge ping response (retry=${retry})"
+                retry++
+                if (retry > DISCOVER_ALL_PING_MAX_TICKS) {
+                    Integer pingAttemptsDone = safeToInt(state['stateMachines']['discoverAllPingAttempt'], 0)
+                    if (pingAttemptsDone < DISCOVER_ALL_PING_MAX_ATTEMPTS) {
+                        logWarn "discoverAllStateMachine: st:${st} - no response from the Matter Bridge (attempt ${pingAttemptsDone}), retrying ..."
+                        retry = 0; st = DISCOVER_ALL_STATE_PING_BRIDGE
+                    }
+                    else {
+                        logWarn "discoverAllStateMachine: st:${st} - the Matter Bridge did not respond after ${pingAttemptsDone} attempts - discovery aborted!"
+                        state['stateMachines']['discoverAllPingAttempt'] = 0
+                        state['stateMachines']['errorText'] = "the Matter Bridge did not respond to ${DISCOVER_ALL_PING_MAX_ATTEMPTS} ping attempts - discovery aborted, nothing was changed. Check that the bridge is powered on and reachable, then try again.".toString()
+                        st = DISCOVER_ALL_STATE_ERROR
+                    }
+                }
+            }
             break
         case DISCOVER_ALL_STATE_INIT: // start (collectBasicInfo())
             sendInfoEvent('Starting Matter Bridge and Devices discovery ...<br><br><br>')
@@ -803,7 +851,7 @@ void discoverAllStateMachine(Map data = null) {
                 // 02/12/2024 - go next device !
             }
             else {
-                logDebug "discoverAllStateMachine: st:${st} - fingerprintName ${fingerprintName} SupportedMatterClusters ${supportedClusters} are not in the ServerList ${ServerListCluster} !"
+                logDebug "discoverAllStateMachine: st:${st} - fingerprintName ${fingerprintName} SupportedMatterClusters ${supportedMatterClusters} are not in the ServerList ${serverListCluster} !"
                 state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
                 st = DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE
             }

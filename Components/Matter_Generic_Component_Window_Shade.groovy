@@ -559,7 +559,7 @@ void stopPositionChange() {
 // Component command to refresh the device
 void refresh() {
     if (txtEnable) { log.info "${device.displayName} refreshing ..." }
-    state.standardOpenClose = 'OPEN = 0% CLOSED = 100%'
+    state.standardOpenClose = "Hubitat standard:  'OPEN = 0% CLOSED = 100%' Matter standard: OPEN = 100 and CLOSED = 0"
     state.driverVersion = matterComponentWindowShadeVersion + ' (' + matterComponentWindowShadeStamp + ')'
     parent?.componentRefresh(device)
 }
