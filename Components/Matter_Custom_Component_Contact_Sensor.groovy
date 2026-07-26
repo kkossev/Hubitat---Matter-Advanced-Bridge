@@ -14,14 +14,14 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  * ver. 1.0.0  2026-04-30 kkossev  - first release; adds sensitivityLevel attribute for devices with cluster 0x0080 (BooleanStateConfiguration), e.g. Aqara P100
- * ver. 1.0.1  2027-07-25 kkossev  - Bug fixes;
+ * ver. 1.0.1  2026-07-25 kkossev  - Bug fixes;
  *
 */
 
 import groovy.transform.Field
 
 @Field static final String matterComponentContactSensorVersion = '1.0.1'
-@Field static final String matterComponentContactSensorStamp   = '2027/07/25 8:30 PM'
+@Field static final String matterComponentContactSensorStamp   = '2026/07/25 10:59 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Contact Sensor', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom_Component_Contact_Sensor.groovy') {

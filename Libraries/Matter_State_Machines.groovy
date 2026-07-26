@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/Matter_State_Machines.groovy',
-    version: '1.1.3',
+    version: '1.2.0',
     documentationLink: ''
 )
 /*
@@ -34,15 +34,15 @@ library(
   * ver. 1.1.0  2026-01-17 GPT-5.2  - fixed empty attribute list issue in discoverGlobalElementsStateMachine; added fingerprint copy in discoverAllStateMachine; added discovering all FFF8 FFF9 FFFB FFFC attributes in discoverGlobalElementsStateMachine; added finalizeDeviceType() call
   * ver. 1.1.1  2026-01-17 GPT-5.2  - restored DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
   * ver. 1.1.2  2026-02-21 kkossev  - potential bug fix in discovering global elements (including FeatureMap); added 0xFFFA
-  * ver. 1.1.3  2026-07-25 kkossev  - (dev. branch) bug fixes; ping the bridge before starting the discovery;
+  * ver. 1.2.0  2026-07-25 kkossev + Claude Opus 5 - (dev. branch) bug fixes; ping the bridge before starting the discovery;
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.1.3'
-@Field static final String matterStateMachinesLibStamp   = '2026/07/25 9:19 AM'
+@Field static final String matterStateMachinesLib = '1.2.0'
+@Field static final String matterStateMachinesLibStamp   = '2026/07/25 8:56 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -292,7 +292,8 @@ void discoverGlobalElementsStateMachine(Map data) {
                 }
                 state['stateMachines']['Confirmation'] = false
                 state['stateMachines']['toBeConfirmed'] = [data.endpoint, data.cluster, attributeList.last()]
-                sendToDevice(matter.readAttributes(attributePaths))
+                // chunked - a cluster with 40+ attributes does not fit in a single Read Request (PDU / Thread MTU)
+                sendChunkedAttributeReads(attributePaths)
                 retry = 0; st = STATE_DISCOVER_GLOBAL_ELEMENTS_GLOBAL_ELEMENTS_WAIT
             }
             else {
@@ -456,6 +457,11 @@ void discoverAllStateMachine(Map data = null) {
             Integer pingAttempt = safeToInt(state['stateMachines']['discoverAllPingAttempt'], 0) + 1
             state['stateMachines']['discoverAllPingAttempt'] = pingAttempt
             sendInfoEvent("Checking whether the Matter Bridge responds (attempt ${pingAttempt} of ${DISCOVER_ALL_PING_MAX_ATTEMPTS}) ...")
+            // The hub's own networkStatus usually knows the answer already. Warn only - it is NOT used to
+            // abort here, because a stale networkStatus must never be able to block a legitimate discovery.
+            if (isNetworkOffline()) {
+                logWarn "discoverAllStateMachine: st:${st} - the hub reports networkStatus 'offline' for this bridge - the discovery will most probably fail!"
+            }
             state['states']['isInfo'] = false       // the ping reply must not be swallowed by the Info collector
             state['stateMachines']['pingStartTime'] = new Date().getTime()
             // here we fill in 'toBeConfirmed' and 'Confirmation', because the readAttribute() is called directly !
@@ -556,8 +562,9 @@ void discoverAllStateMachine(Map data = null) {
             state.tmp = null
             state['stateMachines']['Confirmation'] = false
             state['stateMachines']['toBeConfirmed'] = [0, 0x0028, attributeList?.last()]
-            // here we fill in 'toBeConfirmed' and 'Confirmation', because the readAttributes() is called directly !
-            sendToDevice(matter.readAttributes(attributePaths))
+            // here we fill in 'toBeConfirmed' and 'Confirmation', because the read is issued directly !
+            // chunked, for the same PDU / Thread MTU reason as everywhere else
+            sendChunkedAttributeReads(attributePaths)
             retry = 0; st = DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_VALUES_WAIT
             break
         case DISCOVER_ALL_STATE_BRIDGE_BASIC_INFO_ATTR_VALUES_WAIT :

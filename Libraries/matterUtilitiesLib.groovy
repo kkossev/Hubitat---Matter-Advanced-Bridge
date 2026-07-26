@@ -172,9 +172,14 @@ boolean utilities(String commandLine=null) {
 // NOTE: the former 'timePar' and 'fast' parameters are gone - the collector is now driven by the replies,
 // not by a fixed schedule, so there is nothing left to tune per call. See infoCollectStateMachine() below.
 void requestExtendedInfo(Integer endpoint = 0) {
-    List<String> serverList = state[getFingerprintName(endpoint)]?.ServerList
-    if (serverList == null) {
-        logWarn 'requestExtendedInfo(): serverList is null!'
+    // getEndpointServerList() falls back to the child device's fingerprintData: reading state[fingerprintXX]
+    // directly used to make getInfo() fail for EVERY endpoint except 0 as soon as the 'Minimize State
+    // Variables' preference (ON by default) had deleted the fingerprints.
+    List<String> serverList = getEndpointServerList(endpoint)
+    if (!serverList) {
+        logWarn "requestExtendedInfo(): endpoint ${endpoint} - no ServerList found! Either there is no such " +
+                'endpoint on this bridge, or its fingerprint was removed by the \'Minimize State Variables\' ' +
+                'preference and it has no child device to read it from - run _DiscoverAll to rebuild it.'
         return
     }
     List<String> queue = []
@@ -214,6 +219,11 @@ void requestExtendedInfo(Integer endpoint = 0) {
 // answers a single attribute read in more than 5 seconds is unreachable for practical purposes anyway
 // (compare MAX_PING_MILISECONDS = 15000 in the parent driver).
 @Field static final Integer INFO_COLLECT_MAX_TICKS = 17
+// A chunked read has several requests in flight at once and the replies interleave, so the confirmation of
+// the last chunk does NOT mean the burst is over - a fast (mains-powered, router) node can answer the last
+// chunk while an earlier one is still streaming. After the confirmation the machine therefore settles: it
+// prints only after this many consecutive ticks without a single new attribute, capped by the timeout below.
+@Field static final Integer INFO_SETTLE_QUIET_TICKS = 2
 
 @Field static final Integer INFO_STATE_IDLE             = 0
 @Field static final Integer INFO_STATE_NEXT             = 1
@@ -223,6 +233,7 @@ void requestExtendedInfo(Integer endpoint = 0) {
 @Field static final Integer INFO_STATE_VALUES_WAIT      = 5
 @Field static final Integer INFO_STATE_SERVER_LIST      = 6
 @Field static final Integer INFO_STATE_SERVER_LIST_WAIT = 7
+@Field static final Integer INFO_STATE_VALUES_SETTLE    = 8
 @Field static final Integer INFO_STATE_END              = 99
 
 void startInfoCollect(Integer endpoint, List<String> queue, String finishedText) {
@@ -264,7 +275,7 @@ void infoCollectStateMachine() {
             if (entry == 'BASICINFO') {
                 // the ServerList is known only now, after the Descriptor has been read
                 String wanted = (endpoint == 0) ? '0028' : '0039'
-                List<String> knownServerList = state[getFingerprintName(endpoint)]?.ServerList ?: []
+                List<String> knownServerList = getEndpointServerList(endpoint)   // state, then child fingerprintData
                 if (!(wanted in knownServerList)) {
                     logWarn "infoCollectStateMachine(): cluster 0x${wanted} is <b>not in the ServerList</b> of endpoint ${endpoint} !"
                     state['stateMachines']['infoIndex'] = index + 1
@@ -310,20 +321,60 @@ void infoCollectStateMachine() {
                 break
             }
             state['stateMachines']['toBeConfirmed'] = [endpoint, entryCluster, lastAttr]
+            // snapshot the chunk count of THIS read - state['stateMachines']['lastReadChunks'] is shared with
+            // refresh() and could be overwritten while we are waiting
+            state['stateMachines']['infoChunks'] = safeToInt(state['stateMachines']['lastReadChunks'], 1)
             retry = 0; st = INFO_STATE_VALUES_WAIT
             break
         case INFO_STATE_VALUES_WAIT :
+            // A big cluster (ThreadNetworkDiagnostics has 68 attributes) is read in several chunks, and the
+            // confirmation arrives only with the reply of the LAST one. Each extra chunk costs 500 ms of send
+            // pacing plus the device's reply time - budget ~3 ticks (900 ms) for each of them.
+            Integer chunks = safeToInt(state['stateMachines']['infoChunks'], 1)
+            Integer chunkTicks = (chunks - 1) * 3
             if (!confirmed) {
                 retry++
-                if (retry <= maxTicks) { break }
+                if (retry <= maxTicks + chunkTicks) { break }
                 logWarn "infoCollectStateMachine: timeout waiting for the attribute values of cluster ${entry} (endpoint ${endpoint}) - logging what was received"
+            }
+            else if (chunks > 1) {
+                // Several requests were in flight - the replies interleave, so the confirmation of the last
+                // chunk can arrive while an earlier chunk is still streaming. Settle before printing,
+                // otherwise logRequestedClusterAttrResult() clears state.tmp and the stragglers are lost.
+                state['stateMachines']['infoRxMark'] = safeToInt(state['stateMachines']['infoRxCount'], 0)
+                state['stateMachines']['infoQuiet'] = 0
+                retry = 0; st = INFO_STATE_VALUES_SETTLE
+                break
+            }
+            logRequestedClusterAttrResult([endpoint: endpoint, cluster: entryCluster])
+            state['stateMachines']['infoIndex'] = index + 1
+            retry = 0; st = INFO_STATE_NEXT
+            break
+        case INFO_STATE_VALUES_SETTLE :
+            Integer rxCount = safeToInt(state['stateMachines']['infoRxCount'], 0)
+            Integer rxMark  = safeToInt(state['stateMachines']['infoRxMark'], 0)
+            Integer quiet   = safeToInt(state['stateMachines']['infoQuiet'], 0)
+            if (rxCount != rxMark) {
+                state['stateMachines']['infoRxMark'] = rxCount      // still arriving - restart the quiet count
+                quiet = 0
+            }
+            else {
+                quiet++
+            }
+            state['stateMachines']['infoQuiet'] = quiet
+            retry++
+            // the settle window is bounded - a device that never goes quiet must not stall the whole run
+            Integer settleMaxTicks = maxTicks + ((safeToInt(state['stateMachines']['infoChunks'], 1) - 1) * 3)
+            if (quiet < INFO_SETTLE_QUIET_TICKS && retry <= settleMaxTicks) { break }
+            if (retry > settleMaxTicks) {
+                logDebug "infoCollectStateMachine: settle window expired for cluster ${entry} (endpoint ${endpoint}) - printing what was received"
             }
             logRequestedClusterAttrResult([endpoint: endpoint, cluster: entryCluster])
             state['stateMachines']['infoIndex'] = index + 1
             retry = 0; st = INFO_STATE_NEXT
             break
         case INFO_STATE_SERVER_LIST :
-            List<String> burstList = state[getFingerprintName(endpoint)]?.ServerList ?: []
+            List<String> burstList = getEndpointServerList(endpoint)   // state, then child fingerprintData
             if (burstList.isEmpty()) {
                 logWarn "infoCollectStateMachine: the ServerList of endpoint ${endpoint} is empty - skipping the attribute lists"
                 state['stateMachines']['infoIndex'] = index + 1

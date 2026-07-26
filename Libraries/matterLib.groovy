@@ -81,6 +81,7 @@ Matter cluster names = [$FaultInjection, $UnitTesting, $ElectricalMeasurement, $
     0x0042  : 'ProxyConfiguration',         // Provides a means for a proxy-capable device to be told the set of Nodes it SHALL proxy
     0x0043  : 'ProxyDiscovery',             // Contains commands needed to do proxy discovery
     0x0044  : 'ValidProxies',               // Provides a means for a device to be told of the valid set of possible proxies that can proxy subscriptions on its behalf
+    0x0046  : 'IcdManagement',              // Intermittently Connected Device management - its presence means the node is an ICD (sleepy Thread device), which explains long round-trip times
 
     0x0003  : 'Identify',                   // Supports an endpoint identification state (e.g., flashing a light), that indicates to an observer (e.g., an installer) which of several nodes and/or endpoints it is.
     0x0004  : 'Groups',                     // Manages, per endpoint, the content of the node-wide Group Table that is part of the underlying interaction layer.
@@ -153,6 +154,9 @@ Matter cluster names = [$FaultInjection, $UnitTesting, $ElectricalMeasurement, $
 Map getAttributesMapByClusterId(String cluster) {
     /* groovylint-disable-next-line CouldBeSwitchStatement, ReturnsNullInsteadOfEmptyCollection */
     if (cluster == null) { return null }
+    if (cluster == '0003') { return IdentifyClusterAttributes }
+    if (cluster == '0004') { return GroupsClusterAttributes }
+    if (cluster == '0005') { return ScenesClusterAttributes }
     if (cluster == '0006') { return OnOffClusterAttributes }
     if (cluster == '0008') { return LevelControlClusterAttributes }
     if (cluster == '001D') { return DescriptorClusterAttributes }
@@ -170,6 +174,8 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0032') { return DiagnosticLogsClusterAttributes }
     if (cluster == '0033') { return GeneralDiagnosticsClusterAttributes }
     if (cluster == '0034') { return SoftwareDiagnosticsClusterAttributes }
+    if (cluster == '0035') { return ThreadNetworkDiagnosticsClusterAttributes }
+    if (cluster == '0036') { return WiFiNetworkDiagnosticsClusterAttributes }
     if (cluster == '0037') { return EthernetNetworkDiagnosticsClusterAttributes }
     if (cluster == '0039') { return BridgedDeviceBasicClusterAttributes }
     if (cluster == '003B') { return SwitchClusterAttributes }
@@ -179,6 +185,7 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0040') { return FixedLabelClusterAttributes }
     if (cluster == '0041') { return UserLabelClusterAttributes }
     if (cluster == '0045') { return BooleanStateClusterAttributes }
+    if (cluster == '0046') { return IcdManagementClusterAttributes }
     if (cluster == '0080') { return BooleanStateConfigurationClusterAttributes }
     if (cluster == '005B') { return AirQualityClusterAttributes }
     if (cluster == '0071') { return ResourceMonitoringClusterAttributes }    // HEPAFilterMonitoring
@@ -188,12 +195,14 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0101') { return DoorLockClusterAttributes }
     if (cluster == '0102') { return WindowCoveringClusterAttributes }
     if (cluster == '0201') { return ThermostatClusterAttributes }
+    if (cluster == '0202') { return FanControlClusterAttributes }
     if (cluster == '0300') { return ColorControlClusterAttributes }
     if (cluster == '0400') { return IlluminanceMeasurementClusterAttributes }   // TODO
     if (cluster == '0402') { return TemperatureMeasurementClusterAttributes }
     if (cluster == '0403') { return PressureMeasurementClusterAttributes }      // TODO
     if (cluster == '0405') { return RelativeHumidityMeasurementClusterAttributes }
     if (cluster == '0406') { return OccupancySensingClusterAttributes }
+    if (cluster == '040D') { return ConcentrationMeasurementClustersAttributes }    // CarbonDioxideConcentrationMeasurement - same attribute set
     if (cluster == '042A') { return ConcentrationMeasurementClustersAttributes }    // used for PM2.5 and others!
     if (cluster == '0551') { return CameraAvStreamManagementClusterAttributes }     // Camera AV Stream Management (Matter 1.3+)
     /* groovylint-disable-next-line ReturnsNullInsteadOfEmptyCollection */
@@ -365,9 +374,9 @@ String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, Str
     0x0002  : 'SupportedCalendarTypes'
 ]
 
-// 11.6.6.1 Poweer Source Configuration Cluster 0x002E
+// 11.6.6.1 Power Source Configuration Cluster 0x002E
 @Field static final Map<Integer, String> PowerSourceConfigurationClusterAttributes = [
-    0x0000  : 'dummy'
+    0x0000  : 'Sources'         // list of the endpoints that host a PowerSource cluster (0x002F)
 ]
 
 // 11.7. Power Source Cluster 0x002F    // attrList:[0, 1, 2, 11, 12, 14, 15, 16, 19, 25, 65528, 65529, 65531, 65532, 65533]
@@ -414,12 +423,27 @@ String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, Str
     0x0004  : 'InterfaceEnabled',
     0x0005  : 'LastNetworkingStatus',
     0x0006  : 'LastNetworkID',
-    0x0007  : 'LastConnectErrorValue'
+    0x0007  : 'LastConnectErrorValue',
+    0x0008  : 'SupportedWiFiBands',
+    0x0009  : 'SupportedThreadFeatures',
+    0x000A  : 'ThreadVersion'
 ]
 
-// 11.10.4. Diagnostic Logs Cluster 0x0032
-@Field static final Map<Integer, String> DiagnosticLogsClusterAttributes = [
-    0x0000  : 'dummy'
+// 11.10.4. Diagnostic Logs Cluster 0x0032 - this cluster defines NO attributes (commands only), so the map stays empty
+@Field static final Map<Integer, String> DiagnosticLogsClusterAttributes = [:]
+
+// 9.17. ICD Management Cluster 0x0046 - present on Intermittently Connected Devices (sleepy Thread nodes)
+@Field static final Map<Integer, String> IcdManagementClusterAttributes = [
+    0x0000  : 'IdleModeDuration',       // seconds
+    0x0001  : 'ActiveModeDuration',     // milliseconds
+    0x0002  : 'ActiveModeThreshold',    // milliseconds
+    0x0003  : 'RegisteredClients',
+    0x0004  : 'ICDCounter',
+    0x0005  : 'ClientsSupportedPerFabric',
+    0x0006  : 'UserActiveModeTriggerHint',
+    0x0007  : 'UserActiveModeTriggerInstruction',
+    0x0008  : 'OperatingMode',
+    0x0009  : 'MaximumCheckInBackOff'
 ]
 
 // 11.11.7. General Diagnostics Cluster 0x0033
@@ -441,6 +465,92 @@ String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, Str
     0x0001  : 'CurrentHeapFree',
     0x0002  : 'CurrentHeapUsed',
     0x0003  : 'CurrentHeapHighWatermark'
+]
+
+// 11.13.6. Thread Network Diagnostics Cluster 0x0035 - 68 attributes, present on every Thread node.
+// 0x0000-0x000D describe the current Thread attachment, 0x000E-0x0037 are packet/error counters,
+// 0x0038-0x003E the operational dataset.
+@Field static final Map<Integer, String> ThreadNetworkDiagnosticsClusterAttributes = [
+    0x0000  : 'Channel',
+    0x0001  : 'RoutingRole',                // 0=Unspecified 1=Unassigned 2=SleepyEndDevice 3=EndDevice 4=REED 5=Router 6=Leader
+    0x0002  : 'NetworkName',
+    0x0003  : 'PanId',
+    0x0004  : 'ExtendedPanId',
+    0x0005  : 'MeshLocalPrefix',
+    0x0006  : 'OverrunCount',
+    0x0007  : 'NeighborTable',
+    0x0008  : 'RouteTable',
+    0x0009  : 'PartitionId',
+    0x000A  : 'Weighting',
+    0x000B  : 'DataVersion',
+    0x000C  : 'StableDataVersion',
+    0x000D  : 'LeaderRouterId',
+    0x000E  : 'DetachedRoleCount',
+    0x000F  : 'ChildRoleCount',
+    0x0010  : 'RouterRoleCount',
+    0x0011  : 'LeaderRoleCount',
+    0x0012  : 'AttachAttemptCount',
+    0x0013  : 'PartitionIdChangeCount',
+    0x0014  : 'BetterPartitionAttachAttemptCount',
+    0x0015  : 'ParentChangeCount',
+    0x0016  : 'TxTotalCount',
+    0x0017  : 'TxUnicastCount',
+    0x0018  : 'TxBroadcastCount',
+    0x0019  : 'TxAckRequestedCount',
+    0x001A  : 'TxAckedCount',
+    0x001B  : 'TxNoAckRequestedCount',
+    0x001C  : 'TxDataCount',
+    0x001D  : 'TxDataPollCount',
+    0x001E  : 'TxBeaconCount',
+    0x001F  : 'TxBeaconRequestCount',
+    0x0020  : 'TxOtherCount',
+    0x0021  : 'TxRetryCount',
+    0x0022  : 'TxDirectMaxRetryExpiryCount',
+    0x0023  : 'TxIndirectMaxRetryExpiryCount',
+    0x0024  : 'TxErrCcaCount',
+    0x0025  : 'TxErrAbortCount',
+    0x0026  : 'TxErrBusyChannelCount',
+    0x0027  : 'RxTotalCount',
+    0x0028  : 'RxUnicastCount',
+    0x0029  : 'RxBroadcastCount',
+    0x002A  : 'RxDataCount',
+    0x002B  : 'RxDataPollCount',
+    0x002C  : 'RxBeaconCount',
+    0x002D  : 'RxBeaconRequestCount',
+    0x002E  : 'RxOtherCount',
+    0x002F  : 'RxAddressFilteredCount',
+    0x0030  : 'RxDestAddrFilteredCount',
+    0x0031  : 'RxDuplicatedCount',
+    0x0032  : 'RxErrNoFrameCount',
+    0x0033  : 'RxErrUnknownNeighborCount',
+    0x0034  : 'RxErrInvalidSrcAddrCount',
+    0x0035  : 'RxErrSecCount',
+    0x0036  : 'RxErrFcsCount',
+    0x0037  : 'RxErrOtherCount',
+    0x0038  : 'ActiveTimestamp',
+    0x0039  : 'PendingTimestamp',
+    0x003A  : 'Delay',
+    0x003B  : 'SecurityPolicy',
+    0x003C  : 'ChannelPage0Mask',
+    0x003D  : 'OperationalDatasetComponents',
+    0x003E  : 'ActiveNetworkFaultsList'
+]
+
+// 11.14.6. Wi-Fi Network Diagnostics Cluster 0x0036
+@Field static final Map<Integer, String> WiFiNetworkDiagnosticsClusterAttributes = [
+    0x0000  : 'BSSID',
+    0x0001  : 'SecurityType',               // 0=Unspecified 1=None 2=WEP 3=WPA 4=WPA2 5=WPA3
+    0x0002  : 'WiFiVersion',                // 0=a 1=b 2=g 3=n 4=ac 5=ax 6=ah
+    0x0003  : 'ChannelNumber',
+    0x0004  : 'RSSI',                       // dBm
+    0x0005  : 'BeaconLostCount',
+    0x0006  : 'BeaconRxCount',
+    0x0007  : 'PacketMulticastRxCount',
+    0x0008  : 'PacketMulticastTxCount',
+    0x0009  : 'PacketUnicastRxCount',
+    0x000A  : 'PacketUnicastTxCount',
+    0x000B  : 'CurrentMaxRate',             // bits/s
+    0x000C  : 'OverrunCount'
 ]
 
 // 11.15.4. Ethernet Network Diagnostics Cluster 0x0037
@@ -553,6 +663,26 @@ String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, Str
     0x0007  : 'Uncertainty',            // Constraint: MS, [MEA]
     0x0008  : 'MeasurementUnit',        // MEA
     0x0009  : 'MeasurementMedium'     // M
+]
+
+// 4.4. Fan Control Cluster 0x0202 - parseFanControl() handles 0x0000/0x0001; the rest are for getInfo()/log names only
+@Field static final Map<Integer, String> FanControlClusterAttributes = [
+    0x0000  : 'FanMode',
+    0x0001  : 'FanModeSequence',
+    0x0002  : 'PercentSetting',
+    0x0003  : 'PercentCurrent',
+    0x0004  : 'SpeedMax',
+    0x0005  : 'SpeedSetting',
+    0x0006  : 'SpeedCurrent',
+    0x0007  : 'RockSupport',
+    0x0008  : 'RockSetting',
+    0x0009  : 'WindSupport',
+    0x000A  : 'WindSetting',
+    0x000B  : 'AirflowDirection'
+]
+
+@Field static final Map<Integer, String> FanControlClusterCommands = [
+    0x0000  : 'Step'
 ]
 
 // Identify Cluster 0x0003

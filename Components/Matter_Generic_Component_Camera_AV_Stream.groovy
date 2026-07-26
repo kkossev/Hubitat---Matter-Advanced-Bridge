@@ -27,7 +27,7 @@ import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
 @Field static final String CAMERA_DRIVER_VERSION = '1.0.1'
-@Field static final String CAMERA_DRIVER_STAMP   = '2026/07/25 9:13 AM'
+@Field static final String CAMERA_DRIVER_STAMP   = '2026/07/25 10:57 PM'
 
 @Field static final Boolean _DEBUG_CAMERA   = false         // set true only for development
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
@@ -254,14 +254,14 @@ void processCameraAttributeReport(Map descMap) {
     switch (attrId) {
         // ----- Global cluster metadata -----
         case 'FFFC': // FeatureMap
-            Integer featureMap = safeToInt(rawVal)
+            Integer featureMap = safeHexToInt(rawVal)
             String decoded = decodeCameraFeatureMap(featureMap)
             state.cameraAttr['featureMap']    = decoded
             state.cameraAttr['featureMapRaw'] = featureMap
             message = "${prefix}FeatureMap=0x${HexUtils.integerToHexString(featureMap, 2)} ${decoded}"
             break
         case 'FFFD': // ClusterRevision
-            Integer rev = safeToInt(rawVal)
+            Integer rev = safeHexToInt(rawVal)
             state.cameraAttr['clusterRevision'] = rev
             message = "${prefix}ClusterRevision=${rev}"
             break

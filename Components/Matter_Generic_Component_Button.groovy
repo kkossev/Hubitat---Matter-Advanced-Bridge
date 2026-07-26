@@ -350,6 +350,13 @@ private void handleNumberOfPositions(final Map d) {
     }
     // Store the Matter device's total numberOfPositions for reference
     device.updateDataValue('numberOfPositions', d.value.toString())
+    // NumberOfPositions is static configuration - the node re-reports it in the initial report of every
+    // (re)subscription. Only announce it when it is new or changed, otherwise every Initialize / reSubscribe
+    // writes one 'numberOfButtons' event per button child into the event log.
+    if (safeToInt(device.currentValue('numberOfButtons')) == 1) {
+        logDebug "numberOfButtons is already 1 (Matter device has ${positions} positions) - no event sent"
+        return
+    }
     // Each child device represents a single button position, so numberOfButtons is always 1
     sendEvent(name: 'numberOfButtons', value: 1, isStateChange: true)
     logInfo "numberOfButtons is 1 (Matter device has ${positions} positions)"

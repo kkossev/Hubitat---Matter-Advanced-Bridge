@@ -68,7 +68,7 @@
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
  * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
- * ver. 1.9.0  2026-07-25 kkossev   (dev. branch) callbackType:Invoke handling; added ping as a first step in the state machines before reading attributes;
+ * ver. 1.9.0  2026-07-25 kkossev + Claude Opus 5 - (dev. branch) callbackType:Invoke handling; added ping as a first step in the state machines before reading attributes;
  *                                  SupportedMatterClusters 'subscriptions' is now a Map keyed by attribute ID instead of a List of single-entry Maps; the per-attribute
  *                                  min/max/delta values of the old format were never sent to the hub (cleanSubscribe takes one global min/max) and are replaced by an
  *                                  'isSpammy' marker; new 'spammyAttributesMinInterval' preference (0 = off) sends the isSpammy attributes in a second subscription
@@ -91,20 +91,23 @@
  *                                  0x0033 was read from the root node, so a battery reported there was never subscribed at all. The root node subscriptions are driven by ROOT_NODE_SUBSCRIPTIONS and
  *                                  are only requested when the root node AttributeList actually exposes them. For a single-node Matter device the battery is delivered to its application endpoint child
  *                                  (redirectRootNodePowerSource()); for a real bridge it stays on the parent, which now declares the Battery capability and a batteryVoltage attribute;
+ *                                  <b>fixed the endless 'colorMode is CT' info logs on the bridge device</b>: Hubitat's stock 'Generic Component CT' / 'Generic Component Dimmer' do not declare the
+ *                                  'colorMode' attribute (capability ColorMode), so the platform discarded every colorMode event we sent them - currentValue('colorMode') stayed null forever, the
+ *                                  'is it already CT?' guard in componentSetColorTemperature() was true on every call and the duplicate filter could never match. colorMode now goes through
+ *                                  getColorMode()/setColorMode(), which send a real event only when the child declares the attribute (RGBW) and cache it as a child data value otherwise;
+ *                                  sending an attribute a child driver does not declare is no longer logged at info level for every report - it warns once per child+attribute instead;
  *
  *                                   TODO: 
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
  *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events ? (may not ne needed anymore after callbackType:SubscribeResult processing is implemented)
  *                                   TODO: Composite grouping of different attributes of a child device @iEnam
  *                                   TODO: thermostat component - supported modes JSON initialization after discovery
- *                                   TODO: add networkStatus attribute : http://192.168.0.151/hub/matterDetails/json 
- *                                   TODO: store the BestName to Device Data [0000] DeviceTypeList = [0015] ('Contact Sensor'), also store in the state deviceType
  *
  */
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/25 7:01 PM' }
+static String timeStamp() { '2026/07/26 7:27 AM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -122,8 +125,6 @@ static String timeStamp() { '2026/07/25 7:01 PM' }
 @Field static final Integer MAX_PING_MILISECONDS = 15000     // rtt more than 15 seconds will be ignored
 @Field static final Integer PRESENCE_COUNT_THRESHOLD = 2     // missing 3 checks will set the device healthStatus to offline
 @Field static final String  UNKNOWN = 'UNKNOWN'
-@Field static final Integer SHORT_TIMEOUT  = 7      // unused since 1.9.0 - the getInfo() collector is reply-driven
-@Field static final Integer LONG_TIMEOUT   = 15     // unused since 1.9.0 - see infoCollectStateMachine()
 @Field static final Integer CLEAN_SUBSCRIBE_MIN_INTERVAL_DEFAULT = 1    // 1 is also the enforced floor, see getPrimarySubscriptionMinInterval()
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_INTERVAL_DEFAULT = 600
 @Field static final Integer CLEAN_SUBSCRIBE_MAX_ALLOWED_INTERVAL = 0xFFFF
@@ -566,7 +567,15 @@ private void processParsedDescription(final Map descMap) {
             }
         }
     } else {
-        logWarn "parserFunc: NOT PROCESSED: ${descMap}"
+        // During an Info collection (getInfo / Extended Bridge Discovery) every attribute of every utility cluster
+        // (001F, 002E, 0030, 0031, 0033, 0035, 003C, 003E, 003F, 0046, ...) reaches this branch by design - the
+        // report was already consumed by gatherAttributesValuesInfo() above. Warning ~90 times per run only makes
+        // the driver look broken, so in Info mode this is a debug line. Outside Info mode it stays a warning.
+        if (state.states != null && state.states['isInfo'] == true) {
+            logDebug "parserFunc: no parser for this cluster (expected during Info collection): ${descMap}"
+        } else {
+            logWarn "parserFunc: NOT PROCESSED: ${descMap}"
+        }
     }
 }
 
@@ -876,6 +885,60 @@ String getDeviceDisplayName(final String endpoint) {
     return label
 }
 
+/**
+ * The Matter device type ids of an endpoint, as 4-char uppercase hex strings ('0015' Contact Sensor,
+ * '0043' Water Leak Detector, '0107' Occupancy Sensor, ...).
+ *
+ * Resolution order matters: the endpoint fingerprint is the freshest source, but it is deleted by the
+ * 'minimizeStateVariables' preference (ON by default) - the child's Device Data copy written by
+ * createChildDevice() is the one that survives, so it is the fallback. 'DeviceTypeList' is checked in
+ * between for endpoints discovered by a driver version older than this one, whose fingerprint has the
+ * list but not the derived 'deviceType' key.
+ *
+ * @param endpoint the endpoint as a 2-char hex string
+ * @return the device type ids, or an empty list when nothing is known about the endpoint
+ */
+List<String> getEndpointDeviceTypeIds(final String endpoint) {
+    String fingerprintName = getFingerprintName([endpoint: endpoint])
+    Object fromState = state[fingerprintName]?.get('deviceType')
+    if (fromState) { return splitDeviceTypeIds(fromState.toString()) }
+    List legacyList = state[fingerprintName]?.get('DeviceTypeList') as List
+    if (legacyList) { return normalizeDeviceTypeList(legacyList) }
+    String fromChild = findChildByEndpoint(endpoint)?.getDataValue('deviceType')
+    if (fromChild) { return splitDeviceTypeIds(fromChild) }
+    logTrace "getEndpointDeviceTypeIds(${endpoint}): no device type known (fingerprint minimized and no child device data?)"
+    return []
+}
+
+private List<String> splitDeviceTypeIds(final String csv) {
+    return csv.tokenize(',')*.trim()*.toUpperCase().findAll { it }
+}
+
+/**
+ * The human readable Matter device type of an endpoint ('Contact Sensor', 'Thermostat', ...), for logs
+ * and diagnostics. Same sources as getEndpointDeviceTypeIds(), recomputed from the ids when only those
+ * are available.
+ */
+String getEndpointDeviceTypeName(final String endpoint) {
+    String fingerprintName = getFingerprintName([endpoint: endpoint])
+    Object fromState = state[fingerprintName]?.get('deviceTypeName')
+    if (fromState) { return fromState.toString() }
+    String fromChild = findChildByEndpoint(endpoint)?.getDataValue('deviceTypeName')
+    if (fromChild) { return fromChild }
+    List<String> ids = getEndpointDeviceTypeIds(endpoint)
+    return ids ? (deviceTypeNames(ids)?.best ?: UNKNOWN) : UNKNOWN
+}
+
+/** True when the endpoint declares the given Matter device type id. Tolerates '43' and '0043' forms. */
+boolean hasEndpointDeviceType(final String endpoint, final Integer deviceTypeId) {
+    String wanted = HexUtils.integerToHexString(deviceTypeId, 2).toUpperCase()
+    String wantedShort = wanted.replaceFirst(/^0+/, '')
+    return getEndpointDeviceTypeIds(endpoint).any { String id ->
+        String normalized = id.toUpperCase()
+        return normalized == wanted || normalized.replaceFirst(/^0+/, '') == wantedShort
+    }
+}
+
 // credits: @jvm33
 // Matter payloads need hex parameters of greater than 2 characters to be pair-reversed.
 // This function takes a list of parameters and pair-reverses those longer than 2 characters.
@@ -1036,6 +1099,12 @@ void gatherAttributesValuesInfo(final Map descMap) {
                 // uint32 with no standard packing (Aqara reports 4005050 for '4.5.50', which byte-unpacks to
                 // the meaningless 0.61.28.186). SoftwareVersionString (0x000A) is the authoritative value.
                 state.tmp = (state.tmp ?: '') + "${tmpStr} " + '<br>'
+                // Tells infoCollectStateMachine that data for the current cluster is still coming in. When a
+                // big cluster is read in several chunks the replies interleave, so the confirmation of the
+                // last chunk is NOT the end of the burst - the machine waits for this counter to go quiet.
+                if (state['stateMachines'] != null) {
+                    state['stateMachines']['infoRxCount'] = (safeToInt(state['stateMachines']['infoRxCount'], 0)) + 1
+                }
             }
         }
     }
@@ -1282,10 +1351,14 @@ void parseBasicInformationCluster(final Map descMap) {  // 0x0028 BasicInformati
     String fingerprintName = getFingerprintName(descMap)
     if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
     String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
-    if (attrName in ['ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable']) {
+    if (attrName in ['VendorName', 'ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable', 'ProductLabel']) {
         if (descMap.value != null && descMap.value != '') {
             state[fingerprintName][attrName] = descMap.value
-            eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  ${eventName} is: ${descMap.value}"]
+            // VendorName and ProductLabel are stored only - getDeviceDisplayName() reads VendorName from here, and the
+            // parent device (endpoint 00 events land on the parent) does not declare them as attributes.
+            if (attrName in ['ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable']) {
+                eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  ${eventName} is: ${descMap.value}"]
+            }
             if (logEnable) { logInfo "parseBasicInformationCluster: ${attrName} = ${descMap.value}" }
         }
     }
@@ -1412,7 +1485,16 @@ void parseDescriptorCluster(final Map descMap) {    // 0x001D Descriptor
                     deviceTypesOnly = rawList
                 }
                 state[fingerprintName][attrName] = deviceTypesOnly
-                logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> normalized and stored</b> ${deviceTypesOnly} (from raw ${rawList})"
+                // Derive and store the endpoint's Matter device type here - this is the single storage point
+                // of DeviceTypeList. 'deviceType' keeps the ids (so water 0043 vs contact 0015 can be tested),
+                // 'deviceTypeName' is the human readable best label from deviceTypeNames() (matterLib).
+                // Both are also copied into the child's fingerprintData by copyEntireFingerprintToChild(),
+                // and into the child's Device Data by createChildDevice() - see getEndpointDeviceTypeIds().
+                Map typeNames = deviceTypeNames(deviceTypesOnly)
+                state[fingerprintName]['deviceType'] = deviceTypesOnly.join(',').toString()
+                state[fingerprintName]['deviceTypeName'] = (typeNames?.best ?: UNKNOWN).toString()
+                logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> normalized and stored</b> ${deviceTypesOnly} " +
+                         "(from raw ${rawList}) deviceTypeName='${state[fingerprintName]['deviceTypeName']}'"
             } else {
                 state[fingerprintName][attrName] = descMap.value
                 logTrace "parse: Descriptor (${descMap.cluster}): ${attrName} = <b>-> updated state[$fingerprintName][$attrName]</b> to ${descMap.value}"
@@ -1607,7 +1689,7 @@ String getEventName(final String cluster, String evtId) {
 // Filter noisy Matter *events* (evtId present) that arrive shortly after (re)subscription.
 // Some devices/controllers send a burst of events right after subscribe; these are often duplicates/stale.
 private boolean shouldFilterNoisyPostSubscribeEvent(final Map descMap, final String source = null) {
-    
+
     if (descMap?.evtId == null) { return false }    // only filter events, not attribute reports}
     def lastSubscribe = state.lastTx?.subscribeTime
     if (lastSubscribe == null) { return false }     // no record of last subscribe time, so don't filter}
@@ -1663,13 +1745,12 @@ void parseBooleanState(final Map descMap) {
         String boolValue = isActive ? 'closed' : 'open'
         String waterValue = isActive ? 'wet' : 'dry'
         
-        // Determine sensor type from DeviceTypeList in fingerprint
-        String fingerprintName = getFingerprintName(descMap)
-        List<String> deviceTypes = state[fingerprintName]?.DeviceTypeList ?: []
-        
-        // Check if it's a water leak sensor (0x0043) vs contact sensor (0x0015)
-        boolean isWaterSensor = deviceTypes.any { it.toUpperCase() in ['43', '0043'] }
-        
+        // Determine the sensor type from the endpoint's Matter device type: water leak detector (0x0043)
+        // vs contact sensor (0x0015). getEndpointDeviceTypeIds() falls back to the child's Device Data,
+        // so this still works after 'minimizeStateVariables' has deleted state.fingerprintXX - reading the
+        // fingerprint directly used to leave the list empty there and reported a water sensor as 'contact'.
+        boolean isWaterSensor = hasEndpointDeviceType(descMap.endpoint, 0x0043)
+
         if (isWaterSensor) {
             sendHubitatEvent([
                 name: 'water',
@@ -2118,7 +2199,7 @@ void parseColorControl(final Map descMap) { // 0300
                 value: scaledValue,
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} hue is ${scaledValue}"
             ], descMap, true)
-            if (dw?.currentValue('colorMode') != 'CT') {
+            if (getColorMode(dw) != 'CT') {
                 sendColorNameEvent(descMap, hue=scaledValue, saturation=null)   // added 02/19/2024
             }
             break
@@ -2130,7 +2211,7 @@ void parseColorControl(final Map descMap) { // 0300
                 value: scaledValue,
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} saturation is ${scaledValue}"
             ], descMap, true)
-            if (dw?.currentValue('colorMode') != 'CT') {
+            if (getColorMode(dw) != 'CT') {
                 sendColorNameEvent(descMap, hue=null, saturation=scaledValue)   // added 02/19/2024
             }
             break
@@ -2144,7 +2225,8 @@ void parseColorControl(final Map descMap) { // 0300
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} colorTemperature is ${valueCt}",
                 unit: '°K'
             ], descMap, true)
-            String colorMode = dw?.currentValue('colorMode') ?: UNKNOWN
+            // A child that has no 'hue' attribute is CT-only by construction, so treat a never-reported ColorMode as CT
+            String colorMode = getColorMode(dw) ?: (dw?.hasAttribute('hue') ? UNKNOWN : 'CT')
             if (colorMode == 'CT') {
                 String colorName = convertTemperatureToGenericColorName(valueCt)
                 sendHubitatEvent([
@@ -2187,11 +2269,7 @@ void parseColorControl(final Map descMap) { // 0300
                 }
             }
             //
-            sendHubitatEvent([
-                name: 'colorMode',
-                value: colorMode,
-                descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} colorMode is ${colorMode}"
-            ], descMap, true)
+            setColorMode(dw, descMap, colorMode)
             break
         case ['FFF8', 'FFF9', 'FFFA', 'FFFB', 'FFFC', 'FFFD', '00FE'] :
             // Check if FFFB (AttributeList) indicates this CT device should be RGBW
@@ -2253,6 +2331,41 @@ ChildDeviceWrapper getDw(descMap) {
     return findChildByEndpoint(id)
 }
 
+/**
+ * colorMode accessor.
+ *
+ * Hubitat's stock 'Generic Component CT' and 'Generic Component Dimmer' do NOT declare the 'colorMode' attribute
+ * (it comes with capability 'ColorMode', which only 'Generic Component RGBW' has). The platform discards a
+ * sendEvent() for an attribute the driver does not declare, so currentValue('colorMode') stays null forever on
+ * those children and every idempotency check based on it fires again on every single call - which is what used to
+ * re-log 'colorMode is CT' on the parent for each setColorTemperature().
+ * For such children the value is cached as a child DATA value instead (persistent, per child, no parent state).
+ */
+private String getColorMode(final DeviceWrapper dw) {
+    if (dw == null) { return null }
+    if (dw.hasAttribute('colorMode')) { return dw.currentValue('colorMode') }
+    return dw.getDataValue('colorMode')
+}
+
+/**
+ * Counterpart of getColorMode(): sends a real event when the child declares 'colorMode', caches it otherwise.
+ */
+private void setColorMode(final DeviceWrapper dw, final Map descMap, final String colorMode) {
+    if (dw == null || colorMode == null) { return }
+    if (dw.hasAttribute('colorMode')) {
+        sendHubitatEvent([
+            name: 'colorMode',
+            value: colorMode,
+            descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} colorMode is ${colorMode}"
+        ], descMap, true)
+        return
+    }
+    if (dw.getDataValue('colorMode') != colorMode) {     // only write on a real change
+        dw.updateDataValue('colorMode', colorMode)
+        logDebug "setColorMode: ${dw} does not declare 'colorMode' (driver '${dw.typeName}') - cached as a data value: ${colorMode}"
+    }
+}
+
 void sendColorNameEvent(final Map descMap, final Integer huePar=null, final Integer saturationPar=null) {
     Integer hue = huePar == null ? safeToInt(getDw(descMap)?.currentValue('hue')) : huePar
     Integer saturation = saturationPar == null ? safeToInt(getDw(descMap)?.currentValue('saturation')) : saturationPar
@@ -2310,6 +2423,17 @@ void parseThermostat(final Map descMap) {
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} coolingSetpoint is ${valueIntCorrected} ${unit}",
                 unit: unit
             ], descMap, false)
+            // thermostatSetpoint mirrors the setpoint of the *active* mode. Cooling-only thermostats
+            // (ControlSequenceOfOperation = CoolingOnly) never report an OccupiedHeatingSetpoint, so without
+            // this branch their thermostatSetpoint would stay empty forever.
+            if (dw?.currentValue('thermostatMode') == 'cool') {
+                sendHubitatEvent([
+                    name: 'thermostatSetpoint',
+                    value: valueIntCorrected,
+                    descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatSetpoint is ${valueIntCorrected} ${unit}",
+                    unit: unit
+                ], descMap, false)
+            }
             break
         case '0012' : // OccupiedHeatingSetpoint -> heatingSetpoint
             valueIntCorrected = convertTemperature(descMap)
@@ -2319,7 +2443,16 @@ void parseThermostat(final Map descMap) {
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} heatingSetpoint is ${valueIntCorrected} ${unit}",
                 unit: unit
             ], descMap, false)
-            sendHubitatEvent([name: 'thermostatSetpoint', value: valueIntCorrected, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} heatingSetpoint is ${valueIntCorrected} ${unit}", unit: unit], descMap, false)
+            // thermostatSetpoint mirrors the setpoint of the *active* mode - do not overwrite it from the
+            // heating setpoint while the thermostat is cooling (see the OccupiedCoolingSetpoint case above).
+            if (dw?.currentValue('thermostatMode') != 'cool') {
+                sendHubitatEvent([
+                    name: 'thermostatSetpoint',
+                    value: valueIntCorrected,
+                    descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatSetpoint is ${valueIntCorrected} ${unit}",
+                    unit: unit
+                ], descMap, false)
+            }
             if ( valueIntCorrected > safeToDouble(dw?.currentValue('temperature'))) {
                 sendHubitatEvent([name: 'thermostatOperatingState', value: 'heating', type: 'digital', descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} thermostatOperatingState was set to heating"], descMap, true)
             }
@@ -2331,9 +2464,15 @@ void parseThermostat(final Map descMap) {
             String valueStr = (descMap.value instanceof Integer) ? descMap.value.toString() : descMap.value
             String controlSequenceMatter = ThermostatControlSequences[HexUtils.hexStringToInt(valueStr)] ?: UNKNOWN
             List<String> supportedThermostatModes = HubitatThermostatModes[HexUtils.hexStringToInt(valueStr)] ?: UNKNOWN
+            String supportedThermostatModesJson = JsonOutput.toJson(supportedThermostatModes)
+            // static configuration - re-reported by the node on every (re)subscription
+            if (isUnchangedStaticAttribute(dw, 'supportedThermostatModes', supportedThermostatModesJson, true)) {
+                logDebug "parseThermostat: supportedThermostatModes unchanged (${supportedThermostatModes}) - no event sent"
+                break
+            }
             sendHubitatEvent([
                 name: 'supportedThermostatModes',
-                value:  JsonOutput.toJson(supportedThermostatModes),
+                value:  supportedThermostatModesJson,
                 descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} supportedThermostatModes is ${supportedThermostatModes} (${controlSequenceMatter})"
             ], descMap, false)
             break
@@ -2378,13 +2517,18 @@ void parseThermostat(final Map descMap) {
                 if (attrName in ['AbsMinHeatSetpointLimit', 'AbsMaxHeatSetpointLimit', 'MinHeatSetpointLimit', 'MaxHeatSetpointLimit']) {
                     valueFormatted = convertTemperature(descMap).toString()   
                 }
-                eventMap = [name: eventName, value:valueFormatted, descriptionText: "${eventName} is: ${valueFormatted}"]
+                eventMap = [name: eventName, value:valueFormatted, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} ${eventName} is: ${valueFormatted}"]
                 if (logEnable) { logInfo "parseThermostat: ${attrName} = ${valueFormatted}" }
             }
             else {
                 logWarn "parseThermostat: unsupported: ${attrName} = ${descMap.value}"
             }
             if (eventMap != [:]) {
+                // The setpoint limits are static configuration - the node re-reports them on every (re)subscription.
+                if (isUnchangedStaticAttribute(dw, eventMap.name, eventMap.value)) {
+                    logDebug "parseThermostat: ${attrName} unchanged (${eventMap.value}) - no event sent"
+                    break
+                }
                 eventMap.type = 'physical'; eventMap.isStateChange = true
                 sendHubitatEvent(eventMap, descMap, true) // child events
             }
@@ -2420,6 +2564,49 @@ private boolean isBurstDuplicate(final String dni, final String name, final Obje
     burstEventValue[key] = valueStr
     burstEventTime[key] = timeNow
     return false
+}
+
+/**
+ * Remembers which (child, attribute) mismatches have already been reported - see warnUndeclaredAttributeOnce().
+ * In memory only: re-warning once after a hub reboot or a driver update is exactly the wanted behaviour.
+ */
+@Field static final Map<String, Boolean> undeclaredAttributeWarned = new ConcurrentHashMap<String, Boolean>()
+
+/**
+ * Warns once per (child, attribute) that the child driver does not declare the attribute we are trying to send.
+ * The platform discards such events, so anything that later reads the value back (a duplicate check, an
+ * idempotency guard) will never see it - a silent bug class that is worth one warning per child.
+ */
+private void warnUndeclaredAttributeOnce(final DeviceWrapper dw, final String dni, final String name) {
+    if (name == null) { return }
+    String key = "${dni ?: device.id}:${name}"
+    if (undeclaredAttributeWarned.putIfAbsent(key, true) != null) { return }
+    logWarn "attribute '${name}' is not declared in driver '${dw?.typeName}' of ${dw} - the event is discarded by the platform"
+}
+
+/**
+ * Static (configuration) attributes - setpoint limits, supported modes, number of button positions, ... - are
+ * re-reported by the Matter node in the initial report of every (re)subscription, so each Initialize / reSubscribe
+ * writes them into the event log again even though they never change. Returns true when the child already holds
+ * exactly this value and the event can be skipped.
+ * A refresh or a discovery pass must still report unchanged values back to the user, so it is never suppressed here.
+ * Do NOT use this for measured values - those go through the sendHubitatEvent() duplicate filter instead.
+ * 'ignoreWhitespace' is for the JSON_OBJECT attributes (supportedThermostatModes, ...): the platform may hand
+ * back '["off", "heat"]' where JsonOutput.toJson() produced '["off","heat"]'.
+ */
+private boolean isUnchangedStaticAttribute(final ChildDeviceWrapper dw, final String name, final Object value, final boolean ignoreWhitespace = false) {
+    Map states = state.states ?: [:]
+    if (states['isRefresh'] == true || states['isDiscovery'] == true) { return false }
+    if (dw == null || name == null || value == null) { return false }
+    Object current = dw.currentValue(name)
+    if (current == null) { return false }
+    String currentStr = current.toString()
+    String valueStr = value.toString()
+    if (ignoreWhitespace) {
+        currentStr = currentStr.replaceAll('\\s', '')
+        valueStr = valueStr.replaceAll('\\s', '')
+    }
+    return currentStr == valueStr
 }
 
 void sendHubitatEvent(final Map<String, String> eventParams, DeviceWrapper dw, ignoreDuplicates = false) {
@@ -2485,10 +2672,16 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
 
     // IMPORTANT: Never suppress Matter *events* (evtId present) as duplicates.
     // Button/Switch events often repeat the same payload (e.g. {"position":1}) and still represent a real action.
-    if (ignoreDuplicates == true && !isRefreshActive && descMap?.evtId == null) {
+    if (ignoreDuplicates == true && !isRefreshActive && !isDiscoveryActive && descMap?.evtId == null) {
         boolean isDuplicate = false
-        // Check child device currentState if available, otherwise check parent device for bridge events
-        Object latestEvent = dw?.device?.currentState(name) ?: device.currentState(name)
+        // The duplicate check must read the state of the device this event is actually going to: the CHILD when
+        // the report belongs to an endpoint, the parent only for bridge (endpoint 00) events.
+        // Until 1.9.0 this read 'dw?.device?.currentState(name)' - 'device' is not the child's own state, so every
+        // child event fell through to the parent and the filter never matched: static attributes (colorMode,
+        // setpoint limits, numberOfButtons, ...) were re-sent after every (re)subscription, and a child event could
+        // in principle be suppressed by a same-named PARENT attribute ('battery'/'batteryVoltage' are declared on
+        // the bridge device for the root-node PowerSource case).
+        Object latestEvent = (dw != null) ? dw.currentState(name) : device.currentState(name)
         //latestEvent.properties.each { k, v -> logWarn ("$k: $v") }
         try {
             if (latestEvent != null) {
@@ -2543,9 +2736,13 @@ void sendHubitatEvent(final Map<String, String> eventParams, Map descMap = [:], 
         }
         // For attributes, keep the existing behavior: if child doesn't declare the attribute, send it directly.
         else if (dw?.hasAttribute(name) != true) {
+            // The platform DISCARDS an event for an attribute the child driver does not declare, so this is very
+            // likely a no-op: do not log it at info level (it used to re-print 'colorMode is CT' for every
+            // setColorTemperature() on a 'Generic Component CT' child), but warn once so the mismatch is visible.
+            warnUndeclaredAttributeOnce(dw, dni, name)
             logDebug "sendHubitatEvent: sending directly (attribute '${name}' not declared in child driver): dw:${dw} dni:${dni} value:${value}"
             dw.sendEvent(eventMap)
-            logInfo "${eventMap.descriptionText}"
+            logDebug "${eventMap.descriptionText}"
             // added 2024/10/02 - update the data value in the child device
             // dw.updateDataValue(name, value.toString())  // 2026/01/25    // commented out 2026-01-26 as it is not needed
         }
@@ -2660,13 +2857,21 @@ Integer requestMatterClusterAttributesValues(final Map data) {
             logDebug "requestMatterClusterAttributesValues: skipping attribute 0x${HexUtils.integerToHexString(attrInt, 2)} (${attrInt})"
             return      // 'continue' of the each{} closure
         }
+        if (attrInt == 0xFFFB) {
+            // the AttributeList was just read by requestMatterClusterAttributesList() and is already in state.tmp -
+            // re-reading it only wastes a path and produces an 'is already in the state.tmp' debug line
+            return      // 'continue' of the each{} closure
+        }
         attributePaths.add(matter.attributePath(endpoint, cluster, attrInt))
         lastAttrInt = attrInt
     }
     if (attributePaths.isEmpty()) {
         return null
     }
-    sendToDevice(matter.readAttributes(attributePaths))
+    // Chunked - a cluster such as ThreadNetworkDiagnostics (0x0035) has 68 attributes, which in one single
+    // Read Request exceeds the PDU / Thread MTU and is never answered at all.
+    Integer chunks = sendChunkedAttributeReads(attributePaths)
+    logDebug "requestMatterClusterAttributesValues: reading ${attributePaths.size()} attributes in ${chunks} chunk(s) of max ${READ_CHUNK_SIZE}, last attribute 0x${HexUtils.integerToHexString(lastAttrInt, 2)}"
     return lastAttrInt
 }
 
@@ -2681,11 +2886,10 @@ Integer requestMatterClusterAttributesValues(final Map data) {
 void requestAndCollectServerListAttributesList(Map data)
 {
     Integer endpoint = safeNumberToInt(data.endpointPar)
-    String fingerprintName = getFingerprintName(endpoint)
-    List<String> serverList = state[fingerprintName]?.ServerList
-    logDebug "requestAndCollectServerListAttributesList(): serverList:${serverList} endpoint=${endpoint} getFingerprintName = ${fingerprintName}"
-    if (serverList == null) {
-        logWarn 'requestAndCollectServerListAttributesList(): serverList is null!'
+    List<String> serverList = getEndpointServerList(endpoint)   // state fingerprint, then child fingerprintData
+    logDebug "requestAndCollectServerListAttributesList(): serverList:${serverList} endpoint=${endpoint} fingerprintName=${getFingerprintName(endpoint)}"
+    if (!serverList) {
+        logWarn "requestAndCollectServerListAttributesList(): endpoint ${endpoint} - no ServerList found!"
         return
     }
     serverList.each { cluster ->
@@ -2888,7 +3092,11 @@ void initialize() {
         initializeVars(fullInit = true)
         sendInfoEvent('initialize()...', 'full initialization - all settings are reset to default')
     }
-    log.warn "initialize(): calling sendSubscribeList()! (last unsubscribe was more than ${timeSinceLastSubscribe} seconds ago)"
+    // NOTE: this is unconditional - there is no re-subscribe guard here. Two Initialize clicks in a row
+    // send two full cleanSubscribe commands, and the Matter node answers each one with an initial report
+    // for every subscribed path (a duplicate 'storm' in the log). Both timers are printed so that storm
+    // can be recognized afterwards in the logs.
+    log.warn "initialize(): calling sendSubscribeList()! (last subscribe was ${timeSinceLastSubscribe} seconds ago, last unsubscribe ${timeSinceLastUnsubscribe} seconds ago)"
     state.states['isUnsubscribe'] = false
     state.states['isSubscribe'] = true  // should be set to false in the parse() method
     sendEvent([name: 'initializeCtr', value: state.stats['initializeCtr'], descriptionText: "${device.displayName} initializeCtr is ${state.stats['initializeCtr']}", type: 'digital'])
@@ -3405,20 +3613,14 @@ void refresh() {
         return
     }
 
-    // Chunk into groups of 20 to stay within Matter Read Request PDU size limits.
-    // Each AttributePathIB encodes to ~14 bytes; Thread MTU is 1280 bytes → max ~87 paths per PDU.
-    // Using 20 per chunk is conservative and leaves room for header overhead variation.
-    final int READ_CHUNK_SIZE = 20
-    List<String> cmds = attributePaths.collate(READ_CHUNK_SIZE).collect { chunk ->
-        matter.readAttributes(chunk)
-    }
-
+    // Chunked into groups of READ_CHUNK_SIZE to stay within the Matter Read Request PDU size limits.
     // Extend the refresh window to cover all chunks: (chunks × 500ms delay) + 3s safety margin
-    Integer refreshWindowMs = Math.max(REFRESH_TIMER, (cmds.size() * 500) + 3000)
+    Integer chunks = (Integer) Math.ceil(attributePaths.size() / (double) READ_CHUNK_SIZE)
+    Integer refreshWindowMs = Math.max(REFRESH_TIMER, (chunks * 500) + 3000)
     setRefreshRequest(refreshWindowMs)
 
-    logDebug "refresh(): reading ${attributePaths.size()} attributes in ${cmds.size()} chunk(s) of max ${READ_CHUNK_SIZE} (window=${refreshWindowMs}ms)"
-    sendToDevice(cmds, 500)
+    logDebug "refresh(): reading ${attributePaths.size()} attributes in ${chunks} chunk(s) of max ${READ_CHUNK_SIZE} (window=${refreshWindowMs}ms)"
+    sendChunkedAttributeReads(attributePaths)
 }
 
 void logsOff() {
@@ -3431,6 +3633,27 @@ void traceOff() {
     device.updateSetting('traceEnable', [value: 'false', type: 'bool'])
 }
 
+
+// Maximum number of attribute paths in a single Matter Read Request.
+// Each AttributePathIB encodes to ~14 bytes; the Thread MTU is 1280 bytes -> ~87 paths would still fit,
+// so 20 is conservative and leaves room for header overhead variation.
+@Field static final Integer READ_CHUNK_SIZE = 20
+
+/**
+ * Sends a Matter Read Request for the given attribute paths, split into chunks that fit the PDU / Thread MTU.
+ * Records the number of chunks in state['stateMachines']['lastReadChunks'], so that a state machine waiting
+ * for the reply of the LAST chunk can widen its timeout accordingly.
+ * @return the number of chunks actually sent (0 when there was nothing to send).
+ */
+Integer sendChunkedAttributeReads(List<Map<String, String>> attributePaths, Integer delayMs = 500) {
+    if (attributePaths == null || attributePaths.isEmpty()) { return 0 }
+    List<String> cmds = attributePaths.collate(READ_CHUNK_SIZE).collect { List<Map<String, String>> chunk -> matter.readAttributes(chunk) }
+    if (state['stateMachines'] == null) { state['stateMachines'] = [:] }
+    state['stateMachines']['lastReadChunks'] = cmds.size()
+    // a single chunk is sent as-is - that is exactly what the callers did before the chunking was introduced
+    if (cmds.size() == 1) { sendToDevice(cmds[0]) } else { sendToDevice(cmds, delayMs) }
+    return cmds.size()
+}
 
 void sendToDevice(List<String> cmds, Integer delay = 300) {
     logDebug "sendToDevice (List): (${cmds})"
@@ -3752,6 +3975,31 @@ private List<String> getDeviceServerList(DeviceWrapper dw) {
     return []
 }
 
+/**
+ * The ServerList of an endpoint, addressed by endpoint number instead of by child device.
+ *
+ * Same two sources as getDeviceServerList(), in the same order, and for the same reason: the endpoint
+ * fingerprint is the primary source, but the 'Minimize State Variables' preference (ON by default) deletes
+ * every state.fingerprintXX key - the child's fingerprintData copy is what survives it. Endpoint 0 is the
+ * exception: its fingerprint is state.bridgeDescriptor, which minimizeStateVariables does not touch.
+ *
+ * @param endpoint the endpoint number
+ * @return the cluster ids as 4-char uppercase hex strings, or an empty list when the endpoint is unknown
+ */
+private List<String> getEndpointServerList(final Integer endpoint) {
+    List<String> fromState = state[getFingerprintName(endpoint)]?.ServerList as List<String>
+    if (fromState) { return fromState.collect { it.toString().toUpperCase().padLeft(4, '0') } }
+    ChildDeviceWrapper dw = findChildByEndpoint(HexUtils.integerToHexString(endpoint, 1))
+    if (dw != null) {
+        List<String> fromChild = getDeviceServerList(dw)     // already normalized to 4 chars
+        if (fromChild) {
+            logDebug "getEndpointServerList(${endpoint}): the state fingerprint is gone (minimized?) - using the fingerprintData of ${dw.displayName}"
+            return fromChild
+        }
+    }
+    return []
+}
+
 // Component command to turn on device
 void componentOn(DeviceWrapper dw) {
     if (!dw.hasCommand('on')) { 
@@ -3965,9 +4213,9 @@ void componentSetColorTemperature(DeviceWrapper dw, BigDecimal colorTemperature,
         logDebug "componentSetColorTemperature(): device is off, turning it on"
         componentOn(dw)
     }
-    if (dw.currentValue('colorMode') != 'CT') {
-        logDebug "componentSetColor(): setting color mode to CT"
-        sendHubitatEvent([name: 'colorMode', value: 'CT', isStateChange: true, displayed: false], dw, true)
+    if (getColorMode(dw) != 'CT') {
+        logDebug "componentSetColorTemperature(): setting color mode to CT"
+        setColorMode(dw, [endpoint: dw.getDataValue('id') ?: '00'], 'CT')
     }
     String colorTemperatureMireds = byteReverseParameters(HexUtils.integerToHexString(ctToMired(colorTemperature as int), 2))
     String transitionTime = zigbee.swapOctets(HexUtils.integerToHexString((duration ?: 0) as int, 2))
@@ -4017,9 +4265,9 @@ void componentSetColor(DeviceWrapper dw, Map colormap) {
         logDebug "componentSetColor(): device is off, turning it on"
         componentOn(dw)
     }
-    if (dw.currentValue('colorMode') != 'RGB') {
+    if (getColorMode(dw) != 'RGB') {
         logDebug "componentSetColor(): setting color mode to RGB"
-        sendHubitatEvent([name: 'colorMode', value: 'RGB', isStateChange: true, displayed: false], dw, true)
+        setColorMode(dw, [endpoint: dw.getDataValue('id') ?: '00'], 'RGB')
     }
     Integer hueScaled = Math.round(Math.max(0, Math.min((double)(colormap.hue * 2.54), 254.0)))
     Integer saturationScaled = Math.round(Math.max(0, Math.min((colormap.saturation * 2.54).toInteger(), 254)))
@@ -4196,8 +4444,12 @@ Map fingerprintToData(String fingerprint) {
         data['NodeLabel'] = fingerprintMap['NodeLabel']
         List rawDeviceTypeList = fingerprintMap['DeviceTypeList'] ?: []
         List<String> deviceTypeIds = normalizeDeviceTypeList(rawDeviceTypeList)
-        data['DeviceType'] = deviceTypeIds
-        
+        data['DeviceType'] = deviceTypeIds      // the List - consumed by mapMatterCategory()
+        // The two persisted forms: ids for code, best name for humans. Prefer what parseDescriptorCluster()
+        // already stored, so a fingerprint written by an older driver version is upgraded here as well.
+        data['deviceType'] = (fingerprintMap['deviceType'] ?: deviceTypeIds.join(',')).toString()
+        data['deviceTypeName'] = (fingerprintMap['deviceTypeName'] ?: deviceTypeNames(deviceTypeIds)?.best ?: UNKNOWN).toString()
+
         // Fallback: If ProductName, ProductLabel, and NodeLabel are all empty/null, use bridge's ProductName
         if (!data['ProductName'] && !data['ProductLabel'] && !data['NodeLabel']) {
             String bridgeProductName = state.bridgeDescriptor?.ProductName ?: state.ProductName
@@ -4268,6 +4520,11 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
         updateDataValue 'product_name', d.product_name
         // ServerList is now stored in fingerprintData, not as separate device data
     }
+    // The Matter device type of the endpoint - this block runs on every _DiscoverAll, not only at creation,
+    // so existing children are upgraded too. This copy is what survives 'minimizeStateVariables', which
+    // deletes state.fingerprintXX. Skip nulls - HE would store them as the string 'null'.
+    if (d.deviceType) { dw?.updateDataValue('deviceType', d.deviceType.toString()) }
+    if (d.deviceTypeName) { dw?.updateDataValue('deviceTypeName', d.deviceTypeName.toString()) }
 
     return dw
 }
@@ -4555,6 +4812,43 @@ private void unScheduleDeviceHealthCheck() {
     logWarn 'device health check is disabled!'
 }
 
+/**
+ * The hub's own Matter stack injects a 'networkStatus' attribute (and 'ipAddress') into Matter devices.
+ * It is NOT declared in this driver's metadata{} on purpose - the attribute belongs to the platform, and
+ * currentState() reads it just fine without a declaration (it also gives us the timestamp of the change).
+ *
+ * @return 'online' / 'offline' as reported by the hub, or null on platforms that do not inject it
+ */
+private String getNetworkStatus() {
+    return device.currentState('networkStatus')?.value
+}
+
+/** True ONLY when the platform explicitly says 'offline'. A missing attribute must never mean offline. */
+private boolean isNetworkOffline() {
+    return (getNetworkStatus()?.toLowerCase() == 'offline')
+}
+
+/**
+ * The hub's Matter stack notices an unreachable node long before checkCtr3 reaches PRESENCE_COUNT_THRESHOLD
+ * (2 missed deviceHealthCheck ticks = 30..45 minutes with the default 15 minute interval), so it is used
+ * here to reach the same verdict immediately.
+ *
+ * Deliberately one-directional: a 'networkStatus' of 'online' is NOT propagated back to healthStatus,
+ * because a reachable node can still have dead subscriptions and report nothing - that is exactly what the
+ * health check exists to catch. Recovery stays with setHealthStatusOnline(), driven by real traffic.
+ *
+ * @return true when the network is offline - the caller then skips the futile ping
+ */
+private boolean applyNetworkStatusOffline() {
+    if (!isNetworkOffline()) { return false }
+    if ((device.currentValue('healthStatus') ?: 'unknown') != 'offline') {
+        // logged once on the transition, not on every tick (the healthStatus check above is the guard)
+        logWarn "the hub reports networkStatus 'offline' (since ${device.currentState('networkStatus')?.date}) - forcing healthStatus offline"
+        sendHealthStatusEvent('offline')
+    }
+    return true
+}
+
 // called when any event was received from the device in the parse() method.
 void setHealthStatusOnline() {
     if (state.health == null) { state.health = [:] }
@@ -4588,7 +4882,14 @@ void checkHealthStatusForOffline() {
 void deviceHealthCheck() {
     checkDriverVersion()
     checkHubRebooted()
-    checkHealthStatusForOffline()
+    // The hub already knows the node is unreachable - declare it offline now instead of waiting for the
+    // counter, and do not send a ping that cannot be answered (every such ping ends in a
+    // deviceCommandTimeout warn plus an 'rtt: timeout' event).
+    // Evaluated BEFORE checkHealthStatusForOffline() so that both do not send an 'offline' event on the
+    // same tick - currentValue() does not necessarily see an event sent earlier in this same execution.
+    boolean networkOffline = applyNetworkStatusOffline()
+    checkHealthStatusForOffline()   // keeps checkCtr3 / offlineCtr advancing exactly as before
+    if (networkOffline) { return }
     if (((settings.healthCheckMethod as Integer) ?: 0) == 2) { //    [0: 'Disabled', 1: 'Activity check', 2: 'Periodic polling']
         ping()          // TODO - ping() results in initialize() call if the device is switched off !
     }

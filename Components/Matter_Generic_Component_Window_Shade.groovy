@@ -24,7 +24,7 @@
  * ver. 1.2.2  2025-01-29 kkossev - common libraries
  * ver. 1.2.3  2026-02-11 kkossev - getInfo()
  * ver. 1.2.4  2026-02-19 kkossev - moved common methods to matterCommonLib
- * ver. 1.2.5  2026-07-23 kkossev - (dev. branch) bug fixes
+ * ver. 1.2.5  2026-07-25 kkossev - (dev. branch) bug fixes
  *
  *                                   TODO:
 */
@@ -32,7 +32,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentWindowShadeVersion = '1.2.5'
-@Field static final String matterComponentWindowShadeStamp   = '2026/07/23 5:17 PM'
+@Field static final String matterComponentWindowShadeStamp   = '2026/07/25 10:57 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -559,7 +559,7 @@ void stopPositionChange() {
 // Component command to refresh the device
 void refresh() {
     if (txtEnable) { log.info "${device.displayName} refreshing ..." }
-    state.standardOpenClose = "Hubitat standard:  'OPEN = 0% CLOSED = 100%' Matter standard: OPEN = 100 and CLOSED = 0"
+    state.standardOpenClose = 'OPEN = 100% CLOSED = 0%'
     state.driverVersion = matterComponentWindowShadeVersion + ' (' + matterComponentWindowShadeStamp + ')'
     parent?.componentRefresh(device)
 }
