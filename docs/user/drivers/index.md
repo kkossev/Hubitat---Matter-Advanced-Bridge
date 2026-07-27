@@ -1,10 +1,6 @@
 # Which driver do I get?
 
-Applies to: 1.8.8 | Last verified: — | Status: Historical
-
-> **Stub — transcribed from source, not yet audited.** Written in phase 1d of the documentation
-> migration from `mapMatterCategory()` in `Matter_Advanced_Bridge.groovy`. There was no wiki page to
-> migrate. Verify against the current release before treating this as authoritative.
+Applies to: 1.9.0 BETA | Last verified: 2026-07-27 | Status: Current
 
 When the parent driver discovers a device behind your Matter bridge, it creates one Hubitat child
 device per endpoint and picks a driver for it automatically.
@@ -58,6 +54,10 @@ This cluster covers both contact and water leak sensors, so the device type deci
 The custom driver is used when the device also reports `0x0080`, which is what allows the
 sensitivity setting. Aqara P100 is the known example.
 
+When the device type is ambiguous the parent logs a warning and falls back to one of the two contact
+sensor drivers, so a water leak sensor that fails to declare device type `0x0043` will come up as a
+contact sensor. Reassign it by hand if that happens.
+
 ### Devices that fall through
 
 An endpoint reporting none of the clusters above gets `Generic Component Switch` with a product name
@@ -75,6 +75,19 @@ parent logs an info message when it detects this situation.
 Changing a child to a driver that does not match its clusters will not make unsupported features
 work — the parent only sends what the device actually reports.
 
+### Drivers that are only ever assigned manually
+
+[Signal](signal.md) is never chosen automatically. It is not part of the cluster chain above, and the
+parent will not create a child with it at discovery. Assign it manually, after discovery, to a child
+device behind an **Aqara** Matter bridge. See the [Signal](signal.md) page for which devices it
+suits and what it reports.
+
+### Deprecated drivers
+
+**SwitchBot Button is deprecated.** Use the custom [Button](button.md) driver instead. The
+[SwitchBot Button](switchbot-button.md) page is kept for people who still have it assigned to an
+existing child device.
+
 ## The drivers
 
 **Custom drivers** shipped in this package, namespace `kkossev`:
@@ -89,12 +102,10 @@ work — the parent only sends what the device actually reports.
 [Power Energy](power-energy.md) ·
 [Signal](signal.md) ·
 [Switch](switch.md) ·
-[SwitchBot Button](switchbot-button.md) ·
 [Window Shade](window-shade.md)
+
+Deprecated: [SwitchBot Button](switchbot-button.md) — use [Button](button.md) instead.
 
 **Parent driver:** [Matter Advanced Bridge](matter-advanced-bridge.md)
 
 **Hubitat stock drivers** used by this package: see [Hubitat stock drivers](stock-drivers.md).
-
-> `Matter Custom Component Signal` and `Matter Generic Component SwitchBot Button` are not assigned
-> by the cluster chain above. Their assignment path needs to be documented in phase 2.

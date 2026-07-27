@@ -1,79 +1,98 @@
-<!-- MIGRATED from wiki page `Matter-Advanced-Bridge-‐-Installation` at baseline c4000b7 on 2026-07-27.
-     Mechanical import: links and images rewritten, text unchanged.
-     NOT YET AUDITED against the current release. -->
+# Installation
 
-# Matter Advanced Bridge - Installation
-_(last updated 2024-03-16)_
+Applies to: 1.8.8 | Last verified: 2026-07-27 | Status: Current
 
-The 'Matter Advanced Bridge' custom driver for Hubitat Elevation platform is now released.
+Installing this package is two separate jobs: getting the driver code onto your hub, and then
+commissioning your Matter bridge and discovering the devices behind it.
 
-The recommended installation method is via HPM - Browse by Tags 'Matter' or Search by Keywords 'Matter Advanced Bridge' : 
-![image](../assets/images/getting-started-installation-01.png)
+## Before you start
 
+- A Matter-capable Hubitat Elevation hub, running platform version **2.3.8.119 or newer**.
+- A Matter bridge that is already set up and working in its own manufacturer's app, with at least
+  one device paired to it. See [Matter bridges](../bridges/aqara.md) for the bridges people use with
+  this package.
+- Hubitat Package Manager **1.9.2 or newer**, if you install that way.
 
+## 1. Install the driver package
 
-**Please use HPM version 1.9.2 or newer!**
-The Bundle package is large and the installation on a C-7 hub may take up to 2 minutes, please be patient.
+### Using Hubitat Package Manager (recommended)
 
-The driver can also be installed manually from GitHub as a Bundle Zip-ed package : 
+In HPM, either **Browse by Tags** → `Matter`, or **Search by Keywords** → `Matter Advanced Bridge`:
 
-https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/raw/main/MatterAdvancedBridge.zip 
+![Finding the package in Hubitat Package Manager](../assets/images/getting-started-installation-01.png)
 
+The package is a bundle and it is large. Installation can take up to two minutes on an older hub —
+let it finish.
 
-**Save the ZIP file on your PC** and then use the HE Bindles -> Import function : 
+### Manual installation
 
-![image](../assets/images/getting-started-installation-02.png)
+Download the bundle ZIP:
 
----------------- 
+<https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/raw/main/MatterAdvancedBridge.zip>
 
+**Save the ZIP to your PC first.** Then in Hubitat go to **Bundles** → **Import ZIP** and upload it:
 
-![image](../assets/images/getting-started-installation-03.png)
+![Bundles import screen](../assets/images/getting-started-installation-02.png)
 
--------------------
+![Bundle import dialog](../assets/images/getting-started-installation-03.png)
 
-These are the manual steps that must be followed when bridging a Tuya Matter hub :
+## 2. Prepare your Matter bridge
 
-**Installation steps**: 
+These steps happen in the bridge manufacturer's own app, not in Hubitat. The exact wording differs
+per brand, but the sequence is the same for every bridge:
 
-1. Add the Tuya (Zemismart M1) hub to your Smart Life account.
-2. Add at least one Tuya Zigbee device via the hub.
-3. Pair the Tuya Matter bridge hub to Hubitat C-8 as a standard Matter device.
-4. The default 'Device' driver should be assigned automatically. 
-If you click on the "Get Info" button of the 'Device' driver, you should see at least one fingerprint shown in HE live logs : 
+1. **Add the bridge to its own manufacturer's app or account** — Smart Life or Tuya for a Zemismart
+   or MOES gateway, the Aqara Home app for an Aqara hub, the Hue app for a Hue bridge, and so on.
+2. **Pair at least one device to the bridge.** A bridge with no devices behind it has nothing to
+   share with Hubitat, and discovery will find nothing.
+3. **Start Matter pairing in that app** and get the Matter commissioning QR code or the 11-digit
+   pairing code. Most bridges hide this behind a "share to another Matter ecosystem", "link to
+   third-party", or similar option.
 
-![image](../assets/images/getting-started-installation-04.png)
+Brand-specific notes are on the individual bridge pages:
+[Aqara](../bridges/aqara.md) ·
+[Philips Hue](../bridges/philips-hue.md) ·
+[SwitchBot](../bridges/switchbot.md) ·
+[Tuya / Zemismart](../bridges/tuya-zemismart.md) ·
+[Other bridges](../bridges/other-bridges.md)
 
+## 3. Commission the bridge to Hubitat
 
-5. Manually change the driver to 'Matter Advanced Bridge'
-6. Click on the 'Save Preferences' button.
+4. **Pair the bridge to Hubitat as a standard Matter device**, using the code from the previous
+   step. Hubitat's own Matter documentation covers this part.
+5. Hubitat assigns the stock **Device** driver automatically. Click its **Get Info** button; the
+   live logs should show at least one fingerprint:
 
-![image](../assets/images/getting-started-installation-05.png)
+   ![Get Info output in the live logs](../assets/images/getting-started-installation-04.png)
 
+6. Change the driver **Type** to **Matter Advanced Bridge** and click **Save Device**, then
+   **Save Preferences**:
 
-7. Click on the 'Initialize' button, then hit F5 to refresh the web page - it should look like this : 
+   ![Selecting the Matter Advanced Bridge driver](../assets/images/getting-started-installation-05.png)
 
-![image](../assets/images/getting-started-installation-06.png)
+7. Click **Initialize**, then press F5 to refresh the page. It should look like this:
 
+   ![Device page after Initialize](../assets/images/getting-started-installation-06.png)
 
-8. Discovery
+## 4. Discover the bridged devices
 
-Discovering the Matter Bridge capabilities and all the bridged devices' capabilities are automated.  All you need to do is click on the "_Discover All" button and wait for the discovery process to finish : 
+Discovery is automated — it works out the bridge's own capabilities and those of every device behind
+it. Click **_Discover All** and wait for it to finish:
 
-![image](../assets/images/getting-started-installation-07.png)
+![The _Discover All command](../assets/images/getting-started-installation-07.png)
 
+Depending on how many devices are bridged, this can take several minutes.
 
-The final result of all these steps should be a State Variable named 'Subscriptions' filled in (first press the 'F5' key to refresh the browser) : 
-[details="Subscriptions State Variable"]
-![image](../assets/images/getting-started-installation-08.png)
-[/details]
+When it is done, press F5 again. The **Subscriptions** state variable should be populated:
 
+![The Subscriptions state variable](../assets/images/getting-started-installation-08.png)
 
----------------
+A child device is now created for each bridged endpoint, each with a driver chosen from the clusters
+it reports. See [Which driver do I get?](../drivers/index.md) if a child ended up with a driver you
+did not expect.
 
-Depending on the number of bridged devices, the discovery process may take up to several minutes.
+## Next steps
 
-
--------------
-[next page](../configuration/commands-and-states.md)
-
-([back to Matter Advanced Bridge main page](../index.md)
+- [Commands and states](../configuration/commands-and-states.md)
+- [Preferences](../configuration/preferences.md)
+- [Troubleshooting](../help/troubleshooting.md), if discovery found nothing or stalled

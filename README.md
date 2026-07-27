@@ -18,7 +18,7 @@ use the Wiki until this notice changes.
 ## Links
 
 - Community thread:
-  <https://community.hubitat.com/t/project-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009>
+  <https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252>
 - Install via [Hubitat Package Manager](https://hubitatpackagemanager.hubitatcommunity.com/)
 
 ## License

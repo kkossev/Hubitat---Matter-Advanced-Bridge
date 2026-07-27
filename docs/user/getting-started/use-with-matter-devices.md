@@ -1,19 +1,45 @@
-<!-- MIGRATED from wiki page `Matter-Advanced-Bridge-‐-use-with-Matter-devices` at baseline c4000b7 on 2026-07-27.
-     Mechanical import: links and images rewritten, text unchanged.
-     NOT YET AUDITED against the current release. -->
+# Using it with Matter devices
 
-As a 'side effect', the Matter Advanced Bridge package can be used not only with Matter Bridges, but also with Matter enabled devices which are paired directly to HE hubs.
+Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
 
-This is possible because of the very similar way that a bridged Zigbee device is presented from the Matter Bridge if compared to a 'native' Matter device paired directly.  As an example, the following Matter devices were tested to also work with the Matter Bridge package : 
-* Aqara Matter Contact Sensor P2
-* Eve Energy Europe
-* Nanoleaf A19 Matter
-* Zemismart Matter Bulb
+As a side effect of how it works, this package can be used not only with Matter **bridges**, but also
+with Matter devices paired directly to a Hubitat hub.
 
-![image](../assets/images/getting-started-use-with-matter-devices-01.png)
+That works because a Zigbee device presented by a Matter bridge looks very similar to a native Matter
+device paired directly: the same clusters, read the same way.
 
---------------
+## How
 
-[next page](../help/troubleshooting.md)
+The steps are the same as for a bridge — see [Installation](installation.md). Pair the device to
+Hubitat as a standard Matter device, change its **Type** to `Matter Advanced Bridge`, then
+**Initialize** and run **_DiscoverAll**.
 
-([back to Matter Advanced Bridge main page](../index.md))
+The device's endpoints become child devices, exactly as bridged devices do. A single-node device
+reports its battery on the root node, and the driver passes that through to the child rather than
+leaving it on the parent.
+
+## Devices known to work
+
+| Device | Evidence |
+|---|---|
+| Aqara Matter Contact Sensor P2 | Reported |
+| Eve Energy (Europe) | Reported |
+| Nanoleaf A19 Matter | Reported |
+| Zemismart Matter Bulb | Reported |
+
+This list is not exhaustive — it is simply what has been tried. A directly-paired Matter device that
+reports one of the clusters in [Which driver do I get?](../drivers/index.md) has a good chance of
+working.
+
+![A directly-paired Matter device using this driver](../assets/images/getting-started-use-with-matter-devices-01.png)
+
+## Should you?
+
+Hubitat's own stock drivers handle most directly-paired Matter devices, and for a device they
+support properly they are the simpler choice. This package is worth trying when the stock driver
+does not expose something the device can actually do.
+
+## Next steps
+
+- [Which driver do I get?](../drivers/index.md)
+- [Troubleshooting](../help/troubleshooting.md)

@@ -1,12 +1,16 @@
 # Matter Generic Component SwitchBot Button
 
-Applies to: 1.8.8 | Last verified: — | Status: Historical
+Applies to: 1.9.0 BETA | Last verified: 2026-07-27 | Status: Historical
 
-> **Stub.** This page has not been written yet. Authored in phase 2 of the documentation migration
-> from the driver source; there was no wiki page to migrate. See `docs/maintainer/plans/`.
+> **Deprecated. Use the [Button](button.md) driver instead.**
+>
+> This driver is no longer recommended. If you have it assigned to an existing child device, change
+> the device's **Type** to `Matter Generic Component Button` and click **Save Device**. Nothing
+> assigns this driver automatically, so a new discovery will never produce one.
 
 - **Namespace:** `kkossev`
-- **Assigned to:** not assigned by the cluster chain — assignment path to be documented in phase 2
+- **Assigned to:** nothing — it was only ever assigned by hand.
+- **Replaced by:** [Button](button.md)
 
 ## Capabilities
 

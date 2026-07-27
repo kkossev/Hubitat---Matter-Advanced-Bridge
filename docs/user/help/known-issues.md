@@ -1,33 +1,27 @@
-<!-- MIGRATED from wiki page `Matter-Advanced-Bridge-‐-known-issues` at baseline c4000b7 on 2026-07-27.
-     Mechanical import: links and images rewritten, text unchanged.
-     NOT YET AUDITED against the current release. -->
+# Known issues
 
+Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
 
-_last updated 03/11/2024_
+For a problem you are having right now, start with [Troubleshooting](troubleshooting.md).
 
-## Known Matter Advanced Bridge driver issues
+> **Most of the old known issues are gone.** The Hubitat Matter platform has evolved a great deal
+> since 2024, and the limitations listed on this page back then — including the ones that stopped
+> locks and buttons from working — have since been resolved. If you find an older forum post
+> describing a Matter limitation, check its date before assuming it still applies.
 
-* Performance may not be optimal because of the huge state variables. Optimizing the speed/performance will be the project's second stage after the BETA release.
-* As the bridged devices are created in Hubitat as child devices, these can not be shared via Hubitat Mesh and can not be used in the HE Swap app.
-* Locks can not be controlled.
-* Button events are not received.
-* No composite devices (a temperature and humidity sensor will create 3 different child devices - T, H, and battery device).
------------------------------
+Each entry below carries an evidence label: **Confirmed** (reproduced), **Reported** (user report,
+not reproduced here), **Implemented, unverified** (the code is there, no live-device test), or
+**Unknown** (no reliable evidence either way).
 
-## Known Hubitat Matter platform limitations and issues : 
+## Current limitations
 
-* initialize() method is called on every Matter error - resulting in multiple subscriptions to one and the same attribute.
-* unsubscribe() resets all Matter connections - results in re-subscribing all other Matter devices connected to the same HE hub
-* Hubitat is not notified when a Matter device has been reset (powered off/on) - the subscriptions (automatic reporting) are lost!
-* Matter interface status (operational/failure) can not be checked by the driver - it is unknown whether the bridge is online or offline before sending a ping command.
-* Subscription to Matter events does not work - this prevents buttons/scene switches supprot in Hubitat. 
-* There is no decoding of the Maatter complex data structures - Hue bridge rooms as example can not be imported.
-* Hubitat parser for some matter messages throws exception java.lang.ArrayIndexOutOfBoundsException - the effect of this problem is unknown.
-* Matter writeAttribute commands do not work [link](https://community.hubitat.com/t/writing-matter-attributes-what-am-i-doing-wrong/135001/1)
+| Issue | Affects | Evidence | Workaround |
+|---|---|---|---|
+| **No composite devices.** A temperature and humidity sensor arrives as separate temperature, humidity, and battery children, because that is how the bridge exposes it. | All versions | Confirmed | None. Grouping attributes into one child device is on the TODO list. |
+| **Lock Codes (PIN codes and users) are experimental.** Locking and unlocking work; code management was first added in 1.8.7 and is still labelled a test version. | 1.8.7 and later | Implemented, unverified | Use the lock's own app to manage codes. |
 
+## Reporting something not listed here
 
-----------------------------
-
-[next page](support-and-links.md)
-
-([back to Matter Advanced Bridge main page](../index.md))
+Post in the [community thread](support-and-links.md) with the information listed under
+[asking for help](troubleshooting.md#asking-for-help). A report naming the bridge, its firmware, and
+the driver version is worth far more than one without.
