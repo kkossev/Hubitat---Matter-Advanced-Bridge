@@ -42,6 +42,33 @@ metadata {
 
 // Common methods can be added here for reuse in multiple drivers
 
+/**
+ * Format a Matter identifier as uppercase HEX with a minimum width.
+ * Wider values are preserved; the result is never truncated.
+ */
+static String hex2(final Number value) {
+    return formatMatterHex(value, 2)
+}
+
+static String hex4(final Number value) {
+    return formatMatterHex(value, 4)
+}
+
+private static String formatMatterHex(final Number value, final Integer minimumDigits) {
+    if (value == null) { return null }
+    String result
+    if (value instanceof Integer && value.intValue() < 0) {
+        result = Integer.toUnsignedString(value.intValue(), 16)
+    }
+    else if (value instanceof Long && value.longValue() < 0L) {
+        result = Long.toUnsignedString(value.longValue(), 16)
+    }
+    else {
+        result = new BigDecimal(value.toString()).toBigInteger().toString(16)
+    }
+    return result.toUpperCase().padLeft(minimumDigits, '0')
+}
+
 static Integer safeNumberToInt(val, Integer defaultVal=0) {
     try {
         String stringVal = val == null ? null : val.toString()

@@ -96,6 +96,7 @@
  *                                  'is it already CT?' guard in componentSetColorTemperature() was true on every call and the duplicate filter could never match. colorMode now goes through
  *                                  getColorMode()/setColorMode(), which send a real event only when the child declares the attribute (RGBW) and cache it as a child data value otherwise;
  *                                  sending an attribute a child driver does not declare is no longer logged at info level for every report - it warns once per child+attribute instead;
+ *                                  Air Purifier Resource Monitoring moved to the child driver.
  *
  *                                   TODO: 
  *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
@@ -107,7 +108,7 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/26 7:27 AM' }
+static String timeStamp() { '2026/07/26 8:35 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
@@ -293,14 +294,18 @@ metadata {
     // HEPA Filter Monitoring Cluster (Resource Monitoring)
     0x0071 : [attributes: 'ResourceMonitoringClusterAttributes', parser: 'parseResourceMonitoring',
               subscriptions : [0x0000: [:],   // Condition
-                               0x0001: [:],   // DegradationDirection
-                               0x0002: [:]]   // ChangeIndication
+                                0x0001: [:],   // DegradationDirection
+                                0x0002: [:],   // ChangeIndication
+                                0x0003: [:],   // InPlaceIndicator (only when advertised in AttributeList)
+                                0x0004: [:]]   // LastChangedTime (only when advertised in AttributeList)
     ],
     // Activated Carbon Filter Monitoring Cluster (Resource Monitoring) - identical structure to 0x0071
     0x0072 : [attributes: 'ResourceMonitoringClusterAttributes', parser: 'parseResourceMonitoring',
               subscriptions : [0x0000: [:],   // Condition
-                               0x0001: [:],   // DegradationDirection
-                               0x0002: [:]]   // ChangeIndication
+                                0x0001: [:],   // DegradationDirection
+                                0x0002: [:],   // ChangeIndication
+                                0x0003: [:],   // InPlaceIndicator (only when advertised in AttributeList)
+                                0x0004: [:]]   // LastChangedTime (only when advertised in AttributeList)
     ],
     // Electrical Power Measurement Cluster
     0x0090 : [attributes: 'ElectricalPowerMeasurementAttributes',  parser: 'parseElectricalPowerMeasurement',
@@ -1953,78 +1958,34 @@ void parseDoorLock(final Map descMap) { // 0101
 
 
 void parseAirQuality(final Map descMap) { // 005B
-    if (descMap.cluster != '005B') { logWarn "parseAirQuality: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    logTrace "parseAirQuality: <b>UNPROCESSED</b> ${(AirQualityClusterAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
-    // send the unprocessed attributes to the child driver for further processing
+    Integer clusterInt = descMap.clusterInt instanceof Number ? (descMap.clusterInt as Number).intValue() : null
+    Integer attrInt = descMap.attrInt instanceof Number ? (descMap.attrInt as Number).intValue() : null
+    Integer endpointInt = descMap.endpointInt instanceof Number ? (descMap.endpointInt as Number).intValue() : null
+    if (clusterInt != 0x005B) { logWarn "parseAirQuality: unexpected cluster:0x${hex4(clusterInt)} (attr:0x${hex4(attrInt)})"; return }
+    logTrace "parseAirQuality: forwarding ${(AirQualityClusterAttributes[attrInt] ?: GlobalElementsAttributes[attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    String deviceName = endpointInt == null ? device.displayName : getDeviceDisplayName(endpointInt)
     sendHubitatEvent([
-        name: 'unprocessed',
-        value: descMap.toString(),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
-    ], descMap, ignoreDuplicates = true)
+        name: 'handleInChildDriver',
+        value: descMap,
+        descriptionText: "${deviceName} cluster 0x${hex4(clusterInt)} attribute 0x${hex4(attrInt)} <i>(to be processed in the child driver)</i>"
+    ], descMap, ignoreDuplicates = false)
 }
 
-/**
- * Resource Monitoring clusters : 0x0071 HEPAFilterMonitoring and 0x0072 ActivatedCarbonFilterMonitoring.
- * Both clusters are identical in structure, so one parser handles both and only the emitted event names differ.
- *
- * The Condition attribute (0x0000) is a percentage whose meaning depends on DegradationDirection (0x0001):
- *   Down (1) : Condition counts down as the filter degrades -> it is the percent REMAINING (100 = new filter)
- *   Up   (0) : Condition counts up   as the filter degrades -> it is the percent USED
- * The 'filterUsage' / 'carbonFilterUsage' attributes are always normalized to the percent USED (100 = spent).
- * DegradationDirection is cached in state[fingerprintName] so that whichever attribute arrives second
- * recomputes and re-sends the usage - the two reports arrive in no guaranteed order.
- */
 void parseResourceMonitoring(final Map descMap) { // 0071 (HEPA filter) and 0072 (activated carbon filter)
-    if (!(descMap.cluster in ['0071', '0072'])) { logWarn "parseResourceMonitoring: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    boolean isHepa = (descMap.cluster == '0071')
-    String usageAttrName  = isHepa ? 'filterUsage'  : 'carbonFilterUsage'
-    String statusAttrName = isHepa ? 'filterStatus' : 'carbonFilterStatus'
-    String filterName     = isHepa ? 'HEPA filter'  : 'activated carbon filter'
-    String fingerprintName = getFingerprintName(descMap)
-    String deviceName = getDeviceDisplayName(descMap?.endpoint)
-    Integer value = safeHexToInt(descMap.value)
-
-    switch (descMap.attrId) {
-        case '0000' :   // Condition
-        case '0001' :   // DegradationDirection
-            // cache both values - the usage can only be calculated when the direction is known
-            if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
-            state[fingerprintName]["${descMap.cluster}_${descMap.attrId}"] = value
-            Integer condition = safeToInt(state[fingerprintName]["${descMap.cluster}_0000"], -1)
-            if (condition < 0) {
-                logDebug "parseResourceMonitoring: ${filterName} DegradationDirection is ${ResourceMonitoringDegradationDirection[value] ?: value} - waiting for the Condition value"
-                return
-            }
-            // default to 'Down' (percent remaining) while the direction is still unknown - it is the more common
-            // reporting style; the value is recalculated and re-sent as soon as DegradationDirection arrives.
-            Integer direction = safeToInt(state[fingerprintName]["${descMap.cluster}_0001"], 0x01)
-            Integer usage = (direction == 0x00) ? condition : (100 - condition)
-            if (usage < 0) { usage = 0 } ; if (usage > 100) { usage = 100 }
-            sendHubitatEvent([
-                name: usageAttrName,
-                value: usage,
-                unit: '%',
-                descriptionText: "${deviceName} ${filterName} usage is ${usage}% (Condition:${condition}% direction:${ResourceMonitoringDegradationDirection[direction] ?: direction})"
-            ], descMap, ignoreDuplicates = true)
-            break
-        case '0002' :   // ChangeIndication : 0 = OK, 1 = Warning, 2 = Critical
-            String filterStatus = (value == 0x00) ? 'normal' : 'replace'
-            sendHubitatEvent([
-                name: statusAttrName,
-                value: filterStatus,
-                descriptionText: "${deviceName} ${filterName} status is ${filterStatus} (ChangeIndication:${ResourceMonitoringChangeIndication[value] ?: value})"
-            ], descMap, ignoreDuplicates = true)
-            break
-        case '0003' :   // InPlaceIndicator
-            logInfo "${deviceName} ${filterName} is ${value == 0 ? 'NOT ' : ''}in place"
-            break
-        case '0004' :   // LastChangedTime
-            logInfo "${deviceName} ${filterName} was last changed at ${value} (epoch-s)"
-            break
-        default :
-            logTrace "parseResourceMonitoring: ${filterName} ${getAttributeName(descMap)} (0x${descMap.attrId}) = ${descMap.value}"
-            break
+    Integer clusterInt = descMap.clusterInt instanceof Number ? (descMap.clusterInt as Number).intValue() : null
+    Integer attrInt = descMap.attrInt instanceof Number ? (descMap.attrInt as Number).intValue() : null
+    Integer endpointInt = descMap.endpointInt instanceof Number ? (descMap.endpointInt as Number).intValue() : null
+    if (!(clusterInt in [0x0071, 0x0072])) {
+        logWarn "parseResourceMonitoring: unexpected cluster:0x${hex4(clusterInt)} (attr:0x${hex4(attrInt)})"
+        return
     }
+    logTrace "parseResourceMonitoring: forwarding ${(ResourceMonitoringClusterAttributes[attrInt] ?: GlobalElementsAttributes[attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    String deviceName = endpointInt == null ? device.displayName : getDeviceDisplayName(endpointInt)
+    sendHubitatEvent([
+        name: 'handleInChildDriver',
+        value: descMap,
+        descriptionText: "${deviceName} cluster 0x${hex4(clusterInt)} attribute 0x${hex4(attrInt)} <i>(to be processed in the child driver)</i>"
+    ], descMap, ignoreDuplicates = false)
 }
 
 void parseElectricalPowerMeasurement(final Map descMap) { // 0090
@@ -2049,25 +2010,31 @@ void parseElectricalEnergyMeasurement(final Map descMap) { // 0091
 
 // to be used in multiple clusters !
 void parseConcentrationMeasurement(final Map descMap) { // 042A
-    if (descMap.cluster != '042A') { logWarn "parseConcentrationMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    logTrace "parseConcentrationMeasurement: <b>UNPROCESSED</b> ${(ConcentrationMeasurementClustersAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
-    // send the unprocessed attributes to the child driver for further processing
+    Integer clusterInt = descMap.clusterInt instanceof Number ? (descMap.clusterInt as Number).intValue() : null
+    Integer attrInt = descMap.attrInt instanceof Number ? (descMap.attrInt as Number).intValue() : null
+    Integer endpointInt = descMap.endpointInt instanceof Number ? (descMap.endpointInt as Number).intValue() : null
+    if (clusterInt != 0x042A) { logWarn "parseConcentrationMeasurement: unexpected cluster:0x${hex4(clusterInt)} (attr:0x${hex4(attrInt)})"; return }
+    logTrace "parseConcentrationMeasurement: forwarding ${(ConcentrationMeasurementClustersAttributes[attrInt] ?: GlobalElementsAttributes[attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    String deviceName = endpointInt == null ? device.displayName : getDeviceDisplayName(endpointInt)
     sendHubitatEvent([
-        name: 'unprocessed',
-        value: descMap.toString(),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
-    ], descMap, ignoreDuplicates = true)
+        name: 'handleInChildDriver',
+        value: descMap,
+        descriptionText: "${deviceName} cluster 0x${hex4(clusterInt)} attribute 0x${hex4(attrInt)} <i>(to be processed in the child driver)</i>"
+    ], descMap, ignoreDuplicates = false)
 }
 
 void parseCarbonDioxideConcentrationMeasurement(final Map descMap) { // 040D
-    if (descMap.cluster != '040D') { logWarn "parseCarbonDioxideConcentrationMeasurement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
-    logTrace "parseCarbonDioxideConcentrationMeasurement: <b>UNPROCESSED</b> ${(ConcentrationMeasurementClustersAttributes[descMap.attrInt] ?: GlobalElementsAttributes[descMap.attrInt] ?: UNKNOWN)} = ${descMap.value}"
-    // send the unprocessed attributes to the child driver for further processing
+    Integer clusterInt = descMap.clusterInt instanceof Number ? (descMap.clusterInt as Number).intValue() : null
+    Integer attrInt = descMap.attrInt instanceof Number ? (descMap.attrInt as Number).intValue() : null
+    Integer endpointInt = descMap.endpointInt instanceof Number ? (descMap.endpointInt as Number).intValue() : null
+    if (clusterInt != 0x040D) { logWarn "parseCarbonDioxideConcentrationMeasurement: unexpected cluster:0x${hex4(clusterInt)} (attr:0x${hex4(attrInt)})"; return }
+    logTrace "parseCarbonDioxideConcentrationMeasurement: forwarding ${(ConcentrationMeasurementClustersAttributes[attrInt] ?: GlobalElementsAttributes[attrInt] ?: UNKNOWN)} = ${descMap.value}"
+    String deviceName = endpointInt == null ? device.displayName : getDeviceDisplayName(endpointInt)
     sendHubitatEvent([
-        name: 'unprocessed',
-        value: descMap.toString(),
-        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} unprocessed cluster ${descMap.cluster} attribute ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
-    ], descMap, ignoreDuplicates = true)
+        name: 'handleInChildDriver',
+        value: descMap,
+        descriptionText: "${deviceName} cluster 0x${hex4(clusterInt)} attribute 0x${hex4(attrInt)} <i>(to be processed in the child driver)</i>"
+    ], descMap, ignoreDuplicates = false)
 }
 
 void parseCameraAvStreamManagement(final Map descMap) { // 0551 - Camera AV Stream Management (Matter 1.3+)
@@ -3712,6 +3679,10 @@ Map mapMatterCategory(Map d) {
         }
     }.findAll { it != null }
 
+    if ('0071' in d.ServerList || '0072' in d.ServerList) {   // HEPA / Activated Carbon Filter Monitoring
+        return [namespace: 'kkossev', driver: 'Matter Generic Component Air Purifier', product_name: 'Air Purifier']
+    }
+
     if ('0300' in d.ServerList) {
         // Check for Extended Color Light (0x010D or decimal 13/0x0D) or Color Temperature Light (0x010C)
         boolean isExtendedColor = deviceTypes.any { it.toUpperCase() in ['0D', '13', '10D', '010D'] }
@@ -3837,29 +3808,6 @@ void componentSetSensitivityLevel(DeviceWrapper dw, Integer level) {
     List<Map<String, String>> attrWriteRequests = []
     attrWriteRequests.add(matter.attributeWriteRequest(endpoint, 0x0080, 0x0000, DataType.UINT8, intToHexStr(level, 1)))
     sendToDevice(matter.writeAttributes(attrWriteRequests))
-}
-
-/**
- * Resource Monitoring ResetCondition command (0x00) - tells the device that the filter was physically
- * replaced, so it resets its Condition counter and clears the ChangeIndication.
- * @param dw the child device
- * @param filterType 'HEPA' -> cluster 0x0071, anything containing 'carbon' -> cluster 0x0072
- */
-void componentResetFilterCondition(DeviceWrapper dw, String filterType = 'HEPA') {
-    boolean isCarbon = (filterType ?: '').toLowerCase().contains('carbon')
-    Integer cluster = isCarbon ? 0x0072 : 0x0071
-    String clusterHex = HexUtils.integerToHexString(cluster, 2)
-    String filterName = isCarbon ? 'activated carbon filter' : 'HEPA filter'
-    List<String> serverList = getDeviceServerList(dw)
-    if (!serverList.isEmpty() && !(clusterHex in serverList)) {
-        logWarn "componentResetFilterCondition(${dw}): cluster 0x${clusterHex} is not in the ServerList ${serverList} - this device has no ${filterName}!"
-        return
-    }
-    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
-    List<Map<String, String>> cmdFields = []        // ResetCondition has no command fields
-    String cmd = matter.invoke(deviceNumber, cluster, 0x0000, cmdFields)
-    logDebug "componentResetFilterCondition(${dw}): sending ResetCondition to device# ${deviceNumber} cluster 0x${clusterHex} : ${cmd}"
-    sendToDevice(cmd)
 }
 
 void componentIdentify(DeviceWrapper dw) {

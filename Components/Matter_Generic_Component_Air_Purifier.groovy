@@ -21,18 +21,17 @@
  * ver. 1.2.1  2026-01-29 kkossev   - added common library matterCommonLib
  * ver. 1.2.2  2026-02-19 kkossev   - moved common methods to matterCommonLib
  * ver. 1.2.3  2026-05-24 kkossev   - featureMap bug fix
- * ver. 1.2.4  2026-07-25 kkossev   - bug fixes; removed parse(String); added HEPA/carbon filter monitoring (0x0071/0x0072); decodeIeee754Float() bug fix
+ * ver. 1.2.4  2026-07-25 kkossev   - bug fixes; removed parse(String); added HEPA/carbon filter monitoring (0x0071/0x0072); Resource Monitoring moved into child
  *
 */
 
 import groovy.transform.Field
-import groovy.transform.CompileStatic
-import hubitat.helper.HexUtils
 
 @Field static final String matterComponentAirPurifierVersion = '1.2.4'
-@Field static final String matterComponentAirPurifierStamp   = '2026/07/25 5:17 PM'
+@Field static final String matterComponentAirPurifierStamp   = '2026/07/26 9:32 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
+@Field static final Integer RESOURCE_MONITORING_COALESCE_MS = 250
 
 metadata {
     definition(name: 'Matter Generic Component Air Purifier', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Air_Purifier.groovy') {
@@ -63,6 +62,10 @@ metadata {
         attribute 'filterUsage', 'number'                       // HEPA filter, cluster 0x0071 - percent USED (100 = spent)
         attribute 'carbonFilterStatus', 'enum', ['normal', 'replace']    // activated carbon filter, cluster 0x0072
         attribute 'carbonFilterUsage', 'number'                 // activated carbon filter, cluster 0x0072 - percent USED
+        attribute 'filterInPlace', 'enum', ['present', 'not present']
+        attribute 'carbonFilterInPlace', 'enum', ['present', 'not present']
+        attribute 'filterLastChanged', 'number'                 // Matter epoch-s
+        attribute 'carbonFilterLastChanged', 'number'           // Matter epoch-s
         attribute 'pm25', 'number'
         attribute 'auto', 'enum', ['on', 'off']
         attribute 'indicatorStatus', 'enum', ['on', 'off']
@@ -152,6 +155,7 @@ preferences {
 
 // Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
 void parse(Map descMap) {
+    checkDriverVersion()
     switch (descMap?.callbackType) {
         case 'Invoke':
             handleInvokeResponse(descMap)
@@ -176,17 +180,22 @@ private void handleInvokeResponse(final Map descMap) {
 
 // parse commands from parent
 void parse(List<Map> description) {
+    checkDriverVersion()
     if (logEnable) { log.debug "${description}" }
     description.each { d ->
         if (d.name == 'rtt') {
             // Delegate to health status library
             parseRttEvent(d)
         }
-        else if (d.name == 'unprocessed') {
-            processUnprocessed(d)
+        else if (d.name == 'handleInChildDriver') {
+            if (!(d.value instanceof Map)) {
+                logWarn "handleInChildDriver: expected Map, received ${d.value}"
+                return
+            }
+            processMatterMap(d.value as Map, d.isRefresh == true, d.isDiscovery == true)
         }
         else {
-            if (d.descriptionText && txtEnable) { log.info "${d.descriptionText}" }
+            logDescriptionText(d.descriptionText)
             sendEvent(d)
         }
     }
@@ -252,8 +261,35 @@ void cycleSpeed() {
 
 // Resource Monitoring ResetCondition - cluster 0x0071 (HEPA) / 0x0072 (activated carbon)
 void resetFilterCondition(String filter = 'HEPA') {
-    if (logEnable) { log.debug "${device.displayName} resetting the ${filter} filter condition ..." }
-    parent?.componentResetFilterCondition(device, filter)
+    String normalizedFilter = filter?.trim()?.toLowerCase()
+    Integer clusterInt
+    String filterName
+    if (normalizedFilter == 'hepa') {
+        clusterInt = 0x0071
+        filterName = 'HEPA filter'
+    }
+    else if (normalizedFilter?.contains('carbon')) {
+        clusterInt = 0x0072
+        filterName = 'activated carbon filter'
+    }
+    else {
+        logWarn "resetFilterCondition: unsupported filter '${filter}'"
+        return
+    }
+
+    String clusterHex = hex4(clusterInt)
+    if (!isClusterSupported(clusterHex)) {
+        logWarn "resetFilterCondition: cluster 0x${clusterHex} is not in the ServerList ${getServerList()} - this device has no ${filterName}"
+        return
+    }
+    Integer endpointInt = getDeviceNumber()
+    if (endpointInt == null) { return }
+
+    List<Map<String, String>> cmdFields = []
+    String cmd = matter.invoke(endpointInt, clusterInt, 0x0000, cmdFields)
+    logInfo "resetting the ${filterName} condition"
+    logDebug "resetFilterCondition: sending ResetCondition to endpoint ${endpointInt}, cluster 0x${clusterHex}: ${cmd}"
+    parent?.sendToDevice(cmd)
 }
 
 void setIndicatorStatus(String status) {
@@ -264,17 +300,19 @@ void setIndicatorStatus(String status) {
 
 // Called when the device is first created
 void installed() {
-    log.info "${device.displayName} driver installed"
+    setStateDriverVersion(driverVersionAndTimeStamp())
+    logInfo 'driver installed'
 }
 
 // Called when the device is removed
 void uninstalled() {
-    log.info "${device.displayName} driver uninstalled"
+    logInfo 'driver uninstalled'
 }
 
 // Called when the settings are updated
 void updated() {
-    log.info "${device.displayName} driver configuration updated"
+    checkDriverVersion()
+    logInfo 'driver configuration updated'
     if (logEnable) {
         log.debug settings
         runIn(14400, 'logsOff')
@@ -289,320 +327,533 @@ private void logsOff() {
 }
 
 
-/**
- * Decode a Matter 'single' (IEEE754 float32) attribute value.
- *
- * The value always arrives here as a String, because processUnprocessed() re-parses the stringified
- * descMap that the parent sends in the 'unprocessed' event. It can be:
- *    - an 8-hex-digit float32 bit pattern : '40A00000' -> 5.0
- *    - a plain decimal, with or without a fractional part, sign or exponent : '12.5', '450', '-1.25E-4'
- *    - the string 'null', for the nullable attributes (MinMeasuredValue, MaxMeasuredValue, ...)
- * A float32 bit pattern is ALWAYS exactly 8 hex characters, so the length is what discriminates the
- * two forms - do not go back to testing for a decimal point, whole numbers like '450' have none and
- * were previously decoded as 0x450 bits, i.e. silently reported as 0.
- * The only ambiguous input is an 8-digit all-decimal string ('12345678'), which is read as a bit
- * pattern - harmless here, as neither CO2 (ppm) nor PM2.5 (ug/m3) ever reaches 8 digits.
- *
- * @param rawValue the raw attribute value as a String
- * @return the decoded value as a Double, or null when it is absent or cannot be decoded
- */
-Double decodeIeee754Float(String rawValue) {
-    String value = rawValue?.trim()
-    if (!value || value.equalsIgnoreCase('null')) { return null }
-    try {
-        if (value ==~ /^[0-9A-Fa-f]{8}$/) {
-            return (Double) Float.intBitsToFloat(Integer.parseUnsignedInt(value, 16))
-        }
-        return safeToDouble(value, null)
-    } catch (Exception e) {
-        logWarn "decodeIeee754Float: cannot decode '${rawValue}' : ${e.message}"
-        return null
-    }
-}
-
-/**
- * Log one of the informational float32 attributes of the Concentration Measurement clusters
- * (0x040D CO2 and 0x042A PM2.5) - MinMeasuredValue, MaxMeasuredValue, Uncertainty, ...
- * Only used in the 'Info' mode, no events are sent.
- * @param descMap the re-parsed description map
- * @param attrInt the attribute id, used to look up the attribute name
- * @param prefix  the Info-mode log line prefix
- */
-void logConcentrationInfoValue(Map descMap, Integer attrInt, String prefix) {
-    String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
-    String unit = descMap.cluster == '040D' ? 'ppm' : 'μg/m³'
-    String attrName = ConcentrationMeasurementClusterAttributes[attrInt] ?: "attribute 0x${descMap.attrId}"
-    Double decoded = decodeIeee754Float(descMap.value)
-    if (decoded == null) {
-        logInfo "${prefix}${clusterName} ${attrName}: <i>not available</i> (raw: ${descMap.value})"
-        return
-    }
-    logInfo "${prefix}${clusterName} ${attrName}: ${decoded} ${unit} (raw: ${descMap.value})"
-}
-
 void refresh() {
+    checkDriverVersion()
     parent?.componentRefresh(this.device)
 }
 
-
-// Custom parsing for description strings with array values
-// NOTE: This workaround may not be needed once complex structure parsing is fixed generally
-Map patchParseDescriptionMap(String inputString) {
-    Map<String, Object> resultMap = [:]
-    
-    // Remove outer brackets only
-    String cleaned = inputString.replaceAll('^\\[', '').replaceAll('\\]$', '')
-    
-    // Split by ", " but preserve array values
-    List<String> parts = []
-    int bracketDepth = 0
-    StringBuilder current = new StringBuilder()
-    
-    for (int i = 0; i < cleaned.length(); i++) {
-        char c = cleaned.charAt(i)
-        if (c == '[') {
-            bracketDepth++
-            current.append(c)
-        } else if (c == ']') {
-            bracketDepth--
-            current.append(c)
-        } else if (c == ',' && bracketDepth == 0 && i + 1 < cleaned.length() && cleaned.charAt(i + 1) == ' ') {
-            parts.add(current.toString())
-            current = new StringBuilder()
-            i++ // skip the space after comma
-        } else {
-            current.append(c)
-        }
-    }
-    if (current.length() > 0) {
-        parts.add(current.toString())
-    }
-    
-    // Now parse each key:value pair
-    parts.each { pair ->
-        String[] kvParts = pair.split(':', 2)
-        if (kvParts.size() == 2) {
-            String key = kvParts[0].trim()
-            String value = kvParts[1].trim()
-            // Check if value is an array
-            if (value.startsWith('[') && value.endsWith(']')) {
-                // Parse array value
-                String arrayContent = value.substring(1, value.length() - 1)
-                resultMap[key] = arrayContent.split(',\\s*').collect { it.trim() }
-            } else {
-                resultMap[key] = value
-            }
-        }
-    }
-    
-    return resultMap
+String driverVersionAndTimeStamp() {
+    return "${matterComponentAirPurifierVersion} (${matterComponentAirPurifierStamp})".toString()
 }
 
-void processUnprocessed(Map description) {
-    logDebug "processing unprocessed: ${description}"
+String getStateDriverVersion() {
+    return state.driverVersion
+}
 
-    String inputString = description.value
-    logTrace "inputString: ${inputString}"
-    
-    // Parse the input string to handle array values like value:[00, FFF8, FFF9]
-    Map descMap = patchParseDescriptionMap(inputString)
-    logDebug "descMap: ${descMap}"
-    
-    String eventValue = descMap.value
-    String descriptionText = "${device.displayName} ${descMap.cluster}:${descMap.attrId} value:${eventValue}"
-    
-    // Check if this is info mode for detailed logging
+void setStateDriverVersion(final String version) {
+    state.driverVersion = version
+}
+
+void checkDriverVersion() {
+    String currentVersion = driverVersionAndTimeStamp()
+    String previousVersion = getStateDriverVersion()
+    if (previousVersion == currentVersion) { return }
+
+    logDebug "updating the driver from version ${previousVersion ?: 'not stored'} to ${currentVersion}"
+    migrateDriverState(previousVersion, currentVersion)
+    setStateDriverVersion(currentVersion)
+    logInfo "driver updated from version ${previousVersion ?: 'not stored'} to ${currentVersion}"
+}
+
+// Reserved for non-destructive state migrations required by future child-driver versions.
+private void migrateDriverState(final String previousVersion, final String currentVersion) {
+    logTrace "migrateDriverState: no migration required from ${previousVersion ?: 'not stored'} to ${currentVersion}"
+}
+
+void processMatterMap(final Map descMap, final boolean isRefresh = false, final boolean isDiscovery = false) {
+    Integer clusterInt = nativeMatterInt(descMap.clusterInt)
+    Integer attrInt = nativeMatterInt(descMap.attrInt)
+    if (clusterInt == null || attrInt == null) {
+        logWarn "processMatterMap: missing or invalid native identifiers: clusterInt=${descMap.clusterInt} attrInt=${descMap.attrInt}"
+        return
+    }
+
     boolean isInfoMode = state.states?.isInfo == true
-    String prefix = isInfoMode ? "[${descMap.cluster}_${descMap.attrId}] " : ""
-    
-    switch (descMap.cluster + '_' + descMap.attrId) {
-        case '005B_0000': // attribute 'airQuality', 'enum' - see AirQualityEnum
-            eventValue= AirQualityEnum[Integer.parseInt(descMap.value, 16)]
-            // Check if value changed from last report
-            String lastAirQuality = state.lastAirQuality
-            if (lastAirQuality == eventValue) {
-                if (logEnable) { log.debug "${device.displayName} AirQuality unchanged: ${eventValue} - event suppressed" }
-                return
-            }
-            state.lastAirQuality = eventValue
-            descriptionText = "${device.displayName} AirQuality: ${eventValue} (raw:${descMap.value})"
-            sendEvent(name: 'airQuality', value: eventValue, descriptionText: descriptionText)
-            if (txtEnable) { log.info "${descriptionText}" }
-            break
-        case '042A_0000': // attribute 'pm25', 'number'
-            Double pm25Decoded = decodeIeee754Float(descMap.value)
-            if (pm25Decoded == null) {
-                logWarn "PM2.5 value could not be decoded: value=${descMap.value}"
-                return
-            }
-            Integer pm25Int = Math.round(pm25Decoded) as Integer
-            if (logEnable) { log.debug "${device.displayName} PM2.5 raw: ${descMap.value}" }
-            if (logEnable) { log.debug "${device.displayName} PM2.5 decoded: ${pm25Int} μg/m³" }
-            // Check threshold from preference
-            Integer threshold = (settings.pm25ReportDelta ?: '03') as Integer
-            Integer lastPM25 = state.lastPM25 != null ? state.lastPM25 as Integer : null
-            if (lastPM25 != null && Math.abs(pm25Int - lastPM25) < threshold) {
-                if (logEnable) { log.debug "${device.displayName} PM2.5 change ${pm25Int - lastPM25} μg/m³ below threshold ${threshold} - event suppressed" }
-                return
-            }
-            state.lastPM25 = pm25Int
-            descriptionText = "${device.displayName} PM2.5: ${pm25Int} μg/m³"
-            sendEvent(name: 'pm25', value: pm25Int, unit: 'μg/m³', descriptionText: descriptionText)
-            if (txtEnable) { log.info "${descriptionText}" }
-            break
-        case '040D_0000': // CO₂ Concentration Measurement
-            Double co2Decoded = decodeIeee754Float(descMap.value)
-            if (co2Decoded == null) {
-                logWarn "CO₂ value could not be decoded: value=${descMap.value}"
-                return
-            }
-            Integer co2 = Math.round(co2Decoded) as Integer
-            if (logEnable) { log.debug "${device.displayName} CO₂ raw: ${descMap.value}" }
-            if (logEnable) { log.debug "${device.displayName} CO₂ decoded: ${co2} ppm" }
-            // Check threshold from preference
-            Integer threshold = (settings.co2ReportDelta ?: '10') as Integer
-            Integer lastCO2 = state.lastCO2 != null ? state.lastCO2 as Integer : null
-            if (lastCO2 != null && Math.abs(co2 - lastCO2) < threshold) {
-                if (logEnable) { log.debug "${device.displayName} CO₂ change ${co2 - lastCO2} ppm below threshold ${threshold} - event suppressed" }
-                return
-            }
-            state.lastCO2 = co2
-            descriptionText = "${device.displayName} CO₂: ${co2} ppm"
-            sendEvent(name: 'carbonDioxide', value: co2, unit: 'ppm', descriptionText: descriptionText)
-            if (txtEnable) { log.info "${descriptionText}" }
-            break
-        
-        // Additional Concentration Measurement cluster attributes (CO₂ and PM2.5)
-        case '040D_0001': // CO₂ MinMeasuredValue (IEEE754 float)
-        case '042A_0001': // PM2.5 MinMeasuredValue (IEEE754 float)
-            if (isInfoMode) {
-                logConcentrationInfoValue(descMap, 0x0001, prefix)
-            }
-            break
+    String prefix = isInfoMode ? "[${hex4(clusterInt)}_${hex4(attrInt)}] " : ''
+    Object value = descMap.value
 
-        case '040D_0002': // CO₂ MaxMeasuredValue (IEEE754 float)
-        case '042A_0002': // PM2.5 MaxMeasuredValue (IEEE754 float)
-            if (isInfoMode) {
-                logConcentrationInfoValue(descMap, 0x0002, prefix)
-            }
-            break
+    if (attrInt in [0xFFF8, 0xFFF9, 0xFFFB, 0xFFFC, 0xFFFD]) {
+        processGlobalMatterAttribute(clusterInt, attrInt, value, isInfoMode, prefix)
+        return
+    }
 
-        case '040D_0007': // CO₂ Uncertainty (IEEE754 float)
-        case '042A_0007': // PM2.5 Uncertainty (IEEE754 float)
-            if (isInfoMode) {
-                logConcentrationInfoValue(descMap, 0x0007, prefix)
-            }
+    switch (clusterInt) {
+        case 0x005B:
+            processAirQualityAttribute(attrInt, value, isRefresh, isDiscovery)
             break
-        
-        case '040D_0008': // CO₂ MeasurementUnit (enum)
-        case '042A_0008': // PM2.5 MeasurementUnit (enum)
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
-                Integer attrIdInt = Integer.parseInt(descMap.attrId, 16)
-                String attrName = ConcentrationMeasurementClusterAttributes[attrIdInt]
-                Integer enumValue = Integer.parseInt(descMap.value, 16)
-                String decoded = decodeMeasurementUnit(enumValue)
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded}"
-            }
+        case 0x0071:
+        case 0x0072:
+            processResourceMonitoringAttribute(clusterInt, attrInt, value, isInfoMode, prefix, isRefresh, isDiscovery)
             break
-        
-        case '040D_0009': // CO₂ MeasurementMedium (enum)
-        case '042A_0009': // PM2.5 MeasurementMedium (enum)
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
-                Integer attrIdInt = Integer.parseInt(descMap.attrId, 16)
-                String attrName = ConcentrationMeasurementClusterAttributes[attrIdInt]
-                Integer enumValue = Integer.parseInt(descMap.value, 16)
-                String decoded = decodeMeasurementMedium(enumValue)
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded}"
-            }
+        case 0x040D:
+        case 0x042A:
+            processConcentrationAttribute(clusterInt, attrInt, value, isInfoMode, prefix, isRefresh, isDiscovery)
             break
-        
-        case '040D_000A': // CO₂ LevelValue (enum)
-        case '042A_000A': // PM2.5 LevelValue (enum)
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '040D' ? 'CO₂' : 'PM2.5'
-                Integer attrIdInt = Integer.parseInt(descMap.attrId, 16)
-                String attrName = ConcentrationMeasurementClusterAttributes[attrIdInt]
-                Integer enumValue = Integer.parseInt(descMap.value, 16)
-                String decoded = decodeLevelValue(enumValue)
-                logInfo "${prefix}${clusterName} ${attrName}: ${decoded}"
-            }
-            break
-        
-        // Global cluster attributes (apply to all clusters: 005B, 040D, 042A, etc.)
-        case '005B_FFFC': // FeatureMap for Air Quality
-        case '040D_FFFC': // FeatureMap for CO₂
-        case '042A_FFFC': // FeatureMap for PM2.5
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
-                Integer featureMap = safeHexToInt(descMap.value)
-                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFFC] : ConcentrationMeasurementClusterAttributes[0xFFFC]
-                String decoded = descMap.cluster == '005B' ? 
-                    decodeAirQualityFeatureMap(featureMap) : 
-                    decodeConcentrationMeasurementFeatureMap(featureMap)
-                logInfo "${prefix}${clusterName} ${attrName}: 0x${descMap.value} (${featureMap}) - Features: ${decoded}"
-            }
-            break
-        
-        case '005B_FFFD': // ClusterRevision for Air Quality
-        case '040D_FFFD': // ClusterRevision for CO₂  
-        case '042A_FFFD': // ClusterRevision for PM2.5
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
-                Integer revision = descMap.value ? Integer.parseInt(descMap.value, 16) : 0
-                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFFD] : ConcentrationMeasurementClusterAttributes[0xFFFD]
-                logInfo "${prefix}${clusterName} ${attrName}: ${revision}"
-            }
-            break
-        
-        case '005B_FFFB': // AttributeList for Air Quality
-        case '040D_FFFB': // AttributeList for CO₂
-        case '042A_FFFB': // AttributeList for PM2.5
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
-                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFFB] : ConcentrationMeasurementClusterAttributes[0xFFFB]
-                logInfo "${prefix}${clusterName} ${attrName}: ${descMap.value}"
-            }
-            break
-        
-        case '005B_FFF9': // AcceptedCommandList for Air Quality
-        case '040D_FFF9': // AcceptedCommandList for CO₂
-        case '042A_FFF9': // AcceptedCommandList for PM2.5
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
-                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFF9] : ConcentrationMeasurementClusterAttributes[0xFFF9]
-                logInfo "${prefix}${clusterName} ${attrName}: ${descMap.value ?: '[]'}"
-            }
-            break
-        
-        case '005B_FFF8': // GeneratedCommandList for Air Quality
-        case '040D_FFF8': // GeneratedCommandList for CO₂
-        case '042A_FFF8': // GeneratedCommandList for PM2.5
-            if (isInfoMode) {
-                String clusterName = descMap.cluster == '005B' ? 'Air Quality' : (descMap.cluster == '040D' ? 'CO₂' : 'PM2.5')
-                String attrName = descMap.cluster == '005B' ? AirQualityClusterAttributes[0xFFF8] : ConcentrationMeasurementClusterAttributes[0xFFF8]
-                logInfo "${prefix}${clusterName} ${attrName}: ${descMap.value ?: '[]'}"
-            }
-            break
-        
-        // Note: Temperature (0402) and Humidity (0405) are handled by the parent driver
-        // and sent as standard events, not as 'unprocessed'
         default:
-            logWarn "processUnprocessed: unexpected cluster:${descMap.cluster} attrId:${descMap.attrId}"
+            logWarn "processMatterMap: unsupported cluster 0x${hex4(clusterInt)} attribute 0x${hex4(attrInt)}"
+            break
     }
 }
+
+private Integer nativeMatterInt(final Object value) {
+    return value instanceof Number ? (value as Number).intValue() : null
+}
+
+private void processAirQualityAttribute(final Integer attrInt, final Object value, final boolean isRefresh,
+                                        final boolean isDiscovery) {
+    if (attrInt != 0x0000) {
+        logWarn "processAirQualityAttribute: unsupported attribute 0x${hex4(attrInt)}"
+        return
+    }
+    if (!(value instanceof Number)) {
+        logWarn "processAirQualityAttribute: expected Number for AirQuality, received ${value}"
+        return
+    }
+
+    Integer enumValue = (value as Number).intValue()
+    String eventValue = AirQualityEnum[enumValue]
+    if (eventValue == null) {
+        logWarn "processAirQualityAttribute: unknown AirQuality value ${enumValue}"
+        return
+    }
+    if (!isRefresh && !isDiscovery && state.lastAirQuality == eventValue) {
+        logDebug "AirQuality unchanged: ${eventValue} - event suppressed"
+        return
+    }
+
+    state.lastAirQuality = eventValue
+    String descriptionText = "${device.displayName} AirQuality: ${eventValue} (raw:${enumValue})"
+    emitReadingEvent([name: 'airQuality', value: eventValue, descriptionText: descriptionText], isRefresh, isDiscovery)
+}
+
+private void processResourceMonitoringAttribute(final Integer clusterInt, final Integer attrInt, final Object value,
+                                                final boolean isInfoMode, final String prefix, final boolean isRefresh,
+                                                final boolean isDiscovery) {
+    String filterName = resourceFilterName(clusterInt)
+    String attrName = ResourceMonitoringClusterAttributes[attrInt] ?: "attribute 0x${hex4(attrInt)}"
+    if (value == null) {
+        if (isInfoMode) { logInfo "${prefix}${filterName} ${attrName}: <i>not available</i>" }
+        else { logDebug "${filterName} ${attrName} is not available" }
+        return
+    }
+
+    switch (attrInt) {
+        case 0x0000: // Condition
+            Integer condition = resourceInteger(value, 0, 100, "${filterName} Condition")
+            if (condition == null) { return }
+            storeResourceMonitoringValue(clusterInt, 'condition', condition)
+            if (isInfoMode) { logInfo "${prefix}${filterName} Condition: ${condition}%" }
+            queueResourceUsage(clusterInt, isRefresh, isDiscovery)
+            break
+        case 0x0001: // DegradationDirection
+            Integer direction = resourceInteger(value, 0, 1, "${filterName} DegradationDirection")
+            if (direction == null) { return }
+            storeResourceMonitoringValue(clusterInt, 'direction', direction)
+            if (isInfoMode) {
+                logInfo "${prefix}${filterName} DegradationDirection: ${ResourceMonitoringDegradationDirection[direction]}"
+            }
+            queueResourceUsage(clusterInt, isRefresh, isDiscovery)
+            break
+        case 0x0002: // ChangeIndication
+            Integer indication = resourceInteger(value, 0, 2, "${filterName} ChangeIndication")
+            if (indication == null) { return }
+            processResourceChangeIndication(clusterInt, indication, isRefresh, isDiscovery)
+            break
+        case 0x0003: // InPlaceIndicator
+            Boolean inPlace = resourceBoolean(value, "${filterName} InPlaceIndicator")
+            if (inPlace == null) { return }
+            processResourceInPlace(clusterInt, inPlace, isRefresh, isDiscovery)
+            break
+        case 0x0004: // LastChangedTime
+            Long lastChanged = resourceNonNegativeLong(value, "${filterName} LastChangedTime")
+            if (lastChanged == null) { return }
+            processResourceLastChanged(clusterInt, lastChanged, isRefresh, isDiscovery)
+            break
+        case 0x0005: // ReplacementProductList
+            if (!(value instanceof List)) {
+                logWarn "processResourceMonitoringAttribute: expected List for ${filterName} ReplacementProductList, received ${value}"
+                return
+            }
+            if (isInfoMode) { logInfo "${prefix}${filterName} ReplacementProductList: ${value}" }
+            break
+        default:
+            logTrace "processResourceMonitoringAttribute: unsupported cluster 0x${hex4(clusterInt)} attribute 0x${hex4(attrInt)} value ${value}"
+            break
+    }
+}
+
+private void queueResourceUsage(final Integer clusterInt, final boolean isRefresh, final boolean isDiscovery) {
+    Map filterState = getResourceMonitoringState(clusterInt)
+    filterState.pendingRefresh = filterState.pendingRefresh == true || isRefresh
+    filterState.pendingDiscovery = filterState.pendingDiscovery == true || isDiscovery
+    setResourceMonitoringState(clusterInt, filterState)
+    String callback = clusterInt == 0x0071 ? 'emitPendingHepaFilterUsage' : 'emitPendingCarbonFilterUsage'
+    runInMillis(RESOURCE_MONITORING_COALESCE_MS, callback, [overwrite: true])
+}
+
+void emitPendingHepaFilterUsage() {
+    emitPendingResourceUsage(0x0071)
+}
+
+void emitPendingCarbonFilterUsage() {
+    emitPendingResourceUsage(0x0072)
+}
+
+private void emitPendingResourceUsage(final Integer clusterInt) {
+    Map filterState = getResourceMonitoringState(clusterInt)
+    boolean isRefresh = filterState.pendingRefresh == true
+    boolean isDiscovery = filterState.pendingDiscovery == true
+    filterState.pendingRefresh = false
+    filterState.pendingDiscovery = false
+    setResourceMonitoringState(clusterInt, filterState)
+
+    Integer condition = filterState.condition instanceof Number ? (filterState.condition as Number).intValue() : null
+    Integer direction = filterState.direction instanceof Number ? (filterState.direction as Number).intValue() : null
+    if (condition == null || direction == null) {
+        logDebug "${resourceFilterName(clusterInt)} usage is waiting for both Condition and DegradationDirection"
+        return
+    }
+
+    Integer usage = direction == 0 ? condition : 100 - condition
+    usage = Math.max(0, Math.min(100, usage))
+    String eventName = clusterInt == 0x0071 ? 'filterUsage' : 'carbonFilterUsage'
+    String directionName = ResourceMonitoringDegradationDirection[direction]
+    String descriptionText = "${device.displayName} ${resourceFilterName(clusterInt)} usage: ${usage}% (Condition:${condition}% direction:${directionName})"
+    emitResourceReading(clusterInt, 'lastUsage', eventName, usage, '%', descriptionText, isRefresh, isDiscovery)
+}
+
+private void processResourceChangeIndication(final Integer clusterInt, final Integer indication,
+                                             final boolean isRefresh, final boolean isDiscovery) {
+    String eventValue = indication == 0 ? 'normal' : 'replace'
+    String eventName = clusterInt == 0x0071 ? 'filterStatus' : 'carbonFilterStatus'
+    String descriptionText = "${device.displayName} ${resourceFilterName(clusterInt)} status: ${eventValue} (ChangeIndication:${ResourceMonitoringChangeIndication[indication]})"
+    emitResourceReading(clusterInt, 'lastStatus', eventName, eventValue, null, descriptionText, isRefresh, isDiscovery)
+}
+
+private void processResourceInPlace(final Integer clusterInt, final Boolean inPlace,
+                                    final boolean isRefresh, final boolean isDiscovery) {
+    String eventValue = inPlace ? 'present' : 'not present'
+    String eventName = clusterInt == 0x0071 ? 'filterInPlace' : 'carbonFilterInPlace'
+    String descriptionText = "${device.displayName} ${resourceFilterName(clusterInt)} is ${eventValue}"
+    emitResourceReading(clusterInt, 'lastInPlace', eventName, eventValue, null, descriptionText, isRefresh, isDiscovery)
+}
+
+private void processResourceLastChanged(final Integer clusterInt, final Long lastChanged,
+                                        final boolean isRefresh, final boolean isDiscovery) {
+    String eventName = clusterInt == 0x0071 ? 'filterLastChanged' : 'carbonFilterLastChanged'
+    String descriptionText = "${device.displayName} ${resourceFilterName(clusterInt)} last changed: ${lastChanged} epoch-s"
+    emitResourceReading(clusterInt, 'lastChanged', eventName, lastChanged, null, descriptionText, isRefresh, isDiscovery)
+}
+
+private void emitResourceReading(final Integer clusterInt, final String stateKey, final String eventName,
+                                 final Object value, final String unit, final String descriptionText,
+                                 final boolean isRefresh, final boolean isDiscovery) {
+    Map filterState = getResourceMonitoringState(clusterInt)
+    if (!isRefresh && !isDiscovery && filterState[stateKey] == value) {
+        logDebug "${eventName} unchanged: ${value} - event suppressed"
+        return
+    }
+    filterState[stateKey] = value
+    setResourceMonitoringState(clusterInt, filterState)
+
+    Map event = [name: eventName, value: value, descriptionText: descriptionText]
+    if (unit != null) { event.unit = unit }
+    emitReadingEvent(event, isRefresh, isDiscovery)
+}
+
+private Map getResourceMonitoringState(final Integer clusterInt) {
+    Object allState = state.resourceMonitoring
+    Object filterState = allState instanceof Map ? (allState as Map)[hex4(clusterInt)] : null
+    return filterState instanceof Map ? new LinkedHashMap(filterState as Map) : [:]
+}
+
+private void setResourceMonitoringState(final Integer clusterInt, final Map filterState) {
+    Map allState = state.resourceMonitoring instanceof Map ? new LinkedHashMap(state.resourceMonitoring as Map) : [:]
+    allState[hex4(clusterInt)] = new LinkedHashMap(filterState)
+    state.resourceMonitoring = allState
+}
+
+private void storeResourceMonitoringValue(final Integer clusterInt, final String key, final Object value) {
+    Map filterState = getResourceMonitoringState(clusterInt)
+    filterState[key] = value
+    setResourceMonitoringState(clusterInt, filterState)
+}
+
+private Integer resourceInteger(final Object value, final Integer minimum, final Integer maximum, final String label) {
+    if (!(value instanceof Number)) {
+        logWarn "${label}: expected Number, received ${value}"
+        return null
+    }
+    Double numericValue = (value as Number).doubleValue()
+    if (Double.isNaN(numericValue) || Double.isInfinite(numericValue) || numericValue != Math.rint(numericValue) ||
+        numericValue < minimum || numericValue > maximum) {
+        logWarn "${label}: invalid value ${value}; expected an integer in ${minimum}..${maximum}"
+        return null
+    }
+    return (value as Number).intValue()
+}
+
+private Long resourceNonNegativeLong(final Object value, final String label) {
+    if (!(value instanceof Number)) {
+        logWarn "${label}: expected Number, received ${value}"
+        return null
+    }
+    Double numericValue = (value as Number).doubleValue()
+    if (Double.isNaN(numericValue) || Double.isInfinite(numericValue) || numericValue != Math.rint(numericValue) || numericValue < 0) {
+        logWarn "${label}: invalid non-negative integer value ${value}"
+        return null
+    }
+    return (value as Number).longValue()
+}
+
+private Boolean resourceBoolean(final Object value, final String label) {
+    if (value instanceof Boolean) { return value as Boolean }
+    Integer numericValue = resourceInteger(value, 0, 1, label)
+    return numericValue == null ? null : numericValue == 1
+}
+
+private String resourceFilterName(final Integer clusterInt) {
+    return clusterInt == 0x0071 ? 'HEPA filter' : 'activated carbon filter'
+}
+
+private void processConcentrationAttribute(final Integer clusterInt, final Integer attrInt, final Object value,
+                                           final boolean isInfoMode, final String prefix, final boolean isRefresh,
+                                           final boolean isDiscovery) {
+    switch (attrInt) {
+        case 0x0000:
+            processConcentrationMeasuredValue(clusterInt, value, isRefresh, isDiscovery)
+            break
+        case 0x0001:
+        case 0x0002:
+        case 0x0007:
+            logNativeConcentrationInfoValue(clusterInt, attrInt, value, isInfoMode, prefix)
+            break
+        case 0x0008:
+        case 0x0009:
+        case 0x000A:
+            logNativeConcentrationEnum(clusterInt, attrInt, value, isInfoMode, prefix)
+            break
+        default:
+            logWarn "processConcentrationAttribute: unsupported cluster 0x${hex4(clusterInt)} attribute 0x${hex4(attrInt)}"
+            break
+    }
+}
+
+private void processConcentrationMeasuredValue(final Integer clusterInt, final Object value, final boolean isRefresh,
+                                               final boolean isDiscovery) {
+    String measurementName = clusterInt == 0x040D ? 'CO\u2082' : 'PM2.5'
+    String unit = clusterInt == 0x040D ? 'ppm' : '\u00B5g/m\u00B3'
+    if (value == null) {
+        logDebug "${measurementName} is not available"
+        return
+    }
+    if (!(value instanceof Number)) {
+        logWarn "processConcentrationMeasuredValue: expected Number for ${measurementName}, received ${value}"
+        return
+    }
+
+    Double measuredValue = (value as Number).doubleValue()
+    if (Double.isNaN(measuredValue) || Double.isInfinite(measuredValue)) {
+        logWarn "processConcentrationMeasuredValue: invalid ${measurementName} value ${measuredValue}"
+        return
+    }
+    Integer roundedValue = Math.round(measuredValue) as Integer
+    Integer threshold = clusterInt == 0x040D
+        ? safeToInt(settings.co2ReportDelta, 10)
+        : safeToInt(settings.pm25ReportDelta, 3)
+    String stateName = clusterInt == 0x040D ? 'lastCO2' : 'lastPM25'
+    Integer lastValue = state[stateName] instanceof Number ? (state[stateName] as Number).intValue() : null
+
+    logDebug "${measurementName} native: ${measuredValue}; rounded: ${roundedValue} ${unit}"
+    if (!isRefresh && !isDiscovery && lastValue != null && Math.abs(roundedValue - lastValue) < threshold) {
+        logDebug "${measurementName} change ${roundedValue - lastValue} ${unit} below threshold ${threshold} - event suppressed"
+        return
+    }
+
+    state[stateName] = roundedValue
+    String eventName = clusterInt == 0x040D ? 'carbonDioxide' : 'pm25'
+    String descriptionText = "${device.displayName} ${measurementName}: ${roundedValue} ${unit}"
+    emitReadingEvent([name: eventName, value: roundedValue, unit: unit, descriptionText: descriptionText], isRefresh, isDiscovery)
+}
+
+private void emitReadingEvent(final Map event, final boolean isRefresh, final boolean isDiscovery) {
+    if (isRefresh) {
+        event.descriptionText = "${event.descriptionText} [refresh]".toString()
+        event.isStateChange = true
+        event.isRefresh = true
+    }
+    if (isDiscovery) {
+        event.descriptionText = "${event.descriptionText} [discovery]".toString()
+        event.isStateChange = true
+        event.isDiscovery = true
+    }
+    sendEvent(event)
+    logDescriptionText(event.descriptionText)
+}
+
+private void logDescriptionText(final Object descriptionText) {
+    if (descriptionText == null) { return }
+    String message = descriptionText.toString()
+    String devicePrefix = "${device.displayName} ".toString()
+    if (message.startsWith(devicePrefix)) {
+        message = message.substring(devicePrefix.length())
+    }
+    logInfo message
+}
+
+private void logNativeConcentrationInfoValue(final Integer clusterInt, final Integer attrInt, final Object value,
+                                             final boolean isInfoMode, final String prefix) {
+    String clusterName = clusterInt == 0x040D ? 'CO\u2082' : 'PM2.5'
+    String unit = clusterInt == 0x040D ? 'ppm' : '\u00B5g/m\u00B3'
+    String attrName = ConcentrationMeasurementClusterAttributes[attrInt] ?: "attribute 0x${hex4(attrInt)}"
+    if (value == null) {
+        if (isInfoMode) { logInfo "${prefix}${clusterName} ${attrName}: <i>not available</i>" }
+        return
+    }
+    if (!(value instanceof Number)) {
+        logWarn "logNativeConcentrationInfoValue: expected Number for 0x${hex4(clusterInt)}/0x${hex4(attrInt)}, received ${value}"
+        return
+    }
+    if (isInfoMode) {
+        logInfo "${prefix}${clusterName} ${attrName}: ${(value as Number).doubleValue()} ${unit}"
+    }
+}
+
+private void logNativeConcentrationEnum(final Integer clusterInt, final Integer attrInt, final Object value,
+                                        final boolean isInfoMode, final String prefix) {
+    if (!(value instanceof Number)) {
+        logWarn "logNativeConcentrationEnum: expected Number for 0x${hex4(clusterInt)}/0x${hex4(attrInt)}, received ${value}"
+        return
+    }
+    if (!isInfoMode) { return }
+
+    Integer enumValue = (value as Number).intValue()
+    String decoded
+    switch (attrInt) {
+        case 0x0008: decoded = decodeMeasurementUnit(enumValue); break
+        case 0x0009: decoded = decodeMeasurementMedium(enumValue); break
+        case 0x000A: decoded = decodeLevelValue(enumValue); break
+    }
+    String clusterName = clusterInt == 0x040D ? 'CO\u2082' : 'PM2.5'
+    String attrName = ConcentrationMeasurementClusterAttributes[attrInt] ?: "attribute 0x${hex4(attrInt)}"
+    logInfo "${prefix}${clusterName} ${attrName}: ${decoded}"
+}
+
+private void processGlobalMatterAttribute(final Integer clusterInt, final Integer attrInt, final Object value,
+                                          final boolean isInfoMode, final String prefix) {
+    if (!(clusterInt in [0x005B, 0x0071, 0x0072, 0x040D, 0x042A])) {
+        logWarn "processGlobalMatterAttribute: unsupported cluster 0x${hex4(clusterInt)}"
+        return
+    }
+    boolean isResourceMonitoring = clusterInt in [0x0071, 0x0072]
+    String clusterName = clusterInt == 0x005B
+        ? 'Air Quality'
+        : (isResourceMonitoring ? resourceFilterName(clusterInt) : (clusterInt == 0x040D ? 'CO\u2082' : 'PM2.5'))
+    Map<Integer, String> attributes = clusterInt == 0x005B
+        ? AirQualityClusterAttributes
+        : (isResourceMonitoring ? ResourceMonitoringClusterAttributes : ConcentrationMeasurementClusterAttributes)
+    String attrName = attributes[attrInt] ?: "attribute 0x${hex4(attrInt)}"
+
+    switch (attrInt) {
+        case 0xFFFC:
+        case 0xFFFD:
+            Integer normalized = compatibilityGlobalInt(value, attrInt)
+            if (normalized == null) {
+                logWarn "processGlobalMatterAttribute: expected Number or compatibility HEX String for 0x${hex4(clusterInt)}/0x${hex4(attrInt)}, received ${value}"
+                return
+            }
+            if (!isInfoMode) { return }
+            if (attrInt == 0xFFFC) {
+                if (isResourceMonitoring) {
+                    logInfo "${prefix}${clusterName} ${attrName}: 0x${hex4(normalized)} (${normalized})"
+                }
+                else {
+                    String decoded = clusterInt == 0x005B
+                        ? decodeAirQualityFeatureMap(normalized)
+                        : decodeConcentrationMeasurementFeatureMap(normalized)
+                    logInfo "${prefix}${clusterName} ${attrName}: 0x${hex4(normalized)} (${normalized}) - Features: ${decoded}"
+                }
+            }
+            else {
+                logInfo "${prefix}${clusterName} ${attrName}: ${normalized}"
+            }
+            break
+        case 0xFFF8:
+        case 0xFFF9:
+        case 0xFFFB:
+            if (!(value instanceof List)) {
+                logWarn "processGlobalMatterAttribute: expected List for 0x${hex4(clusterInt)}/0x${hex4(attrInt)}, received ${value}"
+                return
+            }
+            List<String> formatted = formatCompatibilityIdentifierList(value as List)
+            if (formatted == null) { return }
+            if (isInfoMode) { logInfo "${prefix}${clusterName} ${attrName}: ${formatted}" }
+            break
+    }
+}
+
+// Temporary compatibility boundary for scalar global values converted to HEX by newParseCompatibilityPatch().
+private Integer compatibilityGlobalInt(final Object value, final Integer attrInt) {
+    if (value instanceof Number) { return (value as Number).intValue() }
+    if (attrInt in [0xFFFC, 0xFFFD] && value instanceof String && value ==~ /^[0-9A-Fa-f]+$/) {
+        return safeHexToInt(value, null)
+    }
+    return null
+}
+
+// Temporary display boundary for global lists converted to HEX Strings by newParseCompatibilityPatch().
+private List<String> formatCompatibilityIdentifierList(final List values) {
+    List<String> formatted = []
+    for (Object item : values) {
+        Integer identifier
+        if (item instanceof Number) {
+            identifier = (item as Number).intValue()
+        }
+        else if (item instanceof String && item ==~ /^[0-9A-Fa-f]+$/) {
+            identifier = safeHexToInt(item, null)
+        }
+        if (identifier == null) {
+            logWarn "formatCompatibilityIdentifierList: unsupported list item ${item}"
+            return null
+        }
+        formatted.add("0x${hex4(identifier)}".toString())
+    }
+    return formatted
+}
+
 
 void getInfo() {
-    // Get ServerList to see what clusters are supported
-    List<String> serverList = getServerList()
-    if (serverList.isEmpty()) {
+    checkDriverVersion()
+    // fingerprintData and the endpoint data value are persisted HEX boundaries, not callback fields.
+    List<String> persistedServerList = getServerList()
+    if (persistedServerList.isEmpty()) {
         logWarn "getInfo: ServerList is empty or not available"
         return
     }
-    
-    logInfo "getInfo: Device supports clusters: ${serverList}"
-    
+
+    List<Integer> serverClusters = []
+    for (Object persistedCluster : persistedServerList) {
+        Integer clusterInt = safeHexToInt(persistedCluster, null)
+        if (clusterInt == null) {
+            logWarn "getInfo: invalid persisted ServerList value ${persistedCluster}"
+            continue
+        }
+        serverClusters.add(clusterInt)
+    }
+    if (serverClusters.isEmpty()) {
+        logWarn "getInfo: ServerList contains no valid cluster identifiers"
+        return
+    }
+
+    String endpointHex = device.getDataValue('id')
+    Integer endpoint = safeHexToInt(endpointHex, null)
+    if (endpoint == null) {
+        logWarn "getInfo: invalid persisted endpoint ${endpointHex}"
+        return
+    }
+
+    logInfo "getInfo: Device supports clusters: ${serverClusters.collect { '0x' + hex4(it) }}"
+
     // Set state flags for info mode
     if (state.states == null) { state.states = [:] }
     if (state.lastTx == null) { state.lastTx = [:] }
@@ -612,43 +863,49 @@ void getInfo() {
     // Schedule job to turn off info mode after 10 seconds
     runIn(10, 'clearInfoMode')
     
-    // Get the endpoint ID
-    String endpointHex = device.getDataValue('id') ?: '1'
-    Integer endpoint = HexUtils.hexStringToInt(endpointHex)
-    
     // Read ALL attributes from each supported cluster
     // Cluster 0x0006 - OnOff / Switch
-    if (isClusterSupported('0006')) {
+    if (0x0006 in serverClusters) {
         logInfo "getInfo: reading all OnOff cluster attributes"
         parent?.readAttribute(endpoint, 0x0006, -1)
     }
     
     // Cluster 0x005B - Air Quality
-    if (isClusterSupported('005B')) {
+    if (0x005B in serverClusters) {
         logInfo "getInfo: reading all Air Quality cluster attributes"
         parent?.readAttribute(endpoint, 0x005B, -1)
     }
+
+    // Clusters 0x0071 / 0x0072 - Resource Monitoring
+    if (0x0071 in serverClusters) {
+        logInfo "getInfo: reading all HEPA Filter Monitoring cluster attributes"
+        parent?.readAttribute(endpoint, 0x0071, -1)
+    }
+    if (0x0072 in serverClusters) {
+        logInfo "getInfo: reading all Activated Carbon Filter Monitoring cluster attributes"
+        parent?.readAttribute(endpoint, 0x0072, -1)
+    }
     
     // Cluster 0x0402 - Temperature Measurement
-    if (isClusterSupported('0402')) {
+    if (0x0402 in serverClusters) {
         logInfo "getInfo: reading all Temperature Measurement cluster attributes"
         parent?.readAttribute(endpoint, 0x0402, -1)
     }
     
     // Cluster 0x0405 - Relative Humidity Measurement
-    if (isClusterSupported('0405')) {
+    if (0x0405 in serverClusters) {
         logInfo "getInfo: reading all Relative Humidity Measurement cluster attributes"
         parent?.readAttribute(endpoint, 0x0405, -1)
     }
     
     // Cluster 0x040D - Carbon Dioxide Concentration Measurement
-    if (isClusterSupported('040D')) {
+    if (0x040D in serverClusters) {
         logInfo "getInfo: reading all CO₂ Concentration Measurement cluster attributes"
         parent?.readAttribute(endpoint, 0x040D, -1)
     }
     
     // Cluster 0x042A - PM2.5 Concentration Measurement
-    if (isClusterSupported('042A')) {
+    if (0x042A in serverClusters) {
         logInfo "getInfo: reading all PM2.5 Concentration Measurement cluster attributes"
         parent?.readAttribute(endpoint, 0x042A, -1)
     }
@@ -758,6 +1015,32 @@ String decodeLevelValue(Integer value) {
     0xFFFB  : 'AttributeList',       // list, R V, M
     0xFFFC  : 'FeatureMap',          // FeatureMap, R V, M
     0xFFFD  : 'ClusterRevision'      // uint16, R V, M
+]
+
+// Resource Monitoring clusters (0x0071 HEPA / 0x0072 activated carbon)
+@Field static final Map<Integer, String> ResourceMonitoringClusterAttributes = [
+    0x0000  : 'Condition',
+    0x0001  : 'DegradationDirection',
+    0x0002  : 'ChangeIndication',
+    0x0003  : 'InPlaceIndicator',
+    0x0004  : 'LastChangedTime',
+    0x0005  : 'ReplacementProductList',
+    0xFFF8  : 'GeneratedCommandList',
+    0xFFF9  : 'AcceptedCommandList',
+    0xFFFB  : 'AttributeList',
+    0xFFFC  : 'FeatureMap',
+    0xFFFD  : 'ClusterRevision'
+]
+
+@Field static final Map<Integer, String> ResourceMonitoringDegradationDirection = [
+    0x00    : 'Up',
+    0x01    : 'Down'
+]
+
+@Field static final Map<Integer, String> ResourceMonitoringChangeIndication = [
+    0x00    : 'OK',
+    0x01    : 'Warning',
+    0x02    : 'Critical'
 ]
 
 // ============ Matter Concentration Measurement Cluster Attributes Map ============

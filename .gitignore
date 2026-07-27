@@ -399,14 +399,17 @@ FodyWeavers.xsd
 scratchPad.txt
 Matter_Advanced_Bridge.groovy.bak
 packageManifest.json.bak
-AGGREGATOR_LABELS_PLAN.md
-BUGS.md
-BUGS_CODEX.md
+
+# Agent guides — local only, kept at the repository root by convention.
+AGENTS.md
 CLAUDE.md
 CODEX.md
-Matter_Advanced_Bridge_OPTIMIZATION_PLAN.md
+
+# Maintainer working documents — local only, never published.
+# docs/user/ is deliberately NOT ignored; it is the canonical public documentation.
+docs/maintainer/
+
+# Local-only working notes kept alongside the code they describe.
 Libraries/Matter_State_Machines_OPTIMIZATION_PLAN.md
 Tests/Jailbreak_the_Children.groovy
 Tests/Matter_Advanced_Bridge_Stock_Child_Adoption_Handover.md
-AGENTS.md
-TODO.md
