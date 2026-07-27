@@ -1,154 +1,115 @@
-<!-- MIGRATED from wiki page `Matter-Advanced-Bridge-‐-revisions-history` at baseline c4000b7 on 2026-07-27.
-     Mechanical import: links and images rewritten, text unchanged.
-     NOT YET AUDITED against the current release. -->
+# Revision history
 
-([back to Matter Advanced Bridge main page](../index.md))
+Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
 
+User-visible changes, newest first. The driver file header carries the complete technical changelog,
+including internal refactoring not listed here.
 
-### Revisions history : 
+**The current released version is 1.8.8**, which is what Hubitat Package Manager installs. **1.9.0 is
+a BETA** — available for testing, not yet the released package.
 
- * ver. 0.0.0  2023-12-29 kkossev  - Inital version;
- * ver. 0.0.1  2024-01-05 kkossev  - Linter; Discovery OK; published for alpha- testing.
- * ver. 0.0.2  2024-01-07 kkossev  - Refresh() reads the subscribed attributes; added command 'Device Label'; VendorName, ProductName, Reachable for child devices; show the device label in the event logs if set;   added a test command 'setSwitch' on/off/toggle + device#;
-* ver. 0.0.3  2024-01-11 kkossev  
-  * added Child devices 
-  * added deviceCount, 
-  * added 'Matter_Generic_Component_Motion_Sensor.groovy', 
-  * added 'Matter_Generic_Component_Window_Shade.groovy'
-  * added matterLib.groovy'
-  * Hubitat Bundle package;
-  * A1 Bridge Discovery now uses the short version; 
-  * added logTrace() and logError() methods; 
-  * setSwitch and setLabel commands are visible in _DEBUG mode only
- * ver. 0.0.4  2024-01-14 kkossev 
-   * added 'Matter Generic Component Switch' component driver;
-   * cluster 0x0102 (WindowCovering) attributes decoding - position, targetPosition, windowShade; 
-   * added cluster 0x0102 commands processing;
-   * logTrace is  switched off after 30 minutes;
-   * filtered duplicated On/Off events in the Switch component driver;
-   * disabled devices are not processed to avoid spamming the debug logs; 
-   * added initializeCtr attribute;
-   * Default Bridge healthCheck method is set to periodic polling every 1 hour; 
-   * added new removeAllSubscriptions() command; 
-   * added 'Invert Motion' option to the Motion Sensor component driver @iEnam
-* ver. 0.0.5  2024-01-20 : 
-  *  added endpointsCount; 
-  * subscribe to [endpoint:00, cluster:001D, attrId:0003 - PartsList = the number of the parts list entries]; 
-  * refactoring: parseGlobalElements(); 
-  * discovery process bugs fixes; 
-  * debug is false by default; 
-  * changed the steps sequence (first create devices, last subscribe to the attributes); 
-  * temperature sensor omni component bug fix;
-* ver. 0.0.6  2024-01-27 
-  * DiscoverAll() button (state machine) replaces all old manual discovery buttons; 
-  * removed setLabel and setSwitch test command;
-* ver. 0.0.7  2024-01-28 
-  * code cleanup;
-  *  bug fix -do not send events to the bridge device if the child device does not exist; 
-  * discoverAll debug options bug fix; 
-  * deviceCount, endpointsCount, nodeLabelbug fixes;
-  * refresh() button on the Bridge device fixed; 
-  * multiple subscribe entries bug fix;
-  * Bulbs are assigned 'Generic Component Dimmer'; 
-  * cluster 08 partial processing - componentSetLevel() implementation; 
-  * added subscribing to more than one attribute per endpoint; 
-  * Celsius to Fahrenheit conversion for temperature sensors
- * ver. 0.1.0  2024-02-03
-   * versions are renamed to start from major ver. 0.x.x;
-   * added Contact Sensor processing (works with Zemismart only, doesn't work with Aqara?); 
-   * added Thermostat cluster 0x0201 (attributes decoding only);
-   *  added Generic Component Battery
-   * vibration sensors are processed as motion sensors; 
-   *  nodeLabel null checks; 
-   * rounded the humidity to the nearest integer value; 
-   *  added a compatibility table matrix for Aqara devices on the top post;
-* ver : 0.1.1 2023/02/03 12:44 PM  :
-   *  PowerSource cluster processing was temporarily removed.
- * ver. 0.2.0  2024-02-04  (dev.branch) : 
-   *  refactored the matter messages parsing method using a lookup map;
-   * bugfix: duplicated attrList entries; 
-   * bugfix: deviceCount and initializeCtr not updated; 
-   * bugfix : healhCheck schedued job was lost on resubscribe() 
-   * added cluster 0x0101 DoorLock decoding; lock and unlock commands (not tested!)
-* ver. 0.2.1  2024-02-07  (dev.branch)
-  *  added temperature and humidity valid values checking; 
-  * change: When creating new child devices, the Device Name is set using a pattern 'Bridge #4407 Device#08 (Humidity Sensor)' as an example, Device Label is left empty;
-  *  bugfix: device labels in logs @fanmanrules;
-  *  implemented componentStartLevelChange(), componentStopLevelChange(), componentSetColorTemperature; 
-  * use 'Generic Component CT' driver instead of dimmer for bulbs; 
-  * added colorTemperature and colorName for CT bulbs;
-  * @CompileStatic experiments...
-* ver. 0.2.2  2024-02-10 
-  * bugfix: null pointers checks exceptions; 
-  * increased the discovery timeouts (the number of the retries); 
-  * all states are cleared at the start of teh discovery process;  
-  * bugfix: CT/RGB bulbs reinitialization;
-* ver. 0.2.3  2024-02-11 
-  * lock/unlock commands disabled (not working for now); 
-  * RGBW bulbs: hue, saturation; setColor, colorMode in CT mode;  
-  * healthStatus offline when polling was not working;
-* ver. 0.2.4  2024-02-11  
-  * bugfix: setLevel duration and setColorTemperature level parameters were not working; 
-  * ignored duplicated events on main driver level;
- * ver. 0.2.5  2024-02-12 
-   * bugfix: exception processing while checking for duplicate events.
- * ver. 0.3.0  2024-02-13 
-   * added reading of all supported clusters 0xFFFB attribute during DeviceDiscovery for each child device; 
-   * subscribing to 0x0300 attributes; 
-   * colorMode and colorName fixes; 
-   * setColor turns the bulb on; 
-   * RGBW bulbs is be assigned 'Generic Component RGBW' driver;
- * ver. 0.4.0  2024-02-18 - (dev.branch) : 
-   * a major refactoring of the attributes subscription process;
-   * refactored the refresh() command for all child devices to use the same subscription list;
-   * added ERROR info messages during the discovery process;
-   *  increased timeouts; 
-   * added a compatibility matrix table for Tuya-Aqara-Hue-SwitchBot Matter bridges on the top post; 
-   * created a MVP list and published it on the top post;
-   * The bundle is made available on HPM; 
-* ver. 0.4.1  2024-02-20 
-  *  added illuminance cluster support (Aqara T1 Light Sensor); 
-  * bugfix: colorName was sent wrongly in the event description for CT bulbs;
-    * note: PhilipsHue does not report colorMode back when changed from another system!; 
-    * note: Aqara LED Strip T1 colorMode reporting is wrong!
-  * the FeatureMap of each supported cluster is stored in the state figngerprint variable;
-* ver. 0.4.2  2024-02-25 
-  *  fixed the illuminance lux reading conversion;  
-  * invertMotion changes the motion state immediately; 
-  * added a list of known issues and limitations on the top post - for both HE system and the driver;
-* ver. 0.4.3  2024-02-26 
-  *  added utilities() command; 
-  * loose checks for the OnOff commands; 
-  * states cleanup (remove fingerprintXX, leave Subscriptions) when minimizeStateVariables advanced option is enabled;
- * ver. 0.4.4  2024-03-02 kkossev  - (dev.branch) 
-  * added refresh() for component devices;
-  *  global refresh() from the parent device registers events for all child devices!;
-  *  added clearStats command; 
-  * SwitchBot/Zemismart WindowCovering - bug fixes @Steve9123456789
-* ver. 0.4.5  2024-03-03 kkossev  - (dev.branch) 
-  * WindowCovering refresh() bug patch; 
-  * commented out the WindowCovering ping() command (capability 'Health Check' - not supported yet); 
-  * enabled Battery / PowerSource cluster (0x002F) processing!
-* ver. 0.4.6  2024-03-04 kkossev  - (dev.branch) 
-  * WindowCovering unit fix; hopefully also WindowCovering close() fix; 
-  * added and verified the importUrl for all libraries and component drivers;
-* ver. 0.5.0  2024-03-09 kkossev  - (dev.branch) 
-  * WindowCovering driver refactoring; 
-  * WindowCovering: added battery attributes; 
-  * WindowCovering: added a bunch of new options; 
-  * Minimize State Variables by default is true;
-  * Documented the WindowCovering settings - ../drivers/window-shade.md
-* ver. 0.5.1  2024-03-10 
-  * Help/Documentation button in the driver linked to GitHub Wiki page and HE Community thread;
-* ver. 0.5.2  2024-03-11  (dev.branch) : 
-  * fixed an exception in the Window Shade driver; 
-  * added parseTest(map as string) _DEBUg command in the 'Matter Generic Component Window Shade' driver; 
-  * battery attributes name changes;
-  * removed the _DiscoverAll options;
-* ver. 0.5.4  2024-03-12 kkossev  - (dev.branch) TODO list cleanup
-* ver. 0.6.0  2024-03013 kkossev - moved to Github new repository https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/tree/main 
+## 1.9.0 — 2026-07-25 *(BETA)*
 
+- Illuminance, temperature, pressure and humidity sensors no longer report a false `0` when the
+  device says the measurement is unavailable.
+- Illuminance readings are now rounded rather than truncated, and very bright readings such as
+  direct sunlight are no longer discarded.
+- New **Spammy attributes minimum reporting interval** preference, which throttles frequently
+  reporting attributes at the Matter subscription instead of inside the driver. The old
+  driver-side illuminance throttling and its preference are removed — see
+  [Known issues](../help/known-issues.md).
+- Battery reporting fixed for devices that report it on the root node, such as IKEA Thread devices.
+  The bridge itself can now report battery too.
+- The health check and ping jobs are scheduled automatically on a fresh installation. Previously
+  nothing was scheduled until you pressed Save Preferences.
+- Fixed endless `colorMode is CT` log messages on the bridge device.
 
------------
+## 1.8.x — 2026-02 to 2026-05
 
-([back to Matter Advanced Bridge main page](../index.md))
+- **1.8.9** Aqara G350 video camera support *(BETA)*.
+- **1.8.8** Lock code improvements; default timeouts doubled. **Current released version.**
+- **1.8.7** Matter Lock Codes — first test version. Still experimental.
+- **1.8.6** Fan control (cluster `0x0202`), tested on an Altitude Boca II ceiling fan. Thanks
+  @sbohrer.
+- **1.8.4** Refresh now reads attributes in chunks, to stay within Matter message size limits.
+- **1.8.3** Thermostat fixes: Fahrenheit to Celsius conversion for heating setpoints, cooling
+  setpoint support, and correct decoding of the running state. Thanks @Murv82.
+- **1.8.2** Contact sensor sensitivity support (cluster `0x0080`) and the custom Contact Sensor
+  driver — Aqara P100.
+- **1.8.0** Pressure sensor support (cluster `0x0403`); Button driver improvements.
+
+## 1.7.x — 2026-01 to 2026-03
+
+- **1.7.8** Delayed illumination handling. Thanks @lgk.
+- **1.7.7 – 1.7.6** Power/energy and window covering exception fixes.
+- **1.7.4** Bridge reboot and uptime reporting; event filtering after a reboot or re-subscribe.
+- **1.7.2** Contact, water, motion and lock state parsing fixes; battery percentage patch for the
+  Zemismart M1.
+- **1.7.1** Automatic best-name labelling for all child devices. Thanks @iEnam.
+- **1.7.0** ALPSTUGA air quality monitor support (CO₂); new clean subscribe interval preferences.
+
+## 1.6.0 — 2026-01-17
+
+- Major refactoring of the Door Lock driver.
+- Water leak sensors are now detected automatically instead of appearing as contact sensors.
+
+## 1.5.x — 2025-04 to 2026-01
+
+- **1.5.6** Button events fixed — the subscription problem that had prevented buttons from working.
+- **1.5.5** **Matter locks now work.** Locking and unlocking, not just status.
+- **1.5.4** New Button driver; new discovery timeout scale preference.
+- **1.5.3** Workaround for a Hubitat TLV decoding bug.
+- **1.5.2** New Signal driver.
+- **1.5.0** New Power Energy driver.
+
+## 1.4.0 — 2024-12-26
+
+- Compatibility with Hubitat platform 2.4.0.x.
+
+## 1.3.0 — 2024-10-10
+
+- Air Purifier driver and air quality sensor support (cluster `0x005B`).
+
+## 1.2.x — 2024-10
+
+- **1.2.2** SwitchBot Button driver. Thanks @ymerj. *(Deprecated — use the Button driver.)*
+- **1.2.1** Thermostat fixes and basic Matter event decoding.
+- **1.2.0** Thermostat support; adopted the platform's `cleanSubscribe`.
+
+## 1.1.0 — 2024-07-20
+
+- Door Lock component driver, contributed by @dds82.
+- Identify command.
+
+## 1.0.0 — 2024-03-16
+
+First public release.
+
+---
+
+## Before the public release
+
+The 0.x history below covers alpha and beta testing, from the first version in December 2023 to the
+move to this GitHub repository in March 2024. It is kept for the record.
+
+* ver. 0.0.0  2023-12-29 kkossev  - Inital version;
+* ver. 0.0.1  2024-01-05 kkossev  - Linter; Discovery OK; published for alpha- testing.
+* ver. 0.0.2  2024-01-07 kkossev  - Refresh() reads the subscribed attributes; added command 'Device Label'; VendorName, ProductName, Reachable for child devices; show the device label in the event logs if set; added a test command 'setSwitch' on/off/toggle + device#;
+* ver. 0.0.3  2024-01-11 kkossev — added Child devices; added deviceCount; added the Motion Sensor and Window Shade component drivers; added matterLib.groovy; Hubitat Bundle package; added logTrace() and logError().
+* ver. 0.0.4  2024-01-14 kkossev — added the Switch component driver; WindowCovering position and commands; trace logging switched off automatically; duplicate On/Off events filtered; disabled devices skipped; added initializeCtr; added removeAllSubscriptions(); 'Invert Motion' option @iEnam.
+* ver. 0.0.5  2024-01-20 — added endpointsCount; subscribe to PartsList; discovery fixes; debug off by default; temperature sensor fix.
+* ver. 0.0.6  2024-01-27 — the _DiscoverAll state machine replaced the manual discovery buttons.
+* ver. 0.0.7  2024-01-28 — many discovery and event fixes; bulbs assigned 'Generic Component Dimmer'; setLevel implemented; Celsius to Fahrenheit conversion.
+* ver. 0.1.0  2024-02-03 — Contact Sensor processing; Thermostat cluster decoding; Battery component; vibration sensors handled as motion sensors.
+* ver. 0.2.0  2024-02-04 — parsing refactored to a lookup map; DoorLock cluster decoding; lock and unlock commands (untested).
+* ver. 0.2.1  2024-02-07 — child device naming pattern; level change and colour temperature commands; 'Generic Component CT' for bulbs. Device label fixes @fanmanrules.
+* ver. 0.2.3  2024-02-11 — RGBW hue and saturation, setColor; healthStatus offline fix.
+* ver. 0.3.0  2024-02-13 — read all supported clusters during discovery; RGBW bulbs assigned 'Generic Component RGBW'.
+* ver. 0.4.0  2024-02-18 — major refactoring of attribute subscriptions; the bundle published on HPM.
+* ver. 0.4.1  2024-02-20 — illuminance support (Aqara T1 Light Sensor); FeatureMap stored per cluster.
+* ver. 0.4.3  2024-02-26 — added the utilities() command; state cleanup when Minimize State Variables is on.
+* ver. 0.4.4  2024-03-02 — refresh() for component devices; WindowCovering fixes @Steve9123456789.
+* ver. 0.4.5  2024-03-03 — Battery / PowerSource cluster processing enabled.
+* ver. 0.5.0  2024-03-09 — Window Covering driver refactoring, battery attributes, new options.
+* ver. 0.5.1  2024-03-10 — Help/Documentation links added to the driver.
+* ver. 0.6.0  2024-03-13 — moved to this GitHub repository.

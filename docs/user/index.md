@@ -12,7 +12,7 @@ enthusiast project exploring an alternative way to bring devices from different 
 
 - **Author:** Krassimir Kossev (kkossev)
 - **License:** Apache 2.0
-- **Current release:** 1.9.0 BETA (development branch)
+- **Current release:** 1.8.8 — 1.9.0 is available as a BETA
 - **Installation:** via [Hubitat Package Manager](https://community.hubitat.com/t/release-hubitat-package-manager-hpm-hubitatcommunity/94471) — see [Installation](getting-started/installation.md)
 - **Community thread:**
   <https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252>

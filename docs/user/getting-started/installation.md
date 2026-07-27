@@ -36,6 +36,23 @@ Download the bundle ZIP:
 
 ![Bundle import dialog](../assets/images/getting-started-installation-03.png)
 
+### The BETA bundle
+
+The current release is **1.8.8** — that is what HPM installs, and it is the right choice for most
+people.
+
+**1.9.0 is available as a BETA** for anyone who wants to test the newest changes, or who needs a fix
+that has not reached the release yet. See the
+[revision history](../project/revisions-history.md) for what is in it. Install it the same way as
+any manual bundle, using:
+
+<https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/raw/main/MatterAdvancedBridge_BETA.zip>
+
+A beta is for testing: expect the occasional problem, report what you find in the
+[community thread](../help/support-and-links.md), and be ready to reinstall the release bundle if it
+does not suit you. Installing the beta over an existing installation keeps your devices and
+settings.
+
 ## 2. Prepare your Matter bridge
 
 These steps happen in the bridge manufacturer's own app, not in Hubitat. The exact wording differs
