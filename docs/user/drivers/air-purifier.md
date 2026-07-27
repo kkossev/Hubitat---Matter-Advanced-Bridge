@@ -60,8 +60,22 @@ A given device fills in only the parts it actually has.
 
 | Preference | Default | What it does |
 |---|---|---|
+| **Sensor report frequency** | Medium — ±3 µg/m³ | How much the PM 2.5 reading must change before the device reports it. Very High (±1) through Very Low (±10). |
+| **CO₂ report frequency** | High — ±10 ppm | The same for CO₂. Very High (±5) through Very Low (±100). |
+| **Filter life time** | 6 months | Time between filter changes: 3, 6, 9 months, or 1 year. |
+| **Child lock** | Off | Locks the physical controls on the device, against accidental operation. |
 | **Enable debug logging** | On | Turns itself off automatically after 24 hours. |
 | **Enable descriptionText logging** | On | One readable log line per change. |
+
+The two report-frequency settings are the ones worth adjusting. They trade responsiveness against
+traffic: a very high frequency on an air quality sensor produces a lot of events. If the logs are
+still busier than you want, the parent's **Spammy attributes minimum reporting interval** in
+[Preferences](../configuration/preferences.md) throttles at the subscription instead.
+
+**Child lock and filter life time are written to the device**, not just stored in Hubitat.
+
+Two more settings on this tab — **Default Current State** and **Enable command retry logic** — come
+from the Hubitat platform rather than from this driver.
 
 ## Bridge-specific notes
 

@@ -27,7 +27,7 @@ import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
 @Field static final String CAMERA_DRIVER_VERSION = '1.0.1'
-@Field static final String CAMERA_DRIVER_STAMP   = '2026/07/25 10:57 PM'
+@Field static final String CAMERA_DRIVER_STAMP   = '2026/07/27 7:42 PM'
 
 @Field static final Boolean _DEBUG_CAMERA   = false         // set true only for development
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
@@ -609,9 +609,9 @@ private String parseBooleanValue(Object value) {
 // fmtHelpInfo — inline helper (not in any shared library)
 @Field static final String CAMERA_DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String CAMERA_COMPONENT   = 'Matter Generic Component Camera AV Stream'
-@Field static final String CAMERA_WIKI        = 'Get help on GitHub Wiki page:'
-@Field static final String CAMERA_COMM_LINK   = 'https://community.hubitat.com/t/project-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009'
-@Field static final String CAMERA_GITHUB_LINK = 'https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge'
+@Field static final String CAMERA_WIKI        = 'Documentation:'
+@Field static final String CAMERA_COMM_LINK   = 'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
+@Field static final String CAMERA_GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/drivers/camera-av-stream.md'
 
 String fmtHelpInfo(String str) {
     String info = "${CAMERA_DRIVER_NAME} v${parent?.version()}<br> ${CAMERA_COMPONENT} v${CAMERA_DRIVER_VERSION}"

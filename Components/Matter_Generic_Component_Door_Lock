@@ -50,7 +50,7 @@ import groovy.json.JsonOutput
 
 
 @Field static final String matterComponentLockVersion = '1.5.0'
-@Field static final String matterComponentLockStamp   = '2026/07/25 9:14 AM'
+@Field static final String matterComponentLockStamp   = '2026/07/27 7:42 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !
 @Field static final Boolean _DEFAULT_LOG_ENABLE = true     // disable on production
@@ -4184,9 +4184,9 @@ private static String asciiToHex(final String s) {
 
 @Field static final String DRIVER = 'Matter Advanced Bridge'
 @Field static final String COMPONENT = 'Matter Generic Component Door Lock'
-@Field static final String WIKI   = 'Get help on GitHub Wiki page:'
+@Field static final String WIKI   = 'Documentation:'
 @Field static final String COMM_LINK =   "https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252/1"
-@Field static final String GITHUB_LINK = "https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-Door-Locks"
+@Field static final String GITHUB_LINK = "https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/drivers/door-lock.md"
 // credits @jtp10181
 String fmtHelpInfo(String str) {
 	String info = "${DRIVER} v${parent?.version()}<br> ${COMPONENT} v${matterComponentLockVersion}"

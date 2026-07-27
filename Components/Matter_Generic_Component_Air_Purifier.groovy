@@ -28,7 +28,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentAirPurifierVersion = '1.2.4'
-@Field static final String matterComponentAirPurifierStamp   = '2026/07/26 9:32 PM'
+@Field static final String matterComponentAirPurifierStamp   = '2026/07/27 7:42 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 @Field static final Integer RESOURCE_MONITORING_COALESCE_MS = 250
@@ -1075,9 +1075,9 @@ String decodeLevelValue(Integer value) {
 
 @Field static final String DRIVER = 'Matter Advanced Bridge'
 @Field static final String COMPONENT = 'Matter Generic Component Air Purifier'
-@Field static final String WIKI   = 'Get help on GitHub Wiki page:'
+@Field static final String WIKI   = 'Documentation:'
 @Field static final String COMM_LINK =   "https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252/1"
-@Field static final String GITHUB_LINK = "https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-Air-Purifier"
+@Field static final String GITHUB_LINK = "https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/drivers/air-purifier.md"
 // credits @jtp10181
 String fmtHelpInfo(String str) {
 	String info = "${DRIVER} v${parent?.version()}<br> ${COMPONENT} v${matterComponentAirPurifierVersion}"

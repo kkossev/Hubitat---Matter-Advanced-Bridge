@@ -16,8 +16,7 @@
  *
  * Thanks to Hubitat for publishing the sample Matter driver https://github.com/hubitat/HubitatPublic/blob/master/examples/drivers/thirdRealityMatterNightLight.groovy
  *
- * The full revisions history is available at https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-revisions-history
- * The full TODO list is available at https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-TODO-list
+ * The full revisions history is available at https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/project/revisions-history.md
  *
  * ver. 1.0.0  2024-03-16 kkossev  - public release version.
  * ver. 1.0.1  2024-04-13 kkossev  - tests; resetStats bug fix;
@@ -108,13 +107,13 @@
 
 
 static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/26 8:35 PM' }
+static String timeStamp() { '2026/07/27 7:42 PM' }
 
 
 @Field static final Boolean _DEBUG = false                   // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
-@Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki'
+@Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/index.md'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
 @Field static final Boolean DO_NOT_TRACE_FFFX = true        // make it  TRUE for production! (don't trace the FFFx global attributes)
@@ -5052,7 +5051,7 @@ double approxRollingAverage(double avg, double newSample) {
 }
 
 @Field static final String DRIVER = 'Matter Advanced Bridge'
-@Field static final String WIKI   = 'Wiki page:'
+@Field static final String WIKI   = 'Documentation:'
 
 // credits @jtp10181
 String fmtHelpInfo(String str) {

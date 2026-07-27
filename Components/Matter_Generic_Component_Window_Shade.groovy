@@ -32,7 +32,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentWindowShadeVersion = '1.2.5'
-@Field static final String matterComponentWindowShadeStamp   = '2026/07/25 10:57 PM'
+@Field static final String matterComponentWindowShadeStamp   = '2026/07/27 7:42 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -691,9 +691,9 @@ void clearInfoMode() {
 
 @Field static final String DRIVER = 'Matter Advanced Bridge'
 @Field static final String COMPONENT = 'Matter Generic Component Window Shade'
-@Field static final String WIKI   = 'Get help on GitHub Wiki page:'
-@Field static final String COMM_LINK =   "https://community.hubitat.com/t/project-nearing-beta-release-zemismart-m1-matter-bridge-for-tuya-zigbee-devices-matter/127009"
-@Field static final String GITHUB_LINK = "https://github.com/kkossev/Hubitat/wiki/Matter-Advanced-Bridge-%E2%80%90-Window-Covering"
+@Field static final String WIKI   = 'Documentation:'
+@Field static final String COMM_LINK =   "https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252"
+@Field static final String GITHUB_LINK = "https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/drivers/window-shade.md"
 // credits @jtp10181
 String fmtHelpInfo(String str) {
 	String info = "${DRIVER} v${parent?.version()}<br> ${COMPONENT} v${matterComponentWindowShadeVersion}"
