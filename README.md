@@ -9,11 +9,11 @@ and the Home Assistant Matter bridge.
 
 ## Documentation
 
-**[Wiki](https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki/Matter-Advanced-Bridge-%E2%80%90-Home)**
-— current user documentation: installation, configuration, compatibility, and troubleshooting.
+**[`docs/user/`](docs/user/)** — current user documentation: installation, configuration, drivers,
+compatibility, and troubleshooting.
 
-[`docs/user/`](docs/user/) — documentation is being migrated into this repository. It is incomplete;
-use the Wiki until this notice changes.
+The [GitHub Wiki](https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki) is no longer
+updated. It is kept so that older forum links keep working.
 
 ## Links
 

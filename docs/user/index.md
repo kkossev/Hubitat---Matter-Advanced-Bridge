@@ -19,10 +19,10 @@ enthusiast project exploring an alternative way to bring devices from different 
 
 Many thanks to everyone who took part in the alpha testing and helped with this project.
 
-> **Documentation is being migrated.** This directory is the new home for user documentation and is
-> **not complete yet.** Until it is, the Wiki remains authoritative:
-> <https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki>
-> The Wiki will not be deleted; when the migration finishes, its pages will link here.
+> **This is the current documentation.** It replaces the
+> [GitHub Wiki](https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki), which is no
+> longer updated — most of it dates from 2024 and describes limitations that no longer apply. The
+> Wiki will not be deleted, so old forum links keep working, but everything here is newer.
 
 ---
 
@@ -36,7 +36,7 @@ Many thanks to everyone who took part in the alpha testing and helped with this 
 | **Compatibility** | [Overview](compatibility/overview.md) · [Device types](compatibility/device-types.md) · [Compatibility matrix](compatibility/matrix.md) |
 | **Matter bridges** | [Aqara](bridges/aqara.md) · [Philips Hue](bridges/philips-hue.md) · [SwitchBot](bridges/switchbot.md) · [Tuya / Zemismart](bridges/tuya-zemismart.md) · [Other bridges](bridges/other-bridges.md) |
 | **Help** | [Troubleshooting](help/troubleshooting.md) · [Known issues](help/known-issues.md) · [Support and links](help/support-and-links.md) |
-| **Project** | [Revision history](project/revisions-history.md) |
+| **Project** | [Revision history](project/revisions-history.md) · [Terminology](project/terminology.md) · [Contributing](project/contributing.md) |
 
 The individual driver pages are listed on [Which driver do I get?](drivers/index.md), which also
 carries the table mapping each device behind your bridge to the driver it gets.

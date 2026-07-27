@@ -20,9 +20,8 @@ development history and early device reports.
 - **Source code and releases:** <https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge>
 - **Report a bug or request a device:** the community thread above is read more often than the
   GitHub issue tracker.
-- **Wiki:** <https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki> — the documentation
-  you are reading is replacing it. It is still the authoritative source until that migration
-  finishes.
+- **Wiki:** <https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki> — superseded by the
+  documentation you are reading, and no longer updated. Kept so that older forum links keep working.
 
 ## Installation
 
