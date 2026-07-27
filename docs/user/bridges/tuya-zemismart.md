@@ -1,47 +1,68 @@
-<!-- MIGRATED from wiki page `Matter-Advanced-Bridge-‐-Tuya-(Zemismart-M1)` at baseline c4000b7 on 2026-07-27.
-     Mechanical import: links and images rewritten, text unchanged.
-     NOT YET AUDITED against the current release. -->
+# Tuya / Zemismart
 
+Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
 
-### <b>Zemismart M1 Hub as Matter Bridge</b>   
-*last updated 2024/02/25*
-|Device Type                |         Status               |          Remarks                  |
-|:--------------------------|:----------------------------:|----------------------------------:|
-| Plugs - On/Off            | working OK - tested          |                                   |
-| Relays/Switches - On/Off  | working OK - tested          |                                   |
-| Bulbs - On/Off            | working OK - tested          |                                   |
-| Bulbs - level control     | working OK - tested          |                                   |
-| Bulbs - CT control        | working OK - tested          |                                   |
-| Bulbs - RGBW control      | working OK - tested          |                                   |
-| Motion Sensors            | working OK - tested          | Not all motion sensors are working! |
-| mmWave Presence Sensors   | working OK - tested          | Moes/Linptech                     |
-| Contact Sensors           | working OK - tested          | Generic Component Contact Sensor  |
-| Water Leak Sensor         | working OK - tested          | as a contact / switch             |
-| Tuya Valve on/off         | working OK - tested          | as a contact / switch             |
-| Temperature Sensor        | working OK - tested          |                                   |
-| Light Sensors             | working OK - tested          |  Tuya Light Sensor                |
-| Zemismart Curtain Motor   | working OK - tested          | Zemismart Curtain Motor           |
-| Fingerbot                 | working OK - tested          | as contact / switch               |
-|:--------------------------|:----------------------------:|----------------------------------:|
-| Wireless Remote Switch    | TODO  (not implemented yet)  | Tuya TS0044 Scene Switch - CRASHES! |
-| Wireless button           | TODO  (not implemented yet)  | Tuya button          - CRASHES! |
-| Battery Level reporting   | TODO  (not implemented yet)  | check !                           |
-|:--------------------------|:----------------------------:|----------------------------------:|
-| Tuya Gas Detector         | Unknown                |   not tested / not implemented          |
-| Tuya Smoke Detector       | Unknown                |   not tested / not implemented          |
-| Tuya Vibration Sensor     | Unknown                |   not tested                            |
-| TRVs                      | Unknown                |   not tested                            |
-| Light Door Lock           | Unknown                |   not tested                            |
-|:--------------------------|:----------------------------:|----------------------------------:|
-| Humidity Sensor           | NOT working (fixed 40%)      |  Tuya bridge bug?                 |
-| Tuya Dimmers              | NOT working (not exposed via Matter) | Girier TS0110F, Tuya TS0601 |
-| Thermostats               | NOT working (not exposed via Matter) |   AVATTO thermostat       |
-|:--------------------------|:----------------------------:|----------------------------------:|
-* mmWave sensors that are NOT shared via the Matter Gateway: 
-* the big black radar w/ annoying Led;
-* TS0601 _TZE200_ikvncluo 
-* TS0601 _TZE204_kapvnnlk
+Devices tested behind the **Zemismart M1 Hub** acting as a Matter bridge. The same Tuya platform
+powers the Zemismart M6, MOES, GIRIER, and other rebadged gateways, so results generally carry
+across — but firmware differs, so treat them as a guide.
 
----------------------
+The device results date from 2024; where the driver has since changed, the entry says so.
 
-([back to Matter Advanced Bridge main page](../index.md)
+Labels: **Confirmed** — tested working. **Unsupported** — the bridge does not expose it, or it does
+not work. **Unknown** — not tested. See the [compatibility overview](../compatibility/overview.md).
+
+## Working
+
+| Device type | Evidence | Notes |
+|---|---|---|
+| Plugs, relays, switches — on/off | Confirmed | |
+| Bulbs — on/off, level, colour temperature, RGBW | Confirmed | |
+| Motion sensors | Confirmed | Not every motion sensor is exposed — see below. |
+| mmWave presence sensors | Confirmed | Moes, Linptech |
+| Contact sensors | Confirmed | |
+| Temperature sensors | Confirmed | |
+| Light sensors | Confirmed | Tuya light sensor |
+| Curtain motor | Confirmed | Zemismart Curtain Motor. See [Window Shade](../drivers/window-shade.md) — the position settings exist for these motors. |
+| Tuya valve | Confirmed | Appears as a switch |
+| Fingerbot | Confirmed | Appears as a switch |
+
+## Needs re-testing
+
+| Device type | 2024 result | Now |
+|---|---|---|
+| Water leak sensor | Worked, but appeared as a contact sensor | Water leak detectors have been identified correctly since driver 1.6.0, and get Hubitat's water sensor driver. |
+| Wireless remote switches and buttons — Tuya TS0044 scene switch, Tuya button | "Not implemented yet" | Button support was fixed in driver 1.5.6. See [Button](../drivers/button.md). |
+| Battery level reporting | "Not implemented yet" | A [Battery](../drivers/battery.md) driver exists. Battery is untested on every bridge and is the first thing worth checking. |
+
+## Known problems
+
+**These are 2024 findings and have not been re-tested.** Tuya gateway firmware updates frequently,
+and what the bridge shares over Matter can change with it.
+
+| Device type | Evidence | Detail |
+|---|---|---|
+| Humidity sensors | Unsupported | Reported a fixed 40% in 2024, believed to be a bridge firmware bug. Worth re-testing on current firmware. |
+| Tuya dimmers | Unsupported | Not exposed over Matter — GIRIER TS0110F, Tuya TS0601 |
+| Thermostats | Unsupported | Not exposed over Matter — AVATTO thermostat |
+
+## Devices the bridge does not share
+
+As of 2024, some mmWave sensors were not exposed over Matter at all. Not re-tested since:
+
+- the large black radar with the LED indicator
+- TS0601 `_TZE200_ikvncluo`
+- TS0601 `_TZE204_kapvnnlk`
+
+## Untested
+
+| Device type | Evidence |
+|---|---|
+| Gas detector, smoke detector | Unknown |
+| Vibration sensor | Unknown |
+| TRVs | Unknown |
+| Door lock | Unknown — locks are supported by the driver since 1.5.5, but none has been tried on this bridge |
+
+## See also
+
+- [Compatibility matrix](../compatibility/matrix.md)
+- [Which driver do I get?](../drivers/index.md)

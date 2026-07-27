@@ -1,49 +1,69 @@
-<!-- MIGRATED from wiki page `Matter-Advanced-Bridge-‐-Aqara` at baseline c4000b7 on 2026-07-27.
-     Mechanical import: links and images rewritten, text unchanged.
-     NOT YET AUDITED against the current release. -->
+# Aqara
 
+Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
 
-### <b>Aqara E1 Hub as Matter Bridge</b>
-*last updated 2024/11/29*
+Devices tested behind the **Aqara E1 Hub** acting as a Matter bridge. The device results date from
+2024; where the driver has since changed, the entry says so.
 
-|Device Type                |         Status               |          Remarks                  |
-|:--------------------------|:----------------------------:|----------------------------------:|
-| Relays - On/Off           | working OK - tested          | Aqara Double Rocker H1 EU         |
-| Plugs - On/Off            | working OK - tested          | Aqara Smart Plug EU               |
-| Bulbs - On/Off            | working OK - tested          | Aqara LED Strip T1                |
-| Bulbs - level control     | working OK - tested          | Aqara LED Strip T1                |
-| Bulbs - CT control        | working OK - tested          | Aqara LED Strip T1                |
-| Bulbs - RGBW control      | working OK - tested          | Aqara LED Strip T1 (*colorMode is wrong!)|
-| Motion Sensors            | working OK - tested          | Aqara P1 Motion Sensor, Xiaomi    |
-| Vibration Sensors         | working OK - tested          | Aqara Vibration Sensor (as motion sensor) |
-| Temperature Sensor        | working OK - tested          | Aqara Temperature and Humidity Sensor T1, Aqara TVOC sensor   |
-| Humidity Sensor           | working OK - tested          | Aqara Temperature and Humidity Sensor T1, Aqara TVOC sensor   |
-| Light Sensor T1           | working OK - tested          |Aqara Light Detection Sensor T1    |
-| Aqara Cube T1 Pro         | OK (exposed as 6 x OnOff)    | Aqara Cube T1 Pro                 |
-| Battery Level reporting   | working OK - tested          | as individual Battery device or as part of an existing child device|
-| Aqara Curtain Motor       | working OK - tested          | Aqara Curtain Motor               |
-| Thermostats               | working OK - tested          |  Aqara thermostat E1 (TRV) -      |
-| Presence sensor FP1E      | working OK                   | Aqara FP1E (the new 2024 model)   |
-|:--------------------------|:----------------------------:|----------------------------------:|
-| Aqara Door Lock           | Locks not supported in HE (yet)) |  Aqara U100                    |
-| Smart Pet Feeder          | partially working (motion only) |  depends on lock and button implementations |
-| Door and Window Sensor    | TODO - check it!             |Aqara Door and Window Sensor, old and T1   |
-| Wireless Remote Switch    | Buttons not supported in HE (yet)  | Aqara Double Rocker H1 - CRASHES! |
-| Wireless button           | Buttons not supported in HE (yet)  | Xiaomi/Lumi            - CRASHES! |
-| Wired Remote Switch       | Buttons not supported in HE (yet)  | not implemented                   |
-|:--------------------------|:----------------------------:|-----------------------------------:|
-| Presence sensor FP1       | NOT working (not exposed via Matter)    | Aqara FP1              |
-| Presence sensor FP2       | NOT working (not exposed via Matter)    | Aqara FP2              |
-| PM 2.5                    | Not supported in HE (yet)     | Aqara TVOC sensor      |
-| Atmospheric pressure      | NOT working (not exposed via Matter)    | Aqara TVOC sensor      |
-| Light Detector T1         | NOT working (not exposed via Matter??)  | not tested             |
-| Xiaomi(Lumi) Light Sensor | NOT working (not exposed via Matter  )  | Xiaomi(Lumi) Light Sensor|
-| Smoke Detectors           | Not supported in HE (yet)   | Aqara Smart Smoke Detector|
-| Water Leak Sensors       | NOT working (not exposed via Matter)   | Aqara Water Leak Sensor|
-|:--------------------------|:---------------------------------------:|-----------------------:|
-| Aqara Dimmers             | Unknown                |   not tested / not implemented          |
-| Smart Natural Gas Detector| Unknown                |   not tested / not implemented          |
-|:--------------------------|:----------------------:|----------------------------------------:|
+Labels: **Confirmed** — tested working. **Unsupported** — the bridge does not expose it, or it does
+not work. **Unknown** — not tested. See the [compatibility overview](../compatibility/overview.md).
 
----------------------
-([back to Matter Advanced Bridge main page](../index.md)
+## Working
+
+| Device type | Evidence | Tested with |
+|---|---|---|
+| Relays, on/off | Confirmed | Aqara Double Rocker H1 EU |
+| Plugs, on/off | Confirmed | Aqara Smart Plug EU |
+| Bulbs — on/off, level, colour temperature | Confirmed | Aqara LED Strip T1 |
+| Bulbs — RGBW | Confirmed | Aqara LED Strip T1. Colour mode was reported incorrectly by this device in 2024. |
+| Motion sensors | Confirmed | Aqara P1, Xiaomi |
+| Vibration sensors | Confirmed | Aqara Vibration Sensor — appears as a **motion** sensor |
+| Presence sensor | Confirmed | Aqara FP1E (2024 model) |
+| Temperature and humidity | Confirmed | Aqara T1 sensor, Aqara TVOC sensor |
+| Light sensor | Confirmed | Aqara Light Detection Sensor T1 |
+| Curtain motor | Confirmed | Aqara Curtain Motor |
+| Thermostat | Confirmed | Aqara E1 TRV |
+| Battery level | Confirmed | Either as its own child device, or as part of an existing one |
+| Aqara Cube T1 Pro | Confirmed | Exposed as six separate on/off devices |
+
+## Needs re-testing
+
+The driver has gained support for these since the bridge was last tested. The old result describes
+what the **driver** could do at the time, not what the bridge exposes.
+
+| Device type | 2024 result | Now |
+|---|---|---|
+| Door lock — Aqara U100 | "Locks not supported in HE" | Locks have worked since driver 1.5.5; lock codes are experimental. See [Door Lock](../drivers/door-lock.md). |
+| Wireless remote switches and buttons — Aqara Double Rocker H1, Xiaomi/Lumi | "Buttons not supported in HE" | Button support was fixed in driver 1.5.6. See [Button](../drivers/button.md). |
+| PM 2.5 — Aqara TVOC sensor | "Not supported in HE" | `pm25` has been supported since driver 1.3.0. See [Air Purifier](../drivers/air-purifier.md). |
+| Smart pet feeder | Partially working — motion only | It depended on lock and button support, both of which now exist. |
+| Door and window sensor — Aqara, and T1 | Never tested | Contact sensors are supported, including sensitivity on models that report it. |
+
+## Not exposed by the bridge
+
+Limitations of the Aqara bridge rather than of the driver. Nothing on the Hubitat side can change
+them.
+
+**These are 2024 findings and have not been re-tested.** Aqara has released bridge firmware since,
+and a device listed here may have been added in the meantime. If one of them now appears in Hubitat,
+please say so in the [community thread](../help/support-and-links.md).
+
+| Device type | Evidence |
+|---|---|
+| Presence sensors FP1 and FP2 | Unsupported — not exposed over Matter |
+| Water leak sensors | Unsupported — not exposed over Matter |
+| Atmospheric pressure — Aqara TVOC sensor | Unsupported — not exposed over Matter |
+| Light Detector T1, and the Xiaomi/Lumi light sensor | Unsupported — not exposed over Matter |
+
+## Not supported, or untested
+
+| Device type | Evidence |
+|---|---|
+| Smoke detectors — Aqara Smart Smoke Detector | Unsupported. Matter's Smoke/CO Alarm device type is not implemented. |
+| Aqara dimmers | Unknown — not tested |
+| Smart natural gas detector | Unknown — not tested |
+
+## See also
+
+- [Compatibility matrix](../compatibility/matrix.md)
+- [Which driver do I get?](../drivers/index.md)
