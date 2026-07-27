@@ -59,8 +59,8 @@ bridge-specific in this driver's code. Per-bridge results are in the
   will probably do nothing useful. See [Which driver do I get?](index.md).
 - The state shown is what the bridge last reported. A device that does not report back after a
   command leaves Hubitat showing the previous state — use **Refresh**.
-- No power monitoring. A smart plug that measures power exposes it on a separate endpoint, which
-  becomes its own child device with the [Power Energy](power-energy.md) driver.
+- No power monitoring. A plug that measures power gets the [Power Energy](power-energy.md) driver
+  instead — it keeps on/off control and adds the measurements, so nothing is lost.
 
 ## See also
 

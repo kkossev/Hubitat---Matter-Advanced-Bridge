@@ -1,10 +1,6 @@
 # Hubitat stock drivers
 
-Applies to: 1.8.8 | Last verified: — | Status: Historical
-
-> **Stub — transcribed from source, not yet audited.** Written in phase 1d of the documentation
-> migration from `mapMatterCategory()` in `Matter_Advanced_Bridge.groovy`. There was no wiki page to
-> migrate.
+Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
 
 Not every child device uses a driver from this package. For ten common device kinds the parent
 assigns a **Hubitat stock component driver** instead, because the built-in driver already does the
@@ -29,14 +25,15 @@ wrong driver in the first place.
 | `Generic Component Fan Control` | `0x0202` Fan Control | Fans |
 | `Generic Component Omni Sensor` | `0x0400` Illuminance, `0x0402` Temperature, or `0x0405` Humidity | Multi-purpose sensor |
 | `Generic Component Pressure Sensor` | `0x0403` Pressure Measurement | Pressure sensors |
-| `Generic Component Switch` | `0x0006` fallback, and for any endpoint matching nothing else | Switches and unknown devices |
+| `Generic Component Switch` | Nothing the driver recognises — this is the fallback | Unrecognised devices |
 
 `Generic Component Omni Sensor` covers three separate clusters, so one Omni Sensor child may carry
 illuminance, temperature, and humidity together.
 
-`Generic Component Switch` appears twice in that table for different reasons: as a real match, and as
-the final fallback for an endpoint whose clusters are not recognised. A child on this driver with a
-product name of `Unknown` is the fallback case.
+**`Generic Component Switch` is only ever the fallback.** An ordinary on/off device gets this
+package's own [Switch](switch.md) driver instead. So a child on the stock `Generic Component Switch`
+driver — it will also be named `Unknown` — is an endpoint the driver could not identify, and its On
+and Off buttons will probably do nothing.
 
 ## Where they come from
 
