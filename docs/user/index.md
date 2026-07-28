@@ -45,9 +45,9 @@ carries the table mapping each device behind your bridge to the driver it gets.
 
 ## Matter bridges
 
-Product links below include affiliate links. An entry here is a bridge people have used with this
-package — it is not by itself a statement of tested support. For that, see the
-[compatibility matrix](compatibility/matrix.md) and the per-bridge pages.
+Product links below include affiliate links. Entries cover bridges used with this package and other
+manufacturer-documented Matter bridges. A listing is not by itself a statement of tested MAB support;
+for that, see the [compatibility matrix](compatibility/matrix.md) and the per-bridge pages.
 
 | Brand | Documentation | Where to buy |
 |---|---|---|
@@ -62,7 +62,10 @@ package — it is not by itself a statement of tested support. For that, see the
 | **Aqara G3**<br>![Aqara G3](assets/images/index-09.png) | [Aqara](bridges/aqara.md) | [Amazon.com](https://amzn.to/3Y9A6x0)<br>[Amazon.co.uk](https://amzn.to/3BJwZUM)<br>[Amazon.de](https://amzn.to/3Ys5TKP) |
 | **Philips Hue**<br>![Philips Hue bridge](assets/images/index-11.png) | [Philips Hue](bridges/philips-hue.md) | [Amazon.com](https://amzn.to/40f8clX)<br>[Amazon.co.uk](https://amzn.to/3Y8MkFX)<br>[Amazon.de](https://amzn.to/3NzT9eI) |
 | **Philips Hue Bridge Pro**<br>![Philips Hue Bridge Pro](assets/images/index-15.png) | [Philips Hue](bridges/philips-hue.md) | [Philips-Hue.com](https://www.philips-hue.com/en-us/p/hue-bridge-pro/046677582111) |
-| **SwitchBot Hub 2**<br>![SwitchBot Hub 2](assets/images/index-12.png) | [SwitchBot](bridges/switchbot.md) | [Amazon.com](https://amzn.to/48eubLz)<br>[Amazon.co.uk](https://amzn.to/3BSzTXt)<br>[Amazon.de](https://amzn.to/4dRoy7d) |
+| **SwitchBot Hub Mini Matter Enabled**<br>![SwitchBot Hub Mini Matter Enabled](assets/images/index-16.png) | [SwitchBot](bridges/switchbot.md) | [SwitchBot.com](https://us.switch-bot.com/products/switchbot-hub-mini-matter-enabled) |
+| **SwitchBot Hub 2**<br>![SwitchBot Hub 2](assets/images/index-12.png) | [SwitchBot](bridges/switchbot.md) | [SwitchBot.com](https://us.switch-bot.com/products/switchbot-hub-2)<br>[Amazon.com](https://amzn.to/48eubLz)<br>[Amazon.co.uk](https://amzn.to/3BSzTXt)<br>[Amazon.de](https://amzn.to/4dRoy7d) |
+| **SwitchBot Hub 3**<br>![SwitchBot Hub 3](assets/images/index-17.png) | [SwitchBot](bridges/switchbot.md) | [SwitchBot.com](https://us.switch-bot.com/products/switchbot-hub-3) |
+| **SwitchBot AI Hub**<br>![SwitchBot AI Hub](assets/images/index-18.png) | [SwitchBot](bridges/switchbot.md) | [SwitchBot.com](https://us.switch-bot.com/products/switchbot-ai-hub) |
 | **Bosch**<br>![Bosch controller](assets/images/index-10.png) | [Other bridges](bridges/other-bridges.md) | [Amazon.de](https://amzn.to/3Uf4Lb7) |
 | **IKEA DIRIGERA**<br>![IKEA DIRIGERA](assets/images/index-14.png) | [Other bridges](bridges/other-bridges.md) | [Ikea.com](https://www.ikea.com/us/en/p/dirigera-hub-for-smart-products-white-smart-50503414/) |
 | **Sonoff iHost**<br>![Sonoff iHost](assets/images/index-13.png) | — | [itead.cc](https://itead.cc/product/sonoff-ihost-smart-home-hub/ref/221/)<br>[Amazon.com](https://amzn.to/3YeO00G)<br>[Amazon.co.uk](https://amzn.to/3Ys2jQK)<br>[Amazon.de](https://amzn.to/3Y8rIhb) |
