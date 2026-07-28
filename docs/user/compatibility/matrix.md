@@ -57,12 +57,12 @@ Not supported, and not planned as part of the device-type mapping:
 
 ## Bridge experience
 
-**These results are from 2024 and have not been re-tested.** Treat them as a starting point, not as
-a current statement — several bridges have had firmware updates since, and the driver has gained
-support for device types that were unsupported when this testing was done.
+The Aqara column incorporates all public reports through community-topic post
+[#439](https://community.hubitat.com/t/-/135252/439), reviewed 2026-07-28. Results for other bridge
+families may still date from 2024; follow their bridge-page links for evidence and qualifications.
 
 Labels: **Confirmed** — tested working. **Unsupported** — the bridge does not expose it, or it did
-not work. **Unknown** — never tested.
+not work. **Partial** — exported with a limitation. **Unknown** — never tested.
 
 | Device type | Tuya / Zemismart | Aqara | Philips Hue | SwitchBot |
 |---|---|---|---|---|
@@ -75,17 +75,21 @@ not work. **Unknown** — never tested.
 | On/Off Light Switch | Confirmed | Confirmed | Unknown | Unknown |
 | Dimmer Switch | Unknown — Tuya dimmers were not exported | Unknown | Unknown | Unknown |
 | Contact Sensor | Confirmed | Confirmed | Implemented, unverified — Hue Secure contact sensor | Unknown |
-| Water Leak Detector | Confirmed | Unsupported | Unknown | Unknown |
+| Water Leak Detector | Confirmed | Export confirmed; correct mapping implemented, unverified | Unknown | Unknown |
 | Light Sensor | Confirmed | Confirmed — Aqara T1 | Implemented, unverified — indoor/outdoor motion sensor | Unknown |
 | Occupancy Sensor | Confirmed | Confirmed | Confirmed — indoor/outdoor motion sensor | Unknown |
 | Temperature Sensor | Confirmed | Confirmed | Confirmed | Confirmed |
 | Humidity Sensor | Unsupported | Confirmed | Unknown | Confirmed |
 | Pressure Sensor | Unsupported | Unsupported | Unknown | Unknown |
-| Door Lock | Unsupported | Confirmed | Unknown | Unknown |
+| Door Lock | Unsupported | Export confirmed; current commands unverified on bridged U100 | Unknown | Unknown |
 | Window Covering | Confirmed | Unknown | n/a | Confirmed |
 | Thermostat | Not seen — no thermostat appeared | Confirmed | Unsupported | Unknown |
-| Generic Switch (buttons) | Unknown | Unknown | Implemented, unverified — Dimmer, Smart button, Tap, Tap dial buttons, Wall switch module | Unknown |
-| Battery reporting | Unknown | Unknown | Unknown — Hue platform supports Power Source, accessory export not verified | Unknown |
+| Generic Switch (buttons) | Unknown | Partial — H1 single-click only; mini switch unreliable | Implemented, unverified — Dimmer, Smart button, Tap, Tap dial buttons, Wall switch module | Unknown |
+| Battery reporting | Unknown | Confirmed — several sensors; missing on tested Vibration Sensor | Unknown — Hue platform supports Power Source, accessory export not verified | Unknown |
+
+Aqara FP2 zones are available through Aqara Advanced Matter Bridging **signals** on M3 and M2, not
+as a direct FP2 device export. The community tests found those signals cloud-dependent; see the
+[Aqara bridge page](../bridges/aqara.md#community-confirmed-devices).
 
 Per-bridge notes, including which specific devices were tried, are on the bridge pages:
 [Aqara](../bridges/aqara.md) ·
