@@ -1,6 +1,6 @@
 # Compatibility matrix
 
-Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
+Applies to: 1.9.0 | Last verified: 2026-07-28 | Status: Current
 
 Two different questions get confused here, so this page answers them separately:
 
@@ -72,20 +72,20 @@ not work. **Unknown** — never tested.
 | Extended Colour Light | Confirmed | Confirmed | Confirmed | Unknown |
 | On/Off Plug-in Unit | Confirmed | Confirmed | Confirmed | Unknown |
 | Dimmable Plug-in Unit | Unknown | Unknown | Unknown | Unknown |
-| On/Off Light Switch | Confirmed | Confirmed | Confirmed | Unknown |
+| On/Off Light Switch | Confirmed | Confirmed | Unknown | Unknown |
 | Dimmer Switch | Unknown — Tuya dimmers were not exported | Unknown | Unknown | Unknown |
-| Contact Sensor | Confirmed | Confirmed | Unknown | Unknown |
+| Contact Sensor | Confirmed | Confirmed | Implemented, unverified — Hue Secure contact sensor | Unknown |
 | Water Leak Detector | Confirmed | Unsupported | Unknown | Unknown |
-| Light Sensor | Confirmed | Confirmed — Aqara T1 | Unknown | Unknown |
-| Occupancy Sensor | Confirmed | Confirmed | Unknown | Unknown |
+| Light Sensor | Confirmed | Confirmed — Aqara T1 | Implemented, unverified — indoor/outdoor motion sensor | Unknown |
+| Occupancy Sensor | Confirmed | Confirmed | Confirmed — indoor/outdoor motion sensor | Unknown |
 | Temperature Sensor | Confirmed | Confirmed | Confirmed | Confirmed |
 | Humidity Sensor | Unsupported | Confirmed | Unknown | Confirmed |
 | Pressure Sensor | Unsupported | Unsupported | Unknown | Unknown |
 | Door Lock | Unsupported | Confirmed | Unknown | Unknown |
 | Window Covering | Confirmed | Unknown | n/a | Confirmed |
 | Thermostat | Not seen — no thermostat appeared | Confirmed | Unsupported | Unknown |
-| Generic Switch (buttons) | Unknown | Unknown | Unknown | Unknown |
-| Battery reporting | Unknown | Unknown | Unknown | Unknown |
+| Generic Switch (buttons) | Unknown | Unknown | Implemented, unverified — Dimmer, Smart button, Tap, Tap dial buttons, Wall switch module | Unknown |
+| Battery reporting | Unknown | Unknown | Unknown — Hue platform supports Power Source, accessory export not verified | Unknown |
 
 Per-bridge notes, including which specific devices were tried, are on the bridge pages:
 [Aqara](../bridges/aqara.md) ·

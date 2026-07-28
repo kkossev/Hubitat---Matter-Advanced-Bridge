@@ -1,6 +1,6 @@
 # Matter Advanced Bridge
 
-Applies to: 1.9.0 BETA | Last verified: 2026-07-27 | Status: Current
+Applies to: 1.9.0 BETA | Last verified: 2026-07-28 | Status: Current
 
 A Hubitat Elevation driver package for Matter bridges. The parent driver discovers the devices
 behind a Matter bridge, creates one Hubitat child device per endpoint, subscribes to the supported
@@ -61,6 +61,7 @@ package — it is not by itself a statement of tested support. For that, see the
 | **Aqara M3**<br>![Aqara M3](assets/images/index-08.png) | [Aqara](bridges/aqara.md) | [Amazon.com](https://amzn.to/3BMrBAd)<br>[Amazon.co.uk](https://amzn.to/3BLthKy)<br>[Amazon.de](https://amzn.to/3NxoezU) |
 | **Aqara G3**<br>![Aqara G3](assets/images/index-09.png) | [Aqara](bridges/aqara.md) | [Amazon.com](https://amzn.to/3Y9A6x0)<br>[Amazon.co.uk](https://amzn.to/3BJwZUM)<br>[Amazon.de](https://amzn.to/3Ys5TKP) |
 | **Philips Hue**<br>![Philips Hue bridge](assets/images/index-11.png) | [Philips Hue](bridges/philips-hue.md) | [Amazon.com](https://amzn.to/40f8clX)<br>[Amazon.co.uk](https://amzn.to/3Y8MkFX)<br>[Amazon.de](https://amzn.to/3NzT9eI) |
+| **Philips Hue Bridge Pro**<br>![Philips Hue Bridge Pro](assets/images/index-15.png) | [Philips Hue](bridges/philips-hue.md) | [Philips-Hue.com](https://www.philips-hue.com/en-us/p/hue-bridge-pro/046677582111) |
 | **SwitchBot Hub 2**<br>![SwitchBot Hub 2](assets/images/index-12.png) | [SwitchBot](bridges/switchbot.md) | [Amazon.com](https://amzn.to/48eubLz)<br>[Amazon.co.uk](https://amzn.to/3BSzTXt)<br>[Amazon.de](https://amzn.to/4dRoy7d) |
 | **Bosch**<br>![Bosch controller](assets/images/index-10.png) | [Other bridges](bridges/other-bridges.md) | [Amazon.de](https://amzn.to/3Uf4Lb7) |
 | **IKEA DIRIGERA**<br>![IKEA DIRIGERA](assets/images/index-14.png) | [Other bridges](bridges/other-bridges.md) | [Ikea.com](https://www.ikea.com/us/en/p/dirigera-hub-for-smart-products-white-smart-50503414/) |
