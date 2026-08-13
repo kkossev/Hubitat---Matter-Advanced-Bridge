@@ -77,23 +77,23 @@
 
 
 static String version() { '1.9.1' }
-static String timeStamp() { '2026/08/13 6:34 PM' }
+static String timeStamp() { '2026/08/13 7:00 PM' }
 
 
-@Field static final Boolean _DEBUG = true                  // make it FALSE for production!
+@Field static final Boolean _DEBUG = false                  // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/index.md'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
-@Field static final Boolean DO_NOT_TRACE_FFFX = false       // make it  TRUE for production! (don't trace the FFFx global attributes)
+@Field static final Boolean DO_NOT_TRACE_FFFX = true       // make it  TRUE for production! (don't trace the FFFx global attributes)
 // Diagnostic escape hatch for a failing _DiscoverAll. Normally every inbound message is traced only
 // outside discovery, and the FFFx globals are never traced - which leaves a stalled discovery with no
 // way to tell 'nothing arrived' from 'something arrived that was not a matching attribute report'
 // (an error status, the wrong endpoint, a decode failure). Setting this TRUE logs EVERY parsed
 // message, overriding both suppressions. Needs 'Enable debug logging' as well, since logDebug is
 // gated by it. Very noisy on a large bridge - make it FALSE for production!
-@Field static final Boolean _TRACE_ALL_MESSAGES = true     // make it FALSE for production! // Diagnostic escape hatch for a failing _DiscoverAll.
+@Field static final Boolean _TRACE_ALL_MESSAGES = false     // make it FALSE for production! // Diagnostic escape hatch for a failing _DiscoverAll.
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
 @Field static final Integer REFRESH_TIMER = 6000             // refresh time in miliseconds
