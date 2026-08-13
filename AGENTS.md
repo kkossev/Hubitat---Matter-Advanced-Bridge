@@ -13,23 +13,27 @@ Wiki: https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki
 > `CLAUDE.md` and `CODEX.md` are one-line pointers to it — do not put content there, and do not
 > re-fork them.
 >
-> All three are **tracked and published**, so every clone has them. The **maintainer working
-> documents they reference** are not: `docs/maintainer/**`, including `BUGS.md` and `TODO.md`, stays
-> gitignored and local. A reference below that resolves to nothing simply means you are on a machine
-> that never had those files — that is expected, not a fault to repair, and they must not be
-> reconstructed or committed.
+> All three are **tracked and published**, so every clone has them — as are the two working lists
+> [`docs/BUGS.md`](docs/BUGS.md) (defects) and [`docs/TODO.md`](docs/TODO.md) (community requests),
+> moved out of `docs/maintainer/` on 2026-08-13 precisely so other agents can see what was already
+> classified, fixed, requested, or ruled out.
+>
+> `docs/maintainer/**` is still gitignored and local: plans, status records, investigations, migration
+> evidence. A reference to one of those that resolves to nothing simply means you are on a machine
+> that never had it — that is expected, not a fault to repair, and they must not be reconstructed or
+> committed.
 
 **Bug work:** a reviewed list of known bugs with exact locations, fixes, and verification steps is in
-[docs/maintainer/bugs/BUGS.md](docs/maintainer/bugs/BUGS.md). If you were asked to fix bugs in this
+[docs/BUGS.md](docs/BUGS.md) — **tracked and published** since 2026-08-13. If you were asked to fix bugs in this
 driver, work from that list —
 do not re-derive the findings. Mark items `[x]` there only after the user confirms a hub test.
-An earlier independent Codex defect analysis exists in
-[BUGS_CODEX.md](docs/maintainer/bugs/BUGS_CODEX.md);
-BUGS.md supersedes it (every Codex finding was re-verified and is cross-referenced).
+An earlier independent Codex defect analysis (2026-07-04) was **merged into BUGS.md on 2026-08-13**
+and its file deleted — BUGS.md is now the single bug list. Every Codex finding was re-verified and is
+cross-referenced inline as `[Codex Xn]`, with the ID mapping in that file's closing appendix.
 Note that BUGS.md was written against v1.8.8 — verify a finding still applies before acting on it.
 
 **Open user requests:** feature requests and unresolved user reports harvested from the community
-thread are in [docs/maintainer/TODO.md](docs/maintainer/TODO.md) (posts #418–#439 analyzed on
+thread are in [docs/TODO.md](docs/TODO.md) — **tracked and published** since 2026-08-13 (posts #418–#439 analyzed on
 2026-07-25; earlier posts not mined
 yet). Same ground rules as BUGS.md — one item at a time, `[x]` only after a confirmed hub test.
 
@@ -66,8 +70,8 @@ and **component child drivers** in `Components\`. There is no profiles map — b
 | `docs\user\` | **Tracked and public** — the canonical user documentation, currently being migrated from the wiki. See §7. |
 | `.hubitat\metadata.json` | Local Hubitat VS Code extension metadata (hub code ids). Tooling only — not used by HPM. Current file has case-only duplicate paths/ids; see BUGS.md C8. |
 | `docs\maintainer\` | All maintainer working documents. **Local only** — untracked and gitignored, so never assume another clone has them. Subfolders: `bugs\`, `plans\`, `status\`, `archive\`. |
-| `docs\maintainer\bugs\BUGS.md`, `docs\maintainer\TODO.md` | The two working lists: reviewed defects (**new v1.9.0 audit items are open**) and open user requests from the forum thread. |
-| `docs\maintainer\bugs\BUGS_CODEX.md` | Prior Codex defect analysis (2026-07-04). Read-only reference; superseded by `BUGS.md`. |
+| `docs\BUGS.md` | Reviewed defect list — **tracked and published**. Authoritative for open/closed status; open items are indexed at the top. |
+| `docs\TODO.md` | Open user requests from the forum thread — **tracked and published**. |
 | `docs\maintainer\plans\` | `MIGRATION_PLAN.md`, `INTERMEDIATE_REFACTORING_PLAN.md`, `CHILD_DRIVERS_REFACTORING.md`, `DOCUMENTATION_MIGRATION_PLAN.md`, plus the older `Matter_Advanced_Bridge_OPTIMIZATION_PLAN.md` and `AGGREGATOR_LABELS_PLAN.md` (written against 1.8.8 — aspirational, verify against current code before acting). |
 | `docs\maintainer\status\` | `CHILD_DRIVERS_REFACTORING_STATUS.md` — per-child progress record; `wiki-inventory-2026-07-27.md` and `wiki-url-map.csv` — documentation migration evidence. |
 | `docs\maintainer\archive\` | Backups. Currently `wiki-baseline-c4000b7-2026-07-27.bundle`, the preserved wiki git history. |
@@ -84,8 +88,15 @@ and **component child drivers** in `Components\`. There is no profiles map — b
   at compile time, so the four parent libraries must be installed on the hub as Libraries Code.
 - A **library change** affects only this package (these libraries are not shared with the Zigbee drivers),
   but it affects **every component driver that includes it** (matterCommonLib / matterHealthStatusLib).
+- **`CHANGELOG.md` is authoritative for change detail; the in-file header history is a summary.**
+  Policy set 2026-08-13. A new `* ver. x.y.z` header line is **one or two lines, user-facing only** —
+  what a user would notice or must act on (behaviour changes on upgrade, new/removed preferences, new
+  device data). Internal method names, cluster/attribute IDs, rationale and investigation notes belong
+  in `CHANGELOG.md`, never in the header. Before shortening any header entry, confirm the detail
+  actually exists in `CHANGELOG.md` — as of 1.9.1 it is complete for the **parent driver only**;
+  component and library histories have never been transferred, so do not delete those.
 - Release checklist: bump `version()` + `timeStamp()` in the parent (and the `@Field static ...Version/Stamp`
-  in a changed library/component), add a `* ver. x.y.z  date  kkossev - ...` header history line,
+  in a changed library/component), add a `* ver. x.y.z  date  kkossev - ...` header history line (short — see above),
   set `_DEBUG = false`, update `packageManifest.json` (`version`, `dateReleased`, prepend `releaseNotes`),
   **rebuild `MatterAdvancedBridge.zip`**, update the wiki revisions-history page.
 - Per the project's standing bug-fix workflow: during bug fixing do **NOT** bump
@@ -485,8 +496,8 @@ they become wrong immediately. Search by these stable symbols instead:
 ## 7. Documentation rules
 
 [docs/README.md](docs/README.md) is the map of both documentation trees — layout, per-page
-conventions, and a "where does this go?" table. It is tracked, so it is the one documentation guide
-present in a fresh clone. The rules below remain the authority; that page points at them.
+conventions, and a "where does this go?" table. Both it and this guide are tracked, so a fresh clone
+gets each. The rules below remain the authority; that page points at them.
 
 `docs/user/` **is the current user documentation**, browsed on GitHub. Every page was audited against
 the source on 2026-07-27. The wiki is superseded and frozen. Plan and status live in
@@ -497,14 +508,21 @@ the source on 2026-07-27. The wiki is superseded and frozen. Plan and status liv
    `CLAUDE.md` and `CODEX.md` are pointers — do not put content in them.
 2. **Public user documentation lives in `docs/user/`.** It is tracked and committed. It is the only
    documentation directory that ships.
-3. **`docs/maintainer/` is local only** — untracked, gitignored, never published. Plans, defect
-   lists, unconfirmed reports, investigations, and migration evidence all belong there.
+3. **`docs/maintainer/` is local only** — untracked, gitignored, never published. Plans, unconfirmed
+   reports, investigations, and migration evidence belong there. **Exception: the defect list moved
+   out.** `docs/BUGS.md` is tracked and published, so other agents can see what was already
+   classified, fixed, or ruled out. The same applies to `docs/TODO.md`, the community request list.
+   Write both for that audience: no local paths, no hub addresses, no unmasked device serials, and no
+   links to `docs/maintainer/**` (they will not resolve in a clone — name the file in backticks
+   instead). What stays local is everything else: plans, investigations, migration evidence.
 4. **The wiki is not a second source of truth.** It is frozen at baseline commit `c4000b7`
    (2026-07-27) and superseded by `docs/user/`. Do not edit wiki pages, and never copy content
    *from* the wiki into `docs/user/` — it is 2024 content describing limitations that no longer
    exist. The wiki is never deleted; its pages become notices linking to `docs/user/` at cutover.
-5. **`BUGS.md` and `TODO.md` are not published**, and `docs/user/help/known-issues.md` is not a
-   mirror of `BUGS.md`. A public known issue gets: affected version, symptom, workaround if any, and
+5. **`docs/BUGS.md` and `docs/TODO.md` are both published.** `docs/user/help/known-issues.md` is
+   still not a mirror of `BUGS.md` — the two have different audiences and different bars. `TODO.md`
+   credits community members by forum handle with a link to the originating post; keep it factual and
+   remove a name on request. A public known issue gets: affected version, symptom, workaround if any, and
    resolution status. Internal source locations and speculative causes stay in `docs/maintainer/`.
 6. **A user-visible behavior change requires auditing the applicable page in `docs/user/`** in the
    same change, **and an entry in `CHANGELOG.md`**. Documentation-only edits do not require a driver

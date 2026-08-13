@@ -12,6 +12,9 @@ and the Home Assistant Matter bridge.
 **[`docs/user/`](docs/user/)** — current user documentation: installation, configuration, drivers,
 compatibility, and troubleshooting.
 
+**[`docs/README.md`](docs/README.md)** — how the documentation is organised, and the conventions each
+page follows. Start there if you want to contribute a correction.
+
 The [GitHub Wiki](https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/wiki) is no longer
 updated. It is kept so that older forum links keep working.
 

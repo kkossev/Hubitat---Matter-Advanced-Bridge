@@ -1,6 +1,6 @@
 # Aqara
 
-Applies to: 1.9.0 | Last verified: 2026-07-28 | Status: Current
+Applies to: 1.9.0 | Last verified: 2026-08-13 | Status: Current
 
 This page combines the earlier Aqara compatibility record with every Aqara report in the public
 [Matter Advanced Bridge community thread](https://community.hubitat.com/t/-/135252/1). The complete
@@ -43,7 +43,7 @@ excludes it from Matter bridging, despite the original announcement of a future 
 |---|---|---|
 | Door and Window Sensor | M1S | **Confirmed** — several sensors worked [#21](https://community.hubitat.com/t/-/135252/21); later identified explicitly [#129](https://community.hubitat.com/t/-/135252/129) |
 | Single and double wall switches | M1S | **Confirmed** [#21](https://community.hubitat.com/t/-/135252/21) |
-| Wall switches | G3 | **Confirmed** — imported as switches. Aqara labels are not imported; manually assigned Hubitat labels survive rediscovery [#432](https://community.hubitat.com/t/-/135252/432)–[#439](https://community.hubitat.com/t/-/135252/439). |
+| Wall switches | G3, E1 | **Confirmed** — imported as switches, one child per gang. Aqara labels are not imported (see [Limitations](#limitations-and-open-results)); manually assigned Hubitat labels survive rediscovery [#432](https://community.hubitat.com/t/-/135252/432)–[#439](https://community.hubitat.com/t/-/135252/439). A double-gang `Aqara Wall Switch EU` was reproduced through a Hub E1 on 2026-08-13. |
 | Temperature/humidity sensor | M3 | **Confirmed** — temperature, humidity and battery were created [#92](https://community.hubitat.com/t/-/135252/92). A T1 also reported all three [#138](https://community.hubitat.com/t/-/135252/138). |
 | Vibration Sensor | M3 | **Partial** — exported as motion; its battery endpoint was missing although Apple Home and Home Assistant showed it [#92](https://community.hubitat.com/t/-/135252/92). |
 | FP1E presence sensor | M3 | **Confirmed** [#124](https://community.hubitat.com/t/-/135252/124), [#137](https://community.hubitat.com/t/-/135252/137), [#164](https://community.hubitat.com/t/-/135252/164) |
@@ -82,7 +82,8 @@ These are bridge-export limitations or unresolved device-specific behavior found
 | Atmospheric pressure from Aqara temperature/humidity sensors | **Not exposed by M3 or E1.** It was also absent through M3 in Home Assistant and Apple Home [#138](https://community.hubitat.com/t/-/135252/138)–[#142](https://community.hubitat.com/t/-/135252/142). MAB now supports Matter pressure reports, but cannot create data the bridge omits. |
 | H1 Double Rocker multi-click/hold | Aqara exposes only single-click events over Matter [#299](https://community.hubitat.com/t/-/135252/299). |
 | Aqara mini switch | **Unresolved:** roughly three-minute delay or missed actions through M3 on MAB 1.7.7 [#341](https://community.hubitat.com/t/-/135252/341)–[#342](https://community.hubitat.com/t/-/135252/342). No later retest was posted. |
-| G3 wall-switch labels | Functional switches are exported, but their Aqara labels are not imported because of the nested Aggregator structure [#432](https://community.hubitat.com/t/-/135252/432)–[#433](https://community.hubitat.com/t/-/135252/433). |
+| Aqara app device names | **Confirmed not exported over Matter.** Aqara hubs publish the *model* name in every Matter name field, so MAB has nothing to import. On a Hub E1 the `NodeLabel`, `ProductName` and `ProductLabel` of a bridged device all read e.g. `Aqara Water Leak Sensor`, and renaming the device in the Aqara Home app changes none of them. Verified on 2026-08-13 across three independent controllers: MAB, Apple Home, and a freshly commissioned Samsung SmartThings fabric. Apple Home may still display your chosen name — Aqara hubs also bridge to Apple over **HomeKit**, a separate protocol from Matter, and Apple additionally keeps its own name for each accessory; neither route is reachable from Hubitat. Give the Hubitat child device a label yourself; it survives rediscovery. |
+| G3 wall-switch labels | Functional switches are exported, but their Aqara labels are not imported [#432](https://community.hubitat.com/t/-/135252/432)–[#433](https://community.hubitat.com/t/-/135252/433). Two causes, now separated: the app name is not exported at all (row above), and on a multi-gang switch the individual gang endpoints carry no name field of their own — only their parent bridged-device endpoint does. MAB does not yet inherit that parent name, so each gang becomes a generic `Switch`. |
 | G3 unexplained Button children | **Unresolved:** eight extra Button children reported after discovery [#439](https://community.hubitat.com/t/-/135252/439). |
 | FP2 signals | Depend on Aqara cloud connectivity even though ordinary bridged devices continue to work locally [#239](https://community.hubitat.com/t/-/135252/239)–[#243](https://community.hubitat.com/t/-/135252/243). |
 

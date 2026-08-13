@@ -13,19 +13,21 @@ This page describes the repository, so it carries no driver version in its statu
 
 `docs/` contains **two trees with opposite publication rules**:
 
-| Tree | Git | Audience | Rule |
+| Path | Git | Audience | Rule |
 |---|---|---|---|
-| **[`user/`](user/)** | **Tracked and committed** | End users, browsed on GitHub | The only documentation that ships. Every claim must be verified against current code. |
-| **`maintainer/`** | **Gitignored — never committed** | The maintainer and AI agents | Working notes. Never published, never mirrored into `user/`. |
+| **[`user/`](user/)** | **Tracked and committed** | End users, browsed on GitHub | The user documentation that ships. Every claim must be verified against current code. |
+| **[`BUGS.md`](BUGS.md)** | **Tracked and committed** | Maintainers and AI agents | The defect record — what was classified, fixed, or ruled out. |
+| **[`TODO.md`](TODO.md)** | **Tracked and committed** | Maintainers and AI agents | Community requests — analysed, implemented, blocked, or declined. |
+| **`maintainer/`** | **Gitignored — never committed** | The maintainer and AI agents | Working notes: plans, the forum TODO list, investigations, migration evidence. |
 
-`maintainer/` is excluded by [`.gitignore`](../.gitignore) (`docs/maintainer/`), as are the root agent
-guides `AGENTS.md`, `CLAUDE.md`, and `CODEX.md`. **This page and `docs/user/` are therefore the only
-documentation a fresh clone contains** — which is why the conventions below are written down here and
-not only in the agent guide.
+`maintainer/` is excluded by [`.gitignore`](../.gitignore) (`docs/maintainer/`). Everything else is
+tracked, so a fresh clone gets this page, `docs/user/`, [`BUGS.md`](BUGS.md), and the root agent
+guides — but none of the maintainer working notes.
 
-> **Agents: `maintainer/` and `AGENTS.md` will not exist in a fresh clone.** If they are missing,
-> nothing is broken and nothing needs restoring — you are simply on a machine that never had them. Do
-> not reconstruct them, and do not assume another session's `BUGS.md` findings are available to you.
+> **Agents: `maintainer/` will not exist in a fresh clone.** If it is missing, nothing is broken and
+> nothing needs restoring — you are simply on a machine that never had it. Do not reconstruct it.
+> The defect record is **not** in there: [`BUGS.md`](BUGS.md) is published, so a previous session's
+> findings *are* available to you. Read it before re-deriving anything.
 
 The practical consequence: **anything speculative, internal, or unconfirmed belongs in `maintainer/`.**
 Source-file locations, suspected causes, unreproduced reports, and half-finished investigations stay
@@ -97,8 +99,6 @@ it knows what each file is for.
 |---|---|
 | `README.md` | The maintainer-tree guide (more detail than the summary here) |
 | `TODO.md` | Open user requests harvested from the community thread |
-| `bugs/BUGS.md` | Reviewed defect list — **authoritative** for open/closed status |
-| `bugs/BUGS_CODEX.md` | Earlier Codex analysis (2026-07-04), read-only, superseded by `BUGS.md` |
 | `plans/` | Implementation and migration plans (8 files) |
 | `status/` | Progress records and migration evidence (4 files) |
 | `archive/` | Backups and superseded material — currently the wiki baseline bundle |
@@ -114,13 +114,13 @@ known issue gets affected version, symptom, workaround, and resolution status �
 | I want to write about… | It goes in |
 |---|---|
 | Behaviour a user can see and act on | `docs/user/` (the applicable page) |
-| A defect, its cause, and its source location | `maintainer/bugs/BUGS.md` |
-| A user-facing issue that is real but unfixed | `user/help/known-issues.md` **and** `BUGS.md` |
+| A defect, its cause, and its source location | [`BUGS.md`](BUGS.md) (published) |
+| A user-facing issue that is real but unfixed | `user/help/known-issues.md` **and** [`BUGS.md`](BUGS.md) |
 | A technical record of a change | [`CHANGELOG.md`](../CHANGELOG.md) (repo root) |
 | A plain-language record of a change | [`user/project/revisions-history.md`](user/project/revisions-history.md) |
-| Instructions for AI agents | `AGENTS.md` (repo root, local only) |
+| Instructions for AI agents | [`AGENTS.md`](../AGENTS.md) (repo root) |
 | A deferred doc improvement or unresolved claim | `maintainer/status/documentation-open-items.md` |
-| A feature request from the forum | `maintainer/TODO.md` |
+| A feature request from the forum | [`TODO.md`](TODO.md) (published) |
 
 `CHANGELOG.md` and `revisions-history.md` are **both** needed for a behaviour change, and neither is
 generated from the other. The first is the technical record for developers; the second is the
@@ -146,8 +146,7 @@ user-facing narrative.
    limitations that no longer exist. It is kept so old forum links keep working.
 8. **External publication, wiki edits, and link changes require explicit authorization.**
 
-Where `AGENTS.md` is present, its §7 "Documentation rules" is the authority and this page is the map.
-Where it is not — any fresh clone — this page is what there is.
+[AGENTS.md](../AGENTS.md) §7 "Documentation rules" is the authority; this page is the map.
 
 ---
 
@@ -158,5 +157,5 @@ Where it is not — any fresh clone — this page is what there is.
 | [`README.md`](../README.md) | tracked | Repository landing page |
 | [`CHANGELOG.md`](../CHANGELOG.md) | tracked | Technical changelog, Keep a Changelog format |
 | `packageManifest.json` | tracked | Hubitat Package Manager manifest — release metadata |
-| `AGENTS.md` | **local only** | Agent guide; source of truth for how to work in this repo |
-| `CLAUDE.md`, `CODEX.md` | **local only** | Pointers to `AGENTS.md` — no content of their own |
+| [`AGENTS.md`](../AGENTS.md) | tracked | Agent guide; source of truth for how to work in this repo |
+| `CLAUDE.md`, `CODEX.md` | tracked | Pointers to `AGENTS.md` — no content of their own |

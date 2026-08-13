@@ -67,56 +67,33 @@
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
  * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
- * ver. 1.9.0  2026-07-25 kkossev + Claude Opus 5 - (dev. branch) callbackType:Invoke handling; added ping as a first step in the state machines before reading attributes;
- *                                  SupportedMatterClusters 'subscriptions' is now a Map keyed by attribute ID instead of a List of single-entry Maps; the per-attribute
- *                                  min/max/delta values of the old format were never sent to the hub (cleanSubscribe takes one global min/max) and are replaced by an
- *                                  'isSpammy' marker; new 'spammyAttributesMinInterval' preference (0 = off) sends the isSpammy attributes in a second subscription
- *                                  with a longer minimum reporting interval, issued after the primary cleanSubscribe is confirmed by its SubscriptionResult callback;
- *                                  <b>removed the driver-side illuminance throttling patch</b> (illumEvent/sendDelayedEventIllum/resetStats2/stringToJsonMap/mapToJsonString) together with the
- *                                  'minReportingTimeIllum' preference and the stats2/lastRx2 state variables - all are deleted from existing installations on upgrade. Illuminance (0x0400) is now
- *                                  marked isSpammy and is throttled at the source by the Matter subscription instead of by delaying events in the driver.
- *                                  <b>NOTE: 'spammyAttributesMinInterval' defaults to 0 (off), so the previous 10 seconds illuminance throttling is NOT applied until you set the preference!</b>
- *                                  illuminance 0 bug fixed: a null MeasuredValue (measurement invalid) was reported as 0 lux because safeToInt() defaults to 0 - such reports are now ignored;
- *                                  the same null-becomes-zero bug is fixed for temperature (0x0402, reported a fake 0.0 degrees), pressure (0x0403, 0 kPa) and humidity (0x0405, 0%) - all four
- *                                  nullable MeasuredValue attributes now go through nullableMeasuredValue(), which never substitutes a 0; the Thermostat LocalTemperature (0x0201/0x0000) is
- *                                  nullable too and no longer reports a fake 0.0 degrees when the thermostat says the temperature is unavailable;
- *                                  MeasuredValue 0 ('too dark to measure') still reports 0 lux; the lux conversion now rounds instead of truncating (raw 10000 was reported as 9 lux instead of 10)
- *                                  and the range check uses the Matter limit 0xFFFE instead of an arbitrary 100000 lux, which was discarding direct sunlight readings (~120000 lux);
- *                                  the periodic jobs (health check / ping) are finally scheduled automatically: added the missing installed() method - the driver had none, so a fresh installation
- *                                  scheduled nothing until the user pressed 'Save Preferences' (this was NOT a side effect of the disabled Initialize capability, which only affects hub reboots);
- *                                  _DiscoverAll now re-schedules them as well - DISCOVER_ALL_STATE_INIT runs initializeVars(fullInit=true), whose bare unschedule() was silently killing the
- *                                  health check for the rest of the session; the health check scheduling was extracted from updated() into schedulePeriodicJobs();
- *                                  IKEA Thread devices battery reporting: the root node (endpoint 0) PowerSource cluster 0x002F is now discovered and subscribed - previously only General Diagnostics
- *                                  0x0033 was read from the root node, so a battery reported there was never subscribed at all. The root node subscriptions are driven by ROOT_NODE_SUBSCRIPTIONS and
- *                                  are only requested when the root node AttributeList actually exposes them. For a single-node Matter device the battery is delivered to its application endpoint child
- *                                  (redirectRootNodePowerSource()); for a real bridge it stays on the parent, which now declares the Battery capability and a batteryVoltage attribute;
- *                                  <b>fixed the endless 'colorMode is CT' info logs on the bridge device</b>: Hubitat's stock 'Generic Component CT' / 'Generic Component Dimmer' do not declare the
- *                                  'colorMode' attribute (capability ColorMode), so the platform discarded every colorMode event we sent them - currentValue('colorMode') stayed null forever, the
- *                                  'is it already CT?' guard in componentSetColorTemperature() was true on every call and the duplicate filter could never match. colorMode now goes through
- *                                  getColorMode()/setColorMode(), which send a real event only when the child declares the attribute (RGBW) and cache it as a child data value otherwise;
- *                                  sending an attribute a child driver does not declare is no longer logged at info level for every report - it warns once per child+attribute instead;
- *                                  Air Purifier Resource Monitoring moved to the child driver.
- *
- *                                   TODO: 
- *                                   TODO: use subscriptionResult - subscriptionId: XXXXXX   to determine when subscription attribute/event reports have completed.
- *                                   TODO: use events timestamp / priority as a filtering criteria for duplicated events and out-of-order events ? (may not ne needed anymore after callbackType:SubscribeResult processing is implemented)
- *                                   TODO: Composite grouping of different attributes of a child device @iEnam
- *                                   TODO: thermostat component - supported modes JSON initialization after discovery
+ * ver. 1.9.0  2026-07-25 kkossev + Claude Opus 5 - (dev. branch) illuminance, temperature, pressure and humidity no longer report a fake 0 when the sensor says the measurement is invalid; root node battery
+ *                                  (IKEA Thread devices); the health check is finally scheduled on a fresh install. <b>Illuminance throttling moved into the Matter subscription - the new 'spammyAttributesMinInterval'
+ *                                  preference defaults to 0 (off), so the previous 10 seconds throttling is NOT applied until you set it!</b>
+ * ver. 1.9.1  2026-08-13 kkossev + Claude Opus 5 - (dev. branch) child devices now show the bridged device's SerialNumber and UniqueID in their Device Data (community request #440); the individual gangs of a
+ *                                  multi-gang wall switch now inherit the real device name instead of all becoming a generic 'Switch' named after the bridge.
  *
  */
 
 
-static String version() { '1.9.0' }
-static String timeStamp() { '2026/07/27 7:42 PM' }
+static String version() { '1.9.1' }
+static String timeStamp() { '2026/08/13 6:34 PM' }
 
 
-@Field static final Boolean _DEBUG = false                   // make it FALSE for production!
+@Field static final Boolean _DEBUG = true                  // make it FALSE for production!
 @Field static final String  DRIVER_NAME = 'Matter Advanced Bridge'
 @Field static final String  COMM_LINK =   'https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252'
 @Field static final String  GITHUB_LINK = 'https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/user/index.md'
 @Field static final String  IMPORT_URL =  'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Matter_Advanced_Bridge.groovy'
 @Field static final Boolean DEFAULT_LOG_ENABLE = true       // make it FALSE for production!
-@Field static final Boolean DO_NOT_TRACE_FFFX = true        // make it  TRUE for production! (don't trace the FFFx global attributes)
+@Field static final Boolean DO_NOT_TRACE_FFFX = false       // make it  TRUE for production! (don't trace the FFFx global attributes)
+// Diagnostic escape hatch for a failing _DiscoverAll. Normally every inbound message is traced only
+// outside discovery, and the FFFx globals are never traced - which leaves a stalled discovery with no
+// way to tell 'nothing arrived' from 'something arrived that was not a matching attribute report'
+// (an error status, the wrong endpoint, a decode failure). Setting this TRUE logs EVERY parsed
+// message, overriding both suppressions. Needs 'Enable debug logging' as well, since logDebug is
+// gated by it. Very noisy on a large bridge - make it FALSE for production!
+@Field static final Boolean _TRACE_ALL_MESSAGES = true     // make it FALSE for production! // Diagnostic escape hatch for a failing _DiscoverAll.
 @Field static final Boolean MINIMIZE_STATE_VARIABLES_DEFAULT = true     // make it TRUE for production!
 @Field static final Integer DIGITAL_TIMER = 3000             // command was sent by this driver
 @Field static final Integer REFRESH_TIMER = 6000             // refresh time in miliseconds
@@ -493,7 +470,17 @@ void parse(Map msg) {
 private void prepareForParse() {
     checkDriverVersion()
     checkSubscriptionStatus()
-    unschedule('deviceCommandTimeout')
+    // 'deviceCommandTimeout' has two users with different completion rules (BUGS.md B17):
+    //  - initialize() arms it for 55 s to guard the subscription handshake. ANY inbound message proves the
+    //    subscription works, so cancelling it here is exactly right.
+    //  - ping() arms it for COMMAND_TIMEOUT with state.states.isPing = true. Only the matching 0x0028/0x0000
+    //    reply completes that one; cancelling it on unrelated traffic used to lose the ping silently - no
+    //    'rtt: timeout', no pingsFail, and isPing left stuck true.
+    // So skip the cancel while a ping is outstanding; the ping completion path clears it instead. This also
+    // takes a scheduler write off the per-message hot path for the (common) isPing == false case.
+    if (state.states?.isPing != true) {
+        unschedule('deviceCommandTimeout')
+    }
     setHealthStatusOnline()
 }
 
@@ -511,7 +498,8 @@ private void processParsedDescription(final Map descMap) {
         return
     }
 
-    if (!(((descMap.attrId in ['FFF8', 'FFF9', 'FFFA', 'FFFC', 'FFFD', '00FE']) && DO_NOT_TRACE_FFFX) || state['states']['isDiscovery'] == true)) {
+    // _TRACE_ALL_MESSAGES bypasses both suppressions - the FFFx globals and the discovery-time silence.
+    if (_TRACE_ALL_MESSAGES || !(((descMap.attrId in ['FFF8', 'FFF9', 'FFFA', 'FFFC', 'FFFD', '00FE']) && DO_NOT_TRACE_FFFX) || state['states']['isDiscovery'] == true)) {
         //logDebug "parse: descMap:${descMap}  description:${description}"
         logDebug "parse: descMap:${descMap}"
     }
@@ -1125,6 +1113,9 @@ void gatherAttributesValuesInfo(final Map descMap) {
             logWarn "unexpected ping timeRunning=${timeRunning} "
         }
         state.states['isPing'] = false
+        // The ping is complete - this is the only event that may cancel its timeout. prepareForParse()
+        // deliberately leaves the timer alone while isPing is true (BUGS.md B17).
+        unschedule('deviceCommandTimeout')
     }
     else {
         logTrace "gatherAttributesValuesInfo: isInfo:${state.states['isInfo']} descMap:${descMap}"
@@ -1378,12 +1369,17 @@ void parseBridgedDeviceBasic(final Map descMap) {       // 0x0039 BridgedDeviceB
     String fingerprintName = getFingerprintName(descMap)
     if (state[fingerprintName] == null) { state[fingerprintName] = [:] }
     String eventName = attrName[0].toLowerCase() + attrName[1..-1]  // change the attribute name first letter to lower case
-    if (attrName in ['VendorName', 'ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable', 'ProductLabel']) {
+    if (attrName in ['VendorName', 'ProductName', 'NodeLabel', 'SoftwareVersionString', 'Reachable', 'ProductLabel', 'SerialNumber', 'UniqueID']) {
         if (descMap.value != null && descMap.value != '') {
             state[fingerprintName][attrName] = descMap.value
             // Note: These values are stored in state[fingerprintName] and don't need to be duplicated in device data
             // Child drivers can access them via parent methods if needed
-            eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  ${eventName} is: ${descMap.value}"]
+            // SerialNumber and UniqueID are stored only - no child declares them as attributes, so an event would
+            // just trip warnUndeclaredAttributeOnce() twice per discovery. createChildDevice() copies them into
+            // the child's Device Data instead (requested in community post #440).
+            if (!(attrName in ['SerialNumber', 'UniqueID'])) {
+                eventMap = [name: eventName, value:descMap.value, descriptionText: "${getDeviceDisplayName(descMap?.endpoint)}  ${eventName} is: ${descMap.value}"]
+            }
             if (logEnable) { logInfo "parseBridgedDeviceBasic: ${attrName} = ${descMap.value}" }
         }
     }
@@ -2837,7 +2833,7 @@ Integer requestMatterClusterAttributesValues(final Map data) {
     // Chunked - a cluster such as ThreadNetworkDiagnostics (0x0035) has 68 attributes, which in one single
     // Read Request exceeds the PDU / Thread MTU and is never answered at all.
     Integer chunks = sendChunkedAttributeReads(attributePaths)
-    logDebug "requestMatterClusterAttributesValues: reading ${attributePaths.size()} attributes in ${chunks} chunk(s) of max ${READ_CHUNK_SIZE}, last attribute 0x${HexUtils.integerToHexString(lastAttrInt, 2)}"
+    logDebug "requestMatterClusterAttributesValues: reading ${attributePaths.size()} attributes in ${chunks} chunk(s) of max ${effectiveReadChunkSize()}, last attribute 0x${HexUtils.integerToHexString(lastAttrInt, 2)}"
     return lastAttrInt
 }
 
@@ -3579,13 +3575,16 @@ void refresh() {
         return
     }
 
-    // Chunked into groups of READ_CHUNK_SIZE to stay within the Matter Read Request PDU size limits.
+    // Chunked to stay within the Matter Read Request PDU size limits. The chunk size is adaptive - it drops
+    // to SMALL_READ_CHUNK_SIZE once this bridge has proved it ignores a full-size batch - so the window must
+    // be computed from the same effective size, or it expires mid-flight.
     // Extend the refresh window to cover all chunks: (chunks × 500ms delay) + 3s safety margin
-    Integer chunks = (Integer) Math.ceil(attributePaths.size() / (double) READ_CHUNK_SIZE)
+    Integer chunkSize = effectiveReadChunkSize()
+    Integer chunks = (Integer) Math.ceil(attributePaths.size() / (double) chunkSize)
     Integer refreshWindowMs = Math.max(REFRESH_TIMER, (chunks * 500) + 3000)
     setRefreshRequest(refreshWindowMs)
 
-    logDebug "refresh(): reading ${attributePaths.size()} attributes in ${chunks} chunk(s) of max ${READ_CHUNK_SIZE} (window=${refreshWindowMs}ms)"
+    logDebug "refresh(): reading ${attributePaths.size()} attributes in ${chunks} chunk(s) of max ${chunkSize} (window=${refreshWindowMs}ms)"
     sendChunkedAttributeReads(attributePaths)
 }
 
@@ -3600,20 +3599,55 @@ void traceOff() {
 }
 
 
-// Maximum number of attribute paths in a single Matter Read Request.
-// Each AttributePathIB encodes to ~14 bytes; the Thread MTU is 1280 bytes -> ~87 paths would still fit,
-// so 20 is conservative and leaves room for header overhead variation.
+// Default number of attribute paths in a single Matter Read Request. This is an EMPIRICAL value, not a
+// derived one: a 68-path read of cluster 0x0035 was never answered (BUGS.md B20), a 20-path 0x0028 read
+// on endpoint 0 always is. Do not re-derive it from the Thread MTU - B24 showed the binding constraint
+// is the size of the RESPONSE and the network path carrying it, not the size of the request.
 @Field static final Integer READ_CHUNK_SIZE = 20
+// Fallback batch size for bridges that silently ignore a large multi-path read. The Aqara M3 answers a
+// 9-path 0x001D read on a bridged endpoint but sends NOTHING AT ALL for the 19-path 0x0039 read on that
+// same endpoint - not an error status, no response whatsoever. Confirmed 2026-08-13 with
+// _TRACE_ALL_MESSAGES enabled, so it is not a driver-side filtering artefact.
+// 8 is deliberately below 9, the Matter spec floor (kMinSupportedPathsPerReadRequest in connectedhomeip):
+// a conformant server MUST accept at least 9 paths, so a chunk of 8 can never be refused for being too big.
+// Note 9 is a floor, not a ceiling - it is NOT evidence of a 9-path limit on any particular bridge, and the
+// real limit cannot be discovered at runtime (CapabilityMinima reports only CASE sessions and subscriptions
+// per fabric; MaxPathsPerInvoke 0x0016 applies to Invoke, not Read). Hence fallback-on-timeout below.
+@Field static final Integer SMALL_READ_CHUNK_SIZE = 8
+
+/**
+ * The chunk size to use for a read right now: SMALL_READ_CHUNK_SIZE once this bridge has proved it ignores
+ * a full-size batch, otherwise READ_CHUNK_SIZE. The quirk flag lives in state.states (NOT in
+ * state.stateMachines, which is wiped at the start of every discovery), so a bridge known to need small
+ * reads keeps getting them across discovery runs, refresh() and componentRefresh(). Cleared by initialize().
+ */
+Integer effectiveReadChunkSize() {
+    return (state.states?.smallReadChunks == true) ? SMALL_READ_CHUNK_SIZE : READ_CHUNK_SIZE
+}
+
+/**
+ * Latches the 'this bridge needs small reads' quirk. Sticky for the life of the installation so that only
+ * the very first oversized read ever pays a timeout.
+ * @return true when this call latched the flag, false when it was already set.
+ */
+Boolean latchSmallReadChunks() {
+    if (state.states == null) { state.states = [:] }
+    if (state.states['smallReadChunks'] == true) { return false }
+    state.states['smallReadChunks'] = true
+    return true
+}
 
 /**
  * Sends a Matter Read Request for the given attribute paths, split into chunks that fit the PDU / Thread MTU.
  * Records the number of chunks in state['stateMachines']['lastReadChunks'], so that a state machine waiting
  * for the reply of the LAST chunk can widen its timeout accordingly.
+ * @param chunkSize explicit override; when null the adaptive effectiveReadChunkSize() is used.
  * @return the number of chunks actually sent (0 when there was nothing to send).
  */
-Integer sendChunkedAttributeReads(List<Map<String, String>> attributePaths, Integer delayMs = 500) {
+Integer sendChunkedAttributeReads(List<Map<String, String>> attributePaths, Integer delayMs = 500, Integer chunkSize = null) {
     if (attributePaths == null || attributePaths.isEmpty()) { return 0 }
-    List<String> cmds = attributePaths.collate(READ_CHUNK_SIZE).collect { List<Map<String, String>> chunk -> matter.readAttributes(chunk) }
+    Integer effectiveChunkSize = (chunkSize != null && chunkSize > 0) ? chunkSize : effectiveReadChunkSize()
+    List<String> cmds = attributePaths.collate(effectiveChunkSize).collect { List<Map<String, String>> chunk -> matter.readAttributes(chunk) }
     if (state['stateMachines'] == null) { state['stateMachines'] = [:] }
     state['stateMachines']['lastReadChunks'] = cmds.size()
     // a single chunk is sent as-is - that is exactly what the callers did before the chunking was introduced
@@ -3789,9 +3823,13 @@ void componentRefresh(DeviceWrapper dw) {
         matter.attributePath(sub[0] as Integer, sub[1] as Integer, sub[2] as Integer)
     }
     if (!attributePaths.isEmpty()) {
-        setRefreshRequest()    // 6 seconds
-        sendToDevice(matter.readAttributes(attributePaths))
-        logDebug "componentRefresh(${dw}) id=${id} : refreshing attributePaths=${attributePaths}"
+        // Chunked like refresh() - an endpoint with many subscriptions would otherwise send one oversized
+        // Read Request. The refresh window is scaled by the chunk count, or a chunked read expires mid-flight.
+        Integer chunkSize = effectiveReadChunkSize()
+        Integer chunks = (Integer) Math.ceil(attributePaths.size() / (double) chunkSize)
+        setRefreshRequest(Math.max(REFRESH_TIMER, (chunks * 500) + 3000))
+        sendChunkedAttributeReads(attributePaths)
+        logDebug "componentRefresh(${dw}) id=${id} : refreshing ${attributePaths.size()} attributes in ${chunks} chunk(s) of max ${chunkSize}, attributePaths=${attributePaths}"
     }
 }
 
@@ -4097,7 +4135,7 @@ private List<String> parseSupportedFanSpeeds(DeviceWrapper dw) {
     String json = dw.currentValue('supportedFanSpeeds')
     if (!json) { return null }
     try {
-        Object parsed = new JsonSlurper().parseText(json)
+        Object parsed = jsonParser.parseText(json)
         return (parsed instanceof List) ? (parsed as List).collect { it.toString() } : null
     } catch (Exception e) {
         logWarn "parseSupportedFanSpeeds(${dw}): cannot parse '${json}' : ${e.message}"
@@ -4377,6 +4415,108 @@ void removeAllDevices() {
  *  Driver Capabilities Implementation
  */
 
+/**
+ *  Endpoint identity inheritance for multi-component bridged devices.
+ *
+ *  A multi-gang wall switch is exposed as several endpoints: one Bridged Node carrying the
+ *  BridgedDeviceBasicInformation cluster (0x0039) with the device name and identifiers, plus one
+ *  functional endpoint per gang that carries only its application cluster and no 0x0039 at all.
+ *  The gang endpoints therefore have no name of their own and used to fall back to the generic
+ *  'Switch' plus the bridge's own product name.
+ *
+ *  Live topology from an Aqara Hub E1 (2026-08-13):
+ *      ep 0x01  Aggregator    ServerList [0003, 001D]        PartsList [0035, 0036, 0037, 006B]
+ *      ep 0x35  Bridged Node  ServerList [001D, 0039]        PartsList [0036, 0037]  <- name lives here
+ *      ep 0x36  On/Off Light  ServerList [001D, 0003, 0006]  PartsList []
+ *      ep 0x37  On/Off Light  ServerList [001D, 0003, 0006]  PartsList []
+ *
+ *  Note that 0x36 has TWO parents by PartsList - the Aggregator 0x01 and the Bridged Node 0x35.
+ *  The Aggregator is rejected simply because it carries no 0x0039 data, so there is no need to
+ *  test device types; a bridge that nests Aggregators differently still resolves correctly.
+ */
+private Map fingerprintForEndpoint(final String endpointHex) {
+    String hex = normalizeChildEndpoint(endpointHex)
+    if (!hex) { return null }
+    Object fingerprintMap = state[getFingerprintName([endpoint: hex])]
+    return (fingerprintMap instanceof Map) ? (Map) fingerprintMap : null
+}
+
+// An endpoint 'has identity' when cluster 0x0039 gave it any name or identifier worth inheriting.
+private boolean fingerprintHasIdentity(final Map fingerprintMap) {
+    if (fingerprintMap == null) { return false }
+    return fingerprintMap['NodeLabel'] || fingerprintMap['ProductName'] || fingerprintMap['ProductLabel'] ||
+           fingerprintMap['SerialNumber'] || fingerprintMap['UniqueID']
+}
+
+/**
+ *  Returns the endpoint (2-char hex) of the nearest ancestor that carries 0x0039 identity data,
+ *  or null when there is none. Climbs more than one level for nested Aggregators and is protected
+ *  against a malformed PartsList that forms a cycle.
+ */
+String findIdentityParentEndpoint(final String endpointHex, final Set<String> visited = null) {
+    String target = normalizeChildEndpoint(endpointHex)
+    if (!target) { return null }
+    Set<String> seen = visited ?: ([] as Set)
+    if (!seen.add(target)) { return null }              // cycle in PartsList - give up on this branch
+    List<String> candidates = []
+    state.each { String key, Object value ->
+        if (!key.startsWith('fingerprint') || !(value instanceof Map)) { return }
+        List parts = ((Map) value)['PartsList'] as List
+        if (!parts) { return }
+        if (parts.any { normalizeChildEndpoint(it) == target }) {
+            candidates.add(key.substring('fingerprint'.length()).toUpperCase())
+        }
+    }
+    if (!candidates) { return null }
+    // Prefer a direct parent that actually has identity data; the smallest PartsList is the most
+    // specific parent, and the endpoint string is the deterministic tie-break.
+    List<String> named = candidates.findAll { fingerprintHasIdentity(fingerprintForEndpoint(it)) }
+    if (named) {
+        return named.sort { String a, String b ->
+            int sizeA = (fingerprintForEndpoint(a)?.get('PartsList') as List)?.size() ?: 0
+            int sizeB = (fingerprintForEndpoint(b)?.get('PartsList') as List)?.size() ?: 0
+            return (sizeA <=> sizeB) ?: (a <=> b)
+        }.first()
+    }
+    // No direct parent carries a name - climb one level (nested Aggregators).
+    for (String candidate : candidates.sort()) {
+        String higher = findIdentityParentEndpoint(candidate, seen)
+        if (higher) { return higher }
+    }
+    return null
+}
+
+/**
+ *  A 1-based position within the parent's PartsList, used to tell sibling components apart
+ *  ('... - 1', '... - 2'). Returns null when the parent has a single part, because then the child
+ *  IS the device and a suffix would only add noise.
+ */
+String computeComponentSuffix(final String endpointHex, final String parentEndpointHex) {
+    List parts = fingerprintForEndpoint(parentEndpointHex)?.get('PartsList') as List
+    if (!parts || parts.size() < 2) { return null }
+    String target = normalizeChildEndpoint(endpointHex)
+    int index = parts.findIndexOf { normalizeChildEndpoint(it) == target }
+    return index >= 0 ? "${index + 1}".toString() : null
+}
+
+/**
+ *  Whether a child's current label may be replaced by the suggested one. A label the user typed is
+ *  never overwritten - the only exception is when several children of ONE physical device carry the
+ *  identical inherited base label, where appending the component suffix keeps the user's wording and
+ *  makes the siblings distinguishable.
+ */
+private boolean isReplaceableChildLabel(final String currentLabel, final Map d) {
+    if (currentLabel == null || currentLabel.trim().isEmpty()) { return true }
+    String current = currentLabel.trim().toLowerCase()
+    List<Object> generic = [d?.product_name, d?.deviceTypeName, 'switch', 'button', 'unknown', 'matter device']
+    if (generic.any { it != null && current == it.toString().trim().toLowerCase() }) { return true }
+    if (d?.componentSuffix) {
+        String base = (d?.NodeLabel ?: d?.ProductLabel ?: d?.ProductName)?.toString()?.trim()?.toLowerCase()
+        if (base && current == base) { return true }
+    }
+    return false
+}
+
 Map fingerprintToData(String fingerprint) {
     Map data = [:]
     Map fingerprintMap = state[fingerprint]
@@ -4389,6 +4529,9 @@ Map fingerprintToData(String fingerprint) {
         data['VendorName'] = fingerprintMap['VendorName']
         data['ProductLabel'] = fingerprintMap['ProductLabel']
         data['NodeLabel'] = fingerprintMap['NodeLabel']
+        // Optional 0x0039 identifiers - present only when the bridge reports them. Copied to child Device Data.
+        data['SerialNumber'] = fingerprintMap['SerialNumber']
+        data['UniqueID'] = fingerprintMap['UniqueID']
         List rawDeviceTypeList = fingerprintMap['DeviceTypeList'] ?: []
         List<String> deviceTypeIds = normalizeDeviceTypeList(rawDeviceTypeList)
         data['DeviceType'] = deviceTypeIds      // the List - consumed by mapMatterCategory()
@@ -4396,6 +4539,27 @@ Map fingerprintToData(String fingerprint) {
         // already stored, so a fingerprint written by an older driver version is upgraded here as well.
         data['deviceType'] = (fingerprintMap['deviceType'] ?: deviceTypeIds.join(',')).toString()
         data['deviceTypeName'] = (fingerprintMap['deviceTypeName'] ?: deviceTypeNames(deviceTypeIds)?.best ?: UNKNOWN).toString()
+
+        // Multi-component bridged devices: a functional endpoint with no 0x0039 cluster of its own
+        // (e.g. one gang of a multi-gang wall switch) inherits its name and identifiers from the
+        // nearest ancestor that has them. This must run BEFORE the bridge-ProductName fallback below,
+        // otherwise every gang is named after the bridge instead of its own physical device.
+        if (!data['ProductName'] && !data['ProductLabel'] && !data['NodeLabel']) {
+            String parentEndpoint = findIdentityParentEndpoint(data['id'] as String)
+            Map parentFingerprint = parentEndpoint ? fingerprintForEndpoint(parentEndpoint) : null
+            if (parentFingerprint != null) {
+                data['parentEndpoint'] = parentEndpoint
+                data['NodeLabel']    = parentFingerprint['NodeLabel']
+                data['ProductName']  = parentFingerprint['ProductName']
+                data['ProductLabel'] = parentFingerprint['ProductLabel']
+                data['VendorName']   = data['VendorName'] ?: parentFingerprint['VendorName']
+                // Sibling components legitimately share the parent's identifiers - it is one physical device.
+                data['SerialNumber'] = data['SerialNumber'] ?: parentFingerprint['SerialNumber']
+                data['UniqueID']     = data['UniqueID'] ?: parentFingerprint['UniqueID']
+                data['componentSuffix'] = computeComponentSuffix(data['id'] as String, parentEndpoint)
+                logDebug "fingerprintToData(): endpoint ${data['id']} inherited identity from parent endpoint ${parentEndpoint} ('${data['NodeLabel'] ?: data['ProductName']}' suffix:${data['componentSuffix']})"
+            }
+        }
 
         // Fallback: If ProductName, ProductLabel, and NodeLabel are all empty/null, use bridge's ProductName
         if (!data['ProductName'] && !data['ProductLabel'] && !data['NodeLabel']) {
@@ -4411,6 +4575,13 @@ Map fingerprintToData(String fingerprint) {
         Map productName = mapMatterCategory(data)
 
         data['product_name'] = fingerprintMap['ProductName'] ?: productName['product_name']           // Device Name
+
+        // The label this endpoint should carry. For a plain leaf endpoint this is just its NodeLabel,
+        // exactly as before; only an inherited identity adds the component suffix.
+        String baseLabel = data['NodeLabel'] ?: data['ProductLabel'] ?: data['ProductName']
+        if (baseLabel) {
+            data['suggestedLabel'] = data['componentSuffix'] ? "${baseLabel} - ${data['componentSuffix']}".toString() : baseLabel.toString()
+        }
     }
     return data
  }
@@ -4441,7 +4612,7 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
             dw = addChildDevice(mapping.namespace ?: 'hubitat', mapping.driver, dni,
                 [
                     name: d.product_name ?: d.ProductLabel ?: d.ProductName ?:  d.name ?: 'Matter Device' as String,
-                    label: d.NodeLabel /*?: d.ProductName ?: d.product_name ?: d.name*/ ?: '' as String
+                    label: d.suggestedLabel ?: d.NodeLabel /*?: d.ProductName ?: d.product_name ?: d.name*/ ?: '' as String
 
                     //name: d.ProductLabel ?: d.ProductName ?: d.product_name ?: d.name ?: 'Matter Device',
                     //label: d.NodeLabel ?: d.ProductName ?: d.product_name ?: d.name ?: 'Matter Device'
@@ -4472,6 +4643,37 @@ private ChildDeviceWrapper createChildDevice(String dni, Map mapping, Map d) {
     // deletes state.fingerprintXX. Skip nulls - HE would store them as the string 'null'.
     if (d.deviceType) { dw?.updateDataValue('deviceType', d.deviceType.toString()) }
     if (d.deviceTypeName) { dw?.updateDataValue('deviceTypeName', d.deviceTypeName.toString()) }
+    // The bridged device's own identifiers from cluster 0x0039 (SerialNumber 0x000F, UniqueID 0x0012).
+    // Both are optional in Matter and many bridges omit them, so write only what was actually reported -
+    // same reason as above, HE would store a null as the literal string 'null'. Requested in community post #440.
+    if (d.SerialNumber) { dw?.updateDataValue('serialNumber', d.SerialNumber.toString()) }
+    if (d.UniqueID) { dw?.updateDataValue('uniqueId', d.UniqueID.toString()) }
+    // Set when this endpoint's name/identifiers were inherited from an ancestor - diagnostic only.
+    if (d.parentEndpoint) { dw?.updateDataValue('parentEndpoint', d.parentEndpoint.toString()) }
+
+    // Apply the suggested label. A label the user typed is never overwritten - isReplaceableChildLabel()
+    // allows only a blank label, a generic driver-produced one, or the ambiguous case where sibling
+    // components of one physical device all carry the identical inherited base label.
+    if (dw != null && d.suggestedLabel) {
+        String currentLabel = dw.getLabel()
+        if (currentLabel != d.suggestedLabel.toString()) {
+            if (isReplaceableChildLabel(currentLabel, d)) {
+                // Guarded on purpose: this runs on the _DiscoverAll path, so a platform refusal to
+                // relabel must not abort the state machine in DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE.
+                String childName = dw.toString()
+                try {
+                    dw.setLabel(d.suggestedLabel.toString())
+                    logInfo "createChildDevice(): relabelled ${childName} '${currentLabel}' -> '${d.suggestedLabel}'"
+                }
+                catch (e) {
+                    logWarn "createChildDevice(): could not relabel ${childName} to '${d.suggestedLabel}': ${e.message}"
+                }
+            }
+            else {
+                logDebug "createChildDevice(): keeping the user label '${currentLabel}' for ${dw} (suggested was '${d.suggestedLabel}')"
+            }
+        }
+    }
 
     return dw
 }
@@ -5107,30 +5309,8 @@ void test(par) {
     sendToDevice(cmd)
  }
 
-/*
-private boolean isMatterBridgeByAnyEndpoint() {
-    // scan all fingerprints (endpoint descriptor snapshots)
-    List<Map> fps = state.findAll { k, v -> (k as String).startsWith('fingerprint') && (v instanceof Map) }
-                         .collect { it.value as Map }
-
-    for (Map fp : fps) {
-        List<String> dt    = ((fp.DeviceTypeList ?: []) as List)*.toString()*.toUpperCase()
-        List<String> parts = ((fp.PartsList ?: []) as List)*.toString()*.toUpperCase()
-
-        if (dt.contains('000E') && parts && parts.size() > 0) {
-            return true
-        }
-    }
-    return false
-}
-
-private void finalizeDeviceType() {
-    boolean isBridge = isMatterBridgeByAnyEndpoint()
-    state.deviceType = isBridge ? 'MATTER_BRIDGE' : 'MATTER_DEVICE'
-    logInfo "DEVICE_TYPE (detected) = ${state.deviceType}"
-}
-*/
-
+// NOTE: the commented-out duplicates of isMatterBridgeByAnyEndpoint() / finalizeDeviceType() that used to
+// sit here were deleted on 2026-08-13. The live versions are in Libraries/matterLib.groovy.
 
 // -------- libraries here --------
 /* groovylint-disable-next-line NglParseError */

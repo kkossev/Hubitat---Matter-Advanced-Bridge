@@ -400,14 +400,18 @@ scratchPad.txt
 Matter_Advanced_Bridge.groovy.bak
 packageManifest.json.bak
 
-# Agent guides — local only, kept at the repository root by convention.
-AGENTS.md
-CLAUDE.md
-CODEX.md
+# Agent guides (AGENTS.md + the CLAUDE.md / CODEX.md pointers) are deliberately NOT ignored —
+# they are tracked and published so every clone carries the same guide.
 
 # Maintainer working documents — local only, never published.
-# docs/user/ is deliberately NOT ignored; it is the canonical public documentation.
+# docs/user/ and docs/README.md are deliberately NOT ignored; they are the public documentation.
 docs/maintainer/
+
+# Editor / agent tool settings — machine-specific. These accumulate absolute paths containing the
+# local Windows username, so they must never be committed.
+.claude/settings.json
+.claude/settings.local.json
+.vscode/settings.json
 
 # Local-only working notes kept alongside the code they describe.
 Libraries/Matter_State_Machines_OPTIMIZATION_PLAN.md

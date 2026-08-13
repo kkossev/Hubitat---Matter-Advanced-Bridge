@@ -59,7 +59,9 @@ save effort on both sides.
 
 These pages live in
 [`docs/user/`](https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/tree/main/docs/user) and
-are ordinary Markdown — corrections can be sent as a pull request the same way as code.
+are ordinary Markdown — corrections can be sent as a pull request the same way as code. The
+[documentation map](https://github.com/kkossev/Hubitat---Matter-Advanced-Bridge/blob/main/docs/README.md)
+explains how the pages are organised and what conventions they follow.
 
 Two rules keep the documentation trustworthy:
 

@@ -1,12 +1,27 @@
 # Revision history
 
-Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
+Applies to: 1.9.1 | Last verified: 2026-08-13 | Status: Current
 
 User-visible changes, newest first. The driver file header carries the complete technical changelog,
 including internal refactoring not listed here.
 
-**The current released version is 1.8.8**, which is what Hubitat Package Manager installs. **1.9.0 is
-a BETA** — available for testing, not yet the released package.
+**The current released version is 1.8.8**, which is what Hubitat Package Manager installs.
+**1.9.0 and later are BETA** — available for testing, not yet the released package.
+
+## 1.9.1 — 2026-08-13 *(BETA)*
+
+- Each child device's **Device Data** section now shows the bridged device's serial number and unique
+  id, when the bridge reports them. These are whatever the bridge sends: on some bridges several
+  children share the hub's own serial, so treat them as informational rather than a guaranteed
+  per-device identifier.
+- **Multi-gang devices are no longer indistinguishable.** A two-gang wall switch used to arrive as two
+  children both called `Switch`, named after the bridge, because the individual gangs carry no name of
+  their own over Matter. Each gang now inherits its parent device's name and identifiers and gets a
+  `- 1` / `- 2` suffix, for example `Aqara Wall Switch EU - 1`. A label you set yourself is **never**
+  overwritten — only a blank or generic one is replaced.
+- Discovery no longer stalls when a bridge fails to answer a large attribute read. It retries in
+  smaller batches and carries on, instead of timing out on every device in turn.
+- Aqara device names: see [Aqara](../bridges/aqara.md) for what these hubs do and do not export.
 
 ## 1.9.0 — 2026-07-25 *(BETA)*
 

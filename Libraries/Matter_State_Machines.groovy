@@ -7,7 +7,7 @@ library(
     name: 'matterStateMachinesLib',
     namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Libraries/Matter_State_Machines.groovy',
-    version: '1.2.0',
+    version: '1.2.1',
     documentationLink: ''
 )
 /*
@@ -35,14 +35,15 @@ library(
   * ver. 1.1.1  2026-01-17 GPT-5.2  - restored DISCOVER_ALL_STATE_BRIDGE_GENERAL_DIAGNOSTICS
   * ver. 1.1.2  2026-02-21 kkossev  - potential bug fix in discovering global elements (including FeatureMap); added 0xFFFA
   * ver. 1.2.0  2026-07-25 kkossev + Claude Opus 5 - (dev. branch) bug fixes; ping the bridge before starting the discovery;
+  * ver. 1.2.1  2026-08-13 kkossev + Claude Opus 5 - (dev. branch) bug fix: readAttributeSafe() validated every cluster against the Descriptor's AttributeList, refusing valid attributes of any other cluster;
   *
 */
 
 import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
-@Field static final String matterStateMachinesLib = '1.2.0'
-@Field static final String matterStateMachinesLibStamp   = '2026/07/25 8:56 PM'
+@Field static final String matterStateMachinesLib = '1.2.1'
+@Field static final String matterStateMachinesLibStamp   = '2026/08/13 6:20 PM'
 
 // no metadata section for matterStateMachinesLib
 @Field static final String  START   = 'START'
@@ -127,11 +128,16 @@ void readSingleAttrStateMachine(Map data = null) {
                 st = 99
                 break
             }
-            // so far, so good, now check whether the attribute is in the attributeList
-            List<String>  attributeList = state[fingerprintName]['AttributeList']
+            // so far, so good, now check whether the attribute is in the attributeList.
+            // getStateClusterName() stores the Descriptor (001D) attribute list under the plain key
+            // 'AttributeList' and every other cluster under 'NNNN_FFFB' - so the key must be chosen the
+            // same way requestMatterClusterAttributesValues() chooses it. Reading the plain key for every
+            // cluster validated e.g. 0039:0005 against the Descriptor's own list and refused it.
+            String attrListKey = (data.cluster == 0x001D) ? 'AttributeList' : "${HexUtils.integerToHexString(data.cluster, 2)}_FFFB".toString()
+            List<String>  attributeList = state[fingerprintName][attrListKey]
             if (attributeList == null) {
-                logWarn "readAttributeSafe(): state[${fingerprintName}]['AttributeList'] is null !"
-                logWarn 'run steps A1 and A2 !'
+                logWarn "readAttributeSafe(): state[${fingerprintName}]['${attrListKey}'] is null !"
+                logWarn "run steps A1 and A2 ! (or use 'readAttribute' to read it without validation)"
                 state['stateMachines']['readSingeAttrResult'] = ERROR
                 data['action'] = ERROR
                 st = 99
@@ -143,7 +149,7 @@ void readSingleAttrStateMachine(Map data = null) {
             logTrace "readSingleAttrStateMachine: st:${st} - found attributeListInt ${attributeListInt}"
             // check whether the attribute is in the fingerprint attributeListInt
             if (!attributeListInt?.contains(data.attribute)) {
-                logWarn "readAttributeSafe(): state[${fingerprintName}]['AttributeList'] does not contain attribute ${data.attribute} (0x${HexUtils.integerToHexString(data.attribute, 2)}) !"
+                logWarn "readAttributeSafe(): state[${fingerprintName}]['${attrListKey}'] does not contain attribute ${data.attribute} (0x${HexUtils.integerToHexString(data.attribute, 2)}) !"
                 logWarn "valid attributes are: ${attributeList}"
                 state['stateMachines']['readSingeAttrResult'] = ERROR
                 data['action'] = ERROR
@@ -231,6 +237,28 @@ private boolean isEndpointDisabled(Integer endpoint) {
  * The calling function must check the state['stateMachines']['discoverGlobalElementsResult'] to determine the result of the state machine execution.
  */
 
+/**
+ *  (Re)issues the value reads for every attribute the cluster's FFFB AttributeList reported, and arms
+ *  the confirmation. Returns the number of chunks sent, or 0 when the AttributeList is missing/empty.
+ *
+ *  chunkSize exists because some bridges silently ignore a large multi-path read on a bridged endpoint.
+ *  The Aqara M3 answers a 9-path 0x001D read on endpoint 0x2E but sends NOTHING for the 19-path 0x0039
+ *  read on that same endpoint, while happily answering a 20-path read on endpoint 0. So the wait state
+ *  can re-issue the identical read in small chunks instead of failing the endpoint.
+ */
+private Integer sendGlobalElementsValueReads(final Map data, final Integer chunkSize) {
+    String fingerprintName = getFingerprintName(data.endpoint)
+    String stateClusterName = getStateClusterName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: 'FFFB'])
+    List storedList = (state[fingerprintName] != null) ? state[fingerprintName][stateClusterName] as List : null
+    if (storedList == null || storedList.isEmpty()) { return 0 }
+    List<Integer> attributeList = storedList.collect { HexUtils.hexStringToInt(it) }
+    List<Map<String, String>> attributePaths = []
+    attributeList.each { attrId -> attributePaths.add(matter.attributePath(data.endpoint, data.cluster, attrId)) }
+    state['stateMachines']['Confirmation'] = false
+    state['stateMachines']['toBeConfirmed'] = [data.endpoint, data.cluster, attributeList.last()]
+    return sendChunkedAttributeReads(attributePaths, 500, chunkSize)
+}
+
 void discoverGlobalElementsStateMachine(Map data) {
     initializeStateMachineVars()
     if (data != null) {
@@ -270,30 +298,15 @@ void discoverGlobalElementsStateMachine(Map data) {
                 if (data.debug) { logDebug "discoverGlobalElementsStateMachine: st:${st} - received reading confirmation!" }
                 // here we have bridgeDescriptor/fingerprintNN : {AttributeList=[00, 01, 02, 03, FFF8, FFF9, FFFB, FFFC, FFFD]}
                 // read all the attributes from the ['AttributeList']
-                List<Map<String, String>> attributePaths = []
-                String fingerprintName = getFingerprintName(data.endpoint)
-                String stateClusterName = getStateClusterName([cluster: HexUtils.integerToHexString(data.cluster, 2), attrId: 'FFFB'])
-                //logWarn "discoverGlobalElementsStateMachine: st:${st} - fingerprintName:${fingerprintName}, stateClusterName:${stateClusterName}, state[fingerprintName][stateClusterName]:${state[fingerprintName][stateClusterName]}"
-                List<Integer> attributeList = []
-                if (state[fingerprintName] != null && state[fingerprintName][stateClusterName] != null) {
-                    attributeList = state[fingerprintName][stateClusterName]?.collect { HexUtils.hexStringToInt(it) }
-                } else {
-                    logWarn "discoverGlobalElementsStateMachine: st:${st} - attributeList state data is null, skipping to end"
+                // chunked - a cluster with 40+ attributes does not fit in a single Read Request (PDU / Thread MTU).
+                // Passing null lets sendChunkedAttributeReads() apply effectiveReadChunkSize(): once a bridge has
+                // proved it ignores a full-size batch, every later endpoint starts small straight away, so only
+                // the first endpoint ever pays the timeout.
+                if (sendGlobalElementsValueReads(data, null) == 0) {
+                    logWarn "discoverGlobalElementsStateMachine: st:${st} - attributeList is missing or empty, skipping to end"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_END
                     break
                 }
-                if (attributeList == null || attributeList.isEmpty()) {
-                    logWarn "discoverGlobalElementsStateMachine: st:${st} - attributeList is empty, skipping to end"
-                    st = STATE_DISCOVER_GLOBAL_ELEMENTS_END
-                    break
-                }
-                attributeList.each { attrId ->
-                    attributePaths?.add(matter.attributePath(data.endpoint, data.cluster, attrId))
-                }
-                state['stateMachines']['Confirmation'] = false
-                state['stateMachines']['toBeConfirmed'] = [data.endpoint, data.cluster, attributeList.last()]
-                // chunked - a cluster with 40+ attributes does not fit in a single Read Request (PDU / Thread MTU)
-                sendChunkedAttributeReads(attributePaths)
                 retry = 0; st = STATE_DISCOVER_GLOBAL_ELEMENTS_GLOBAL_ELEMENTS_WAIT
             }
             else {
@@ -314,6 +327,18 @@ void discoverGlobalElementsStateMachine(Map data) {
                 logTrace "discoverGlobalElementsStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
                 retry++
                 if (retry > maxRetries) {
+                    // No response at all to the full-size batch. Before failing the endpoint, re-issue the
+                    // identical read in small chunks - see sendGlobalElementsValueReads(). The flag is sticky
+                    // (state.states, so it also survives into later discovery runs, refresh() and
+                    // componentRefresh()) and the remaining endpoints skip the timeout entirely.
+                    if (latchSmallReadChunks() == true) {
+                        Integer sentChunks = sendGlobalElementsValueReads(data, SMALL_READ_CHUNK_SIZE)
+                        if (sentChunks > 0) {
+                            logWarn "discoverGlobalElementsStateMachine: st:${st} - no response to the full attribute read of cluster 0x${HexUtils.integerToHexString(data.cluster, 2)} on endpoint 0x${HexUtils.integerToHexString(data.endpoint, 1)}; retrying in ${sentChunks} chunks of ${SMALL_READ_CHUNK_SIZE}"
+                            retry = 0
+                            break
+                        }
+                    }
                     logWarn "discoverGlobalElementsStateMachine: st:${st} - timeout waiting for the attribute value (retry=${retry})!"
                     st = STATE_DISCOVER_GLOBAL_ELEMENTS_ERROR
                 }
@@ -388,7 +413,7 @@ void discoverGlobalElementsStateMachine(Map data) {
 @Field static final Integer DISCOVER_ALL_STATE_GET_BRIDGED_DEVICE_BASIC_INFO_WAIT_STATE = 24
 @Field static final Integer DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_START                 = 25
 @Field static final Integer DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE           = 26
-@Field static final Integer DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_WAIT                  = 27
+// 27 was DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_WAIT - dead since nothing ever assigned it; removed 2026-08-13
 @Field static final Integer DISCOVER_ALL_STATE_COPY_FINGERPRINT_TO_CHILDREN             = 28
 @Field static final Integer DISCOVER_ALL_STATE_CLUSTER_DATA_WAIT                        = 29
 @Field static final Integer DISCOVER_ALL_STATE_SUBSCRIBE_KNOWN_CLUSTERS                 = 30
@@ -399,14 +424,6 @@ void discoverGlobalElementsStateMachine(Map data) {
 @Field static final Integer DISCOVER_ALL_STATE_NEXT_STATE                               = 80
 @Field static final Integer DISCOVER_ALL_STATE_ERROR                                    = 98
 @Field static final Integer DISCOVER_ALL_STATE_END                                      = 99
-
-void testObject(Object p) {
-    logDebug "test: p:${p}"
-    // print the object properties
-    p.properties.each { prop ->
-        logDebug "test: prop:${prop}"
-    }
-}
 
 /****************************************** discoverAllStateMachine ******************************************
  *
@@ -895,12 +912,18 @@ void discoverAllStateMachine(Map data = null) {
                     expectedAttributes["${endpointHex}_${clusterHex}_FFF9"] = false
                     expectedAttributes["${endpointHex}_${clusterHex}_FFFC"] = false
                 }
-                sendToDevice(matter.readAttributes(attributePaths))
+                // Chunked - 4 paths per matched cluster is 24+ paths on a 6-cluster endpoint, well past the
+                // point where some bridges stop answering at all (BUGS.md B24).
+                Integer clusterDataChunks = sendChunkedAttributeReads(attributePaths)
                 // Store expected attributes and endpoint for wait state
                 state['stateMachines']['clusterDataExpected'] = expectedAttributes
                 state['stateMachines']['clusterDataEndpoint'] = partEndpoint
                 state['stateMachines']['clusterDataRetry'] = 0
-                logDebug "discoverAllStateMachine: st:${st} - waiting for ${expectedAttributes.size()} cluster attributes from endpoint ${partEndpoint}"
+                // Snapshot the chunk count of THIS read - state['stateMachines']['lastReadChunks'] is shared
+                // with refresh() and could be overwritten while we are waiting (same hazard as B22).
+                state['stateMachines']['clusterDataChunks'] = clusterDataChunks
+                state['stateMachines']['clusterDataRetried'] = false
+                logDebug "discoverAllStateMachine: st:${st} - waiting for ${expectedAttributes.size()} cluster attributes from endpoint ${partEndpoint} (${clusterDataChunks} chunk(s))"
                 // Move to wait state instead of immediately copying
                 stateMachinePeriod = STATE_MACHINE_PERIOD
                 st = DISCOVER_ALL_STATE_CLUSTER_DATA_WAIT
@@ -943,9 +966,35 @@ void discoverAllStateMachine(Map data = null) {
                 logTrace "discoverAllStateMachine: st:${st} - waiting for cluster data (${receivedCount}/${totalCount} received, retry=${retry})"
                 retry++
                 stateMachinePeriod = STATE_MACHINE_PERIOD
-                if (retry > maxRetries) {
-                    // Timeout - proceed anyway with incomplete data
+                // A chunked read is answered chunk by chunk, and each extra chunk costs 500 ms of send pacing
+                // plus the device's reply time - budget ~3 ticks for each of them, as infoCollectStateMachine does.
+                Integer chunkTicks = (safeNumberToInt(state['stateMachines']['clusterDataChunks'], 1) - 1) * 3
+                if (retry > maxRetries + chunkTicks) {
                     List<String> missing = expectedAttributes.findAll { k, v -> v == false }.collect { it.key }
+                    // Before giving up on the endpoint, re-issue ONLY the missing paths in small chunks. Unlike
+                    // the single-attribute tripwire in discoverGlobalElementsStateMachine, expectedAttributes is
+                    // a true per-path ledger, so this retry is exact - it asks for nothing that already arrived.
+                    // Latching the quirk makes every later endpoint start small and skip the timeout entirely.
+                    if (state['stateMachines']['clusterDataRetried'] != true) {
+                        state['stateMachines']['clusterDataRetried'] = true
+                        latchSmallReadChunks()
+                        List<Map<String, String>> retryPaths = []
+                        missing.each { String key ->
+                            // keys are built above as "<endpointHex>_<clusterHex>_<attrHex>"
+                            List<String> keyParts = key.tokenize('_')
+                            if (keyParts.size() == 3) {
+                                retryPaths.add(matter.attributePath(HexUtils.hexStringToInt(keyParts[0]), HexUtils.hexStringToInt(keyParts[1]), HexUtils.hexStringToInt(keyParts[2])))
+                            }
+                        }
+                        Integer sentChunks = sendChunkedAttributeReads(retryPaths, 500, SMALL_READ_CHUNK_SIZE)
+                        if (sentChunks > 0) {
+                            logWarn "discoverAllStateMachine: st:${st} - no response for ${missing.size()} of ${totalCount} cluster attributes on endpoint ${state['stateMachines']['clusterDataEndpoint']}; retrying in ${sentChunks} chunk(s) of ${SMALL_READ_CHUNK_SIZE}"
+                            state['stateMachines']['clusterDataChunks'] = sentChunks
+                            retry = 0
+                            break
+                        }
+                    }
+                    // Timeout - proceed anyway with incomplete data
                     logWarn "discoverAllStateMachine: st:${st} - timeout waiting for cluster data! Missing: ${missing}"
                     // Clear tracking data
                     state['stateMachines']['clusterDataExpected'] = null
@@ -978,31 +1027,6 @@ void discoverAllStateMachine(Map data = null) {
             }
             stateMachinePeriod = 100  // Go quickly to next device
             st = DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE
-            break
-
-        case DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_WAIT :
-            Integer partsListIndex = state['stateMachines']['discoverAllPartsListIndex'] ?: 0
-            String partEndpoint = state.bridgeDescriptor['PartsList'][partsListIndex] ?: 0
-            Integer partEndpointInt = HexUtils.hexStringToInt(partEndpoint)
-            String fingerprintName = getFingerprintName(partEndpointInt)
-            if (state['stateMachines']['discoverGlobalElementsResult']  == SUCCESS) {
-                logDebug "discoverAllStateMachine: st:${st} - fingerprint ${fingerprintName} received SupportedClusters confirmation!"
-                logRequestedClusterAttrResult([cluster: HexUtils.hexStringToInt(state.states['cluster']), endpoint: partEndpointInt])
-                state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
-                st = DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE
-            }
-            else {
-                logDebug "discoverAllStateMachine: st:${st} - waiting for the attribute value (retry=${retry})"
-                retry++
-                stateMachinePeriod = STATE_MACHINE_PERIOD * 2
-                if (retry > maxRetries) {
-                    logWarn "discoverAllStateMachine: st:${st} - timeout waiting for the attribute value retry=${retry})!"
-                    // continue with the next device, even if there is an error
-                    sendInfoEvent("<b>ERROR discovering bridged device #${partsListIndex} ${fingerprintName} - timeout waiting for cluster ${state.states['cluster']} reading results !</b>")
-                    state['stateMachines']['discoverAllPartsListIndex'] = partsListIndex + 1
-                    st = DISCOVER_ALL_STATE_SUPPORTED_CLUSTERS_NEXT_DEVICE
-                }
-            }
             break
 
         case DISCOVER_ALL_STATE_SUBSCRIBE_KNOWN_CLUSTERS :
