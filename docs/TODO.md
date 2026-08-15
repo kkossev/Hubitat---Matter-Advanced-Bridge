@@ -342,6 +342,8 @@ Two follow-ups this run exposed:
 ## 2. Discovery / endpoint classification
 
 ### 2.1 `[ ]` Spurious "Button" child devices from an Aqara G3 bridge — **VERIFY ON DEVICE**
+- Jira: `HUB-64`
+
 After a clean re-discovery @redpaw got **8 `Button` children he cannot match to any physical
 device** (he owns two H1 wireless switches, which he identified separately from the logs). Last
 post in the thread, still unanswered.
@@ -425,6 +427,47 @@ responding — check the bridge hub") would close these cases without a forum ro
   power-cycling the IKEA hub for an hour)
 - `Queue full` itself is a platform message, not driver text (no occurrence in this repo).
 - Low priority / cosmetic.
+
+### 5.2 `[ ]` Do not start `_DiscoverAll` while the Matter bridge is offline
+
+@stueyhughes started discovery after his Aqara G410 had stopped responding. Discovery removed the
+current subscriptions and then failed in `BRIDGE_GLOBAL_ELEMENTS_WAIT`, making recovery more
+disruptive. kkossev explicitly proposed blocking discovery while the bridge is offline.
+
+- Posts: [#3](https://community.hubitat.com/t/-/162116/3) (failure and logs),
+  [#4](https://community.hubitat.com/t/-/162116/4) (diagnosis and commitment)
+- Status: **OPEN**. The immediate incident was resolved by updating MAB, but the promised guard is a
+  separate preventative change.
+- Suggested behavior: before clearing subscriptions or state, require a successful bridge ping or
+  an online `networkStatus`; warn and leave the existing children/subscriptions untouched otherwise.
+
+### 5.3 `[ ]` Aqara U400 remains online and commandable but stops reporting lock state
+
+@jbasen reports that MAB 1.8.8 can still lock/unlock the U400 and reports `networkStatus: online`,
+but physical and commanded state changes no longer update the lock attribute. Disabling/re-enabling
+Matter, `Re Subscribe`, hub reboot, lock battery removal, and current U400 firmware 3.1.1.0 did not
+restore feedback; Apple Home continues to receive it.
+
+- Posts: [#1](https://community.hubitat.com/t/-/165667/1)–[#6](https://community.hubitat.com/t/-/165667/6)
+- Status: **NEEDS_EVIDENCE** — likely subscription/routing state, but no MAB debug capture of a
+  physical lock/unlock or subscription callback is posted yet.
+- Next evidence: MAB 1.9.x retest, child and parent debug logs around `Re Subscribe`, a physical
+  unlock, and a commanded unlock; capture `SubscriptionResult` and the raw Door Lock report.
+
+### 5.4 `[?]` Aqara Signal endpoints reported less reliable than Soft Sensor endpoints — **VERIFY ON DEVICE**
+
+- **Reported** privately on 2026-08-15 for Aqara FP1 and FP2 presence devices. Equivalent Aqara
+  Soft Sensor endpoints were described as reliably following state changes while Matter Signal
+  endpoints intermittently did not. Private correspondence, screenshots, and identity are not
+  reproduced here.
+- The report does not yet distinguish a missed bridge report, a subscription lapse, endpoint
+  classification, event deduplication, or a display-only difference. Do not change parsing from
+  screenshots alone.
+- **Required evidence:** synchronized Hubitat event histories for the Signal and Soft Sensor
+  children, MAB debug logs covering the same transitions, endpoint/cluster fingerprints, and a
+  precise statement of which presence transitions were missing or delayed.
+- **Verification:** repeat controlled occupied/unoccupied transitions on FP1 and FP2 and compare
+  both children over the same time window, including after rediscovery or resubscription.
 
 ## 6. Documentation
 
