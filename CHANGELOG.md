@@ -6,8 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 and this project follows Semantic Versioning where applicable.
 
 > **Released vs BETA.** The current **released** version, and the one Hubitat Package Manager
-> installs, is **1.8.8**. Versions **1.9.0 and later are BETA** — available for testing from this
-> repository, not yet published as a package.
+> installs, is **1.9.1**. Versions marked *(BETA)* below were development builds that were never
+> published as a package.
+>
+> **No `[Unreleased]` heading is used in this file (policy set 2026-08-16).** Every entry is filed
+> under the current driver version — the one in `static String version()` — from the moment it is
+> written. When that version is bumped, the previous section is closed and a new one is opened.
 >
 > **This file is authoritative for change detail (policy set 2026-08-13).** The `* ver. x.y.z` history
 > block in the `Matter_Advanced_Bridge.groovy` header is now a one-or-two-line, user-facing summary per
@@ -20,10 +24,22 @@ and this project follows Semantic Versioning where applicable.
 >
 > No git tags or GitHub releases exist for this repository yet, so version headings are not linked.
 
-## [Unreleased]
+## [1.9.1] - 2026-08-13
+
+**Current released version.**
 
 ### Added
 
+- A child device's Device Data now shows the bridged device's `serialNumber`
+  (cluster `0x0039` attribute `0x000F`) and `uniqueId` (attribute `0x0012`), when the bridge
+  reports them. Requested in community post #440.
+- **Multi-component bridged devices inherit their identity from the parent endpoint.** On a
+  multi-gang wall switch the individual gangs carry no `0x0039` cluster, so they had no name of
+  their own and every gang became a generic `Switch` named after the *bridge*. Each gang now takes
+  the name, vendor, `serialNumber` and `uniqueId` of the parent Bridged Node endpoint that does
+  carry `0x0039`, and sibling components are distinguished by their position in the parent's
+  `PartsList` — `Aqara Wall Switch EU - 1`, `Aqara Wall Switch EU - 2`.
+- Child Device Data gains `parentEndpoint` when an endpoint's identity was inherited.
 - `_TRACE_ALL_MESSAGES` diagnostic flag (`@Field static`, default `false`). Discovery normally
   suppresses the `parse: descMap:` trace for **every** inbound message, which makes a stalled
   `_DiscoverAll` impossible to diagnose — you cannot tell "nothing arrived" from "something arrived
@@ -32,6 +48,10 @@ and this project follows Semantic Versioning where applicable.
 
 ### Fixed
 
+- `readAttributeSafe` validated every cluster's attribute against the **Descriptor's**
+  `AttributeList` and therefore refused valid attributes of any other cluster — reading
+  `0x0039:0x0005` (NodeLabel) was rejected as unsupported. The attribute-list key is now chosen the
+  same way `requestMatterClusterAttributesValues()` chooses it (`matterStateMachinesLib` 1.2.1).
 - **A lost bridge ping was recorded as neither success nor failure.** The command-timeout job was
   cancelled by *any* incoming Matter message, so an unrelated attribute report could clear the timer
   while the ping itself never arrived — no `rtt: timeout` event, no `pingsFail` increment, and the
@@ -50,7 +70,6 @@ and this project follows Semantic Versioning where applicable.
   chunked read, so `refresh()`, `componentRefresh()` and discovery all adapt together. The discovery
   read is chunked, waits proportionally longer for a chunked reply, and on timeout re-requests
   **only the attributes that never arrived**, in small chunks, before giving up.
-
 - **Discovery stalled on every bridged endpoint of one bridge.** A large multi-path read of cluster
   `0x0039` received no response at all — not an error, nothing — while a 9-path read of `0x001D` on
   the same endpoint and a 20-path read on endpoint 0 both succeeded. Confirmed with full tracing, so
@@ -62,28 +81,6 @@ and this project follows Semantic Versioning where applicable.
   remembers that the bridge needs it, so only the first endpoint pays the timeout.
   Confirmed on the M3: the first endpoint retried once and returned every value, and the next
   endpoint went straight to small chunks with no timeout.
-
-## [1.9.1] - 2026-08-13 *(BETA)*
-
-### Added
-
-- A child device's Device Data now shows the bridged device's `serialNumber`
-  (cluster `0x0039` attribute `0x000F`) and `uniqueId` (attribute `0x0012`), when the bridge
-  reports them. Requested in community post #440.
-- **Multi-component bridged devices inherit their identity from the parent endpoint.** On a
-  multi-gang wall switch the individual gangs carry no `0x0039` cluster, so they had no name of
-  their own and every gang became a generic `Switch` named after the *bridge*. Each gang now takes
-  the name, vendor, `serialNumber` and `uniqueId` of the parent Bridged Node endpoint that does
-  carry `0x0039`, and sibling components are distinguished by their position in the parent's
-  `PartsList` — `Aqara Wall Switch EU - 1`, `Aqara Wall Switch EU - 2`.
-- Child Device Data gains `parentEndpoint` when an endpoint's identity was inherited.
-
-### Fixed
-
-- `readAttributeSafe` validated every cluster's attribute against the **Descriptor's**
-  `AttributeList` and therefore refused valid attributes of any other cluster — reading
-  `0x0039:0x0005` (NodeLabel) was rejected as unsupported. The attribute-list key is now chosen the
-  same way `requestMatterClusterAttributesValues()` chooses it (`matterStateMachinesLib` 1.2.1).
 
 ### Developer notes
 
@@ -110,7 +107,7 @@ and this project follows Semantic Versioning where applicable.
   changes none of them, and the `UserLabel` / `FixedLabel` clusters are not implemented. Verified
   across three independent controllers.
 
-## [1.9.0] - 2026-07-25 *(BETA)*
+## [1.9.0] - 2026-07-25
 
 ### Added
 
@@ -132,6 +129,27 @@ and this project follows Semantic Versioning where applicable.
 
 ### Changed
 
+- **Child device network IDs now follow the Hubitat stock Matter bridge convention**, so that a
+  bridge switched from the built-in driver to this one adopts the children that already exist
+  instead of creating a duplicate set. New children are created as
+  `<parent deviceNetworkId>-<endpoint>` (`stockChildDni()`); children created by MAB 1.8.x and
+  earlier use `<parent device id>-<endpoint>` (`legacyMabChildDni()`) and are still resolved.
+  `findChildByEndpoint()` tries the stock form first, then the legacy form, so existing
+  installations are unaffected — nothing is migrated, renamed or re-created. Every hard-coded
+  `"${device.id}-${endpoint}"` lookup was replaced by `findChildByEndpoint()` /
+  `childDniForEndpoint()`: `isDeviceDisabled()`, `getDeviceDisplayName()`, `getDw()`,
+  `sendHubitatEvent()` and `parseColorControl()`. `normalizeChildEndpoint()` normalises the endpoint
+  to upper-case hex first, so a numeric or lower-case endpoint from either source resolves to the
+  same child.
+- **The driver is now `parse(Map)`-only** — the completion of the conversion started in 1.7.2 and
+  enforced in 1.8.0. The `newParse` device data value is what makes the platform dispatch to
+  `parse(Map)`, so it is now forced true by `ensureNewParseFlag()` on every `updated()` and by
+  `forceNewParseFlag()` if a message ever arrives on the text path; the obsolete `newParse`
+  *preference* is removed from existing installations. The residual `parse(String)` entry point no
+  longer parses anything — it repairs the lost flag, warns, and drops the message.
+  `newParseCompatibilityPatch()` normalises `cluster`, `endpoint` and `attrId` into a consistent
+  form, absorbing the differences between Hubitat platform versions (some supply an Integer, some a
+  4-character hex String) so that no downstream parser has to care. See also *Removed*, below.
 - `SupportedMatterClusters.subscriptions` is now a Map keyed by attribute ID instead of a List of
   single-entry Maps. The old per-attribute `min`/`max`/`delta` values were never sent to the hub
   (`cleanSubscribe` takes one global min/max) and are replaced by an `isSpammy` marker.
@@ -146,7 +164,8 @@ and this project follows Semantic Versioning where applicable.
 - The driver-side illuminance throttling patch, together with the `minReportingTimeIllum`
   preference and the `stats2`/`lastRx2` state variables. All are deleted from existing installations
   on upgrade. Illuminance is now throttled at the Matter subscription instead.
-- The legacy `parse(String)` text path, the `newParse` preference, and the custom TLV decoder.
+- The legacy `parse(String)` text path, the `newParse` preference, and the custom TLV decoder — see
+  the `parse(Map)` entry under *Changed*, above.
 
 ### Fixed
 
@@ -169,7 +188,7 @@ and this project follows Semantic Versioning where applicable.
 
 ## [1.8.8] - 2026-05-29
 
-**Current released version.**
+**Previous released version** — the one Hubitat Package Manager installed before 1.9.1.
 
 ### Changed
 

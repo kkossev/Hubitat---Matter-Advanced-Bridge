@@ -430,6 +430,8 @@ responding — check the bridge hub") would close these cases without a forum ro
 
 ### 5.2 `[ ]` Do not start `_DiscoverAll` while the Matter bridge is offline
 
+Jira: HUB-125
+
 @stueyhughes started discovery after his Aqara G410 had stopped responding. Discovery removed the
 current subscriptions and then failed in `BRIDGE_GLOBAL_ELEMENTS_WAIT`, making recovery more
 disruptive. kkossev explicitly proposed blocking discovery while the bridge is offline.

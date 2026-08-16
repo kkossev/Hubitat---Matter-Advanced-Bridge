@@ -504,6 +504,10 @@ the source on 2026-07-27. The wiki is superseded and frozen. Plan and status liv
 `docs/maintainer/plans/DOCUMENTATION_MIGRATION_PLAN.md` and
 `docs/maintainer/status/documentation-open-items.md` (local only).
 
+Before any Jira write in the `HUB` project, retrieve `HUB-126`, read its complete current
+description, and follow it. Do not rely on a cached copy. If it cannot be retrieved, do not write
+to Jira and report the blocker.
+
 1. **`AGENTS.md` is the agent instruction source of truth.** It stays at the repository root.
    `CLAUDE.md` and `CODEX.md` are pointers — do not put content in them.
 2. **Public user documentation lives in `docs/user/`.** It is tracked and committed. It is the only
