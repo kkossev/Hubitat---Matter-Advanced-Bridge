@@ -17,12 +17,116 @@ and this project follows Semantic Versioning where applicable.
 > block in the `Matter_Advanced_Bridge.groovy` header is now a one-or-two-line, user-facing summary per
 > release; everything else — internal method names, cluster/attribute IDs, rationale, investigation
 > notes — lives here. Entries up to 1.9.1 were derived from that header before it was shortened.
-> Note the coverage limit: this file tracks the **parent driver**. The component and library drivers
-> keep their own `* ver.` history in their own headers and are summarised per release below. For a plain-language, user-facing summary — including the
+> **Scope: everything in this repository (policy corrected 2026-08-16).** Parent driver, component
+> drivers, libraries and the user-facing documentation all record their change detail here. The
+> `* ver.` history line in any driver header is a short user-facing summary only. Entries up to 1.9.1
+> predate this correction and cover the parent driver only. For a plain-language, user-facing summary — including the
 > 0.x alpha history from December 2023 onward — see
 > [docs/user/project/revisions-history.md](docs/user/project/revisions-history.md).
 >
 > No git tags or GitHub releases exist for this repository yet, so version headings are not linked.
+
+## [1.9.2] - 2026-08-16
+
+**In development.** Parent driver `1.9.2`; *Matter Generic Component Air Purifier* `1.2.5`.
+
+### Added
+
+- **Air Purifier child: `filterDaysRemaining` attribute.** Matter's Resource Monitoring cluster
+  (`0x0071`) has no filter-lifetime attribute, so the long-dormant `filterLifeTime` preference now
+  supplies the expected lifetime and the child derives the remaining days from it, clamped at a
+  floor of 0. Two sources, in order of preference: `LastChangedTime` (`0x0004`) gives the days
+  elapsed since the filter was reset, converted from Matter epoch-s with an offset of `946684800`
+  (2000-01-01 UTC); failing that, `Condition` (`0x0000`, surfaced as `filterUsage`) scales the
+  lifetime by the percentage of filter life still left. The fallback is not an edge case — an IKEA
+  STARKVIND behind a DIRIGERA bridge advertises an `0x0071` AttributeList of
+  `[0x0000, 0x0001, 0x0002]` and never reports `LastChangedTime` (confirmed on device 2026-08-16),
+  so the elapsed-time path alone would have left the attribute permanently absent on the very
+  device the feature was written for. Recomputed whenever either source is reported, on `updated()`,
+  on `refresh()`, and by a daily scheduled job, since neither source moves on its own.
+  `updateFilterDaysRemaining()` is deliberately parameterless because it is the `schedule()` target;
+  `computeFilterDaysRemaining(Long)` carries the logic. Nothing is written to the device, and the
+  preference description now says so. HUB-89.
+
+### Changed
+
+- **The bridge's `Status` attribute is renamed to `_status_`.** Hubitat orders the Current States
+  list alphabetically, which buried the driver's own info/progress line among the Matter readings;
+  the leading and trailing underscores sort it to the top, where it is actually visible while a
+  discovery is running. Renamed in the `metadata{}` declaration and in both `sendInfoEvent()`
+  emitters. **Breaking for anything that referenced the attribute by name** — a rule, dashboard tile
+  or app watching `Status` must be pointed at `_status_`. Note the PowerSource cluster's own
+  `Status` attribute (`0x002F:0x0000`, mapped to `powerSourceStatus`) is unrelated and unchanged.
+
+### Fixed
+
+- **A filter reset is no longer sent to a device that cannot accept it.** `resetFilterCondition()`
+  checked the ServerList — which is why the carbon-filter case correctly refused — but not the
+  cluster's `AcceptedCommandList` (`0xFFF9`). An IKEA STARKVIND behind a DIRIGERA bridge advertises
+  `0x0071` with an **empty** AcceptedCommandList, so the `ResetCondition` invoke went out, the bridge
+  swallowed it, and `Condition` never moved: the user got no filter reset and no indication why
+  (confirmed on device 2026-08-16). The child now stores the AcceptedCommandList when `getInfo()`
+  reads it, and refuses with a warning naming the list. An unknown list is not treated as a refusal,
+  so a device whose `0xFFF9` has never been read still behaves as before.
+- **`componentSetSpeed()` no longer writes FanMode to an endpoint that has no fan.** An air quality
+  sensor is assigned the Air Purifier child for its `005B` cluster — `mapMatterCategory()` checks
+  `005B` before `0202` — so **Set Speed** appears on a device with no fan control at all. The write
+  went out anyway and an IKEA VINDSTYRKA behind a DIRIGERA bridge answered it with `success:true`
+  while never reporting a FanMode, making the `auto` attribute look broken (confirmed on device
+  2026-08-16). Now guarded on the child's ServerList. The same method also gained the `deviceNumber`
+  validation its `componentOpen()` / `componentClose()` siblings already had, plus a null check on
+  the `id` data value, so a missing or malformed `id` warns instead of raising a raw
+  `HexUtils.hexStringToInt(null)` NPE — this closes `docs/TODO.md` item **3.4**.
+- **Stale `Status` / `status` entries left behind in the bridge device's Current States.** Hubitat
+  preserves Current States across a driver type change and never removes an attribute the new driver
+  does not declare, so after the rename above the old `Status` would have lingered next to `_status_`.
+  A lowercase `status` was already lingering for the same reason, inherited from whichever driver held
+  the device before MAB — every event-emitting path in the parent and the libraries was checked, and
+  no version of this package back to 0.4.3 has ever written a lowercase `status`. Neither could be
+  cleared from the UI: `deleteAllCurrentStates()` (the `loadAllDefaults` panic button) iterates
+  `device.properties.supportedAttributes`, which lists **declared** attributes only. New
+  `removeObsoleteAttributes()`, driven by the `OBSOLETE_ATTRIBUTES` list, deletes both on the
+  version-change path in `checkDriverVersion()` — beside the existing
+  `removeObsoleteIlluminanceThrottling()` — and `deleteAllCurrentStates()` now calls it too.
+
+### Changed
+
+- **Air Purifier child: the `auto` attribute is finally populated.** It has been declared since
+  1.0.0 and never set by anything. The parent's `parseFanControl()` already maps FanMode 5 to
+  `speed = 'auto'`, so the new `syncAutoAttribute()` in the child mirrors that event into `auto`.
+  Deliberately done in the child, not in `parseFanControl()`: the stock *Generic Component Fan
+  Control* child shares that parse path and declares no `auto` attribute, so emitting from the
+  parent would push an undeclared attribute at it. Only `'auto'` counts as on — FanMode 6 maps to
+  `'smart'`, which is not a legal `FanControl` value at all (tracked separately, `docs/TODO.md` 3.2).
+  HUB-89.
+
+### Removed
+
+- **Air Purifier child: the `Child lock` preference and the `Set Indicator Status` command.**
+  Both were carried over from the Zigbee IKEA E2006 (Starkvind) driver, where they are vendor
+  attributes. Matter has no equivalent — Fan Control `0x0202` has no lock attribute and there is no
+  indicator cluster — so `childLock` was never read by any code and `setIndicatorStatus()` sent a
+  local event and stopped at a bare `// TODO!`. The `indicatorStatus` attribute is removed with the
+  command. `migrateDriverState()` deletes the stale attribute state and the obsolete setting on
+  upgrade, and also installs the new daily filter job on existing installs without requiring a
+  **Save Preferences**. Both remaining bare `// TODO!` markers in the child are now resolved. HUB-89.
+
+### Documentation
+
+- `docs/user/drivers/air-purifier.md`: removed the `indicatorStatus` attribute row, the
+  **Set Indicator Status** command row and the **Child lock** preference row; added
+  `filterDaysRemaining`; rewrote the **Filter life time** row as a Hubitat-side estimate. **Deleted
+  the closing claim that "Child lock and filter life time are written to the device, not just stored
+  in Hubitat"** — the opposite was true of both. Status line moved to `Applies to: 1.9.2`.
+- `docs/user/drivers/air-purifier.md`: `filterDaysRemaining` and **Filter life time** rows describe both
+  estimate sources, and note that most purifiers do not report a filter change date.
+- `docs/user/configuration/commands-and-states.md` and `docs/user/drivers/matter-advanced-bridge.md`:
+  `Status` renamed to `_status_`, with the migration note for rules and dashboards. The bridge driver
+  page status line moved to `Applies to: 1.9.2`.
+- `AGENTS.md` / this file: corrected the `CHANGELOG.md` scope rule. It records change detail for
+  **every** file in the repository — parent driver, component drivers, libraries and user-facing
+  documentation alike — not the parent driver alone. In-file `* ver.` header lines are kept as
+  short as possible.
 
 ## [1.9.1] - 2026-08-13
 

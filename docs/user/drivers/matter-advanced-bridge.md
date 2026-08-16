@@ -1,6 +1,6 @@
 # Matter Advanced Bridge
 
-Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
+Applies to: 1.9.2 | Last verified: 2026-08-16 | Status: Current
 
 The parent driver. You assign this one by hand, to the Matter bridge itself; every other driver in
 the package is assigned automatically to the child devices it creates.
@@ -35,11 +35,14 @@ or driver update does not silently re-subscribe every attribute — see
 
 ## Attributes
 
-`Status` · `healthStatus` · `rtt` · `deviceCount` · `endpointsCount` · `initializeCtr` ·
+`_status_` · `healthStatus` · `rtt` · `deviceCount` · `endpointsCount` · `initializeCtr` ·
 `nodeLabel` · `productName` · `softwareVersionString` · `rebootCount` · `upTime` ·
 `totalOperationalHours` · `reachable` · `battery` · `batteryVoltage`
 
 Not all of them appear — a bridge only publishes what it reports about itself.
+
+`_status_` was called `Status` until 1.9.2. **A rule, dashboard tile or app that referenced `Status`
+by name must be pointed at `_status_`** — the old attribute is removed from the device on update.
 [Commands and states](../configuration/commands-and-states.md) explains each one, and covers the
 `ipAddress` and `networkStatus` states that Hubitat adds.
 

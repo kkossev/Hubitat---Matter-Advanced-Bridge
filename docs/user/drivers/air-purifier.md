@@ -1,6 +1,6 @@
 # Matter Generic Component Air Purifier
 
-Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
+Applies to: 1.9.2 | Last verified: 2026-08-16 | Status: Current
 
 Air purifiers, and standalone air quality sensors.
 
@@ -40,7 +40,7 @@ A given device fills in only the parts it actually has.
 | `carbonFilterStatus`, `carbonFilterUsage` | as above | Activated carbon filter. |
 | `filterInPlace`, `carbonFilterInPlace` | `present`, `not present` | Whether a filter is fitted. |
 | `filterLastChanged`, `carbonFilterLastChanged` | number | When the filter was last reset, as a Matter timestamp. |
-| `indicatorStatus` | `on`, `off` | The device's LED indicators. |
+| `filterDaysRemaining` | number | Estimated days until the HEPA filter is due. Calculated by Hubitat, not reported by the device: from `filterLastChanged` when the device reports it, otherwise by scaling **Filter life time** by the remaining filter condition. `0` means due now. |
 | `rtt` | number | Round-trip time in milliseconds, from the last **Ping**. |
 
 ## Commands
@@ -49,7 +49,6 @@ A given device fills in only the parts it actually has.
 |---|---|
 | **On** / **Off** / **Toggle** | Switches the purifier. |
 | **Set Speed** | `auto`, `low`, `medium-low`, `medium`, `medium-high`, `high`, `off`. |
-| **Set Indicator Status** | Turns the device's LED indicators on or off. |
 | **Reset Filter Condition** | Resets the HEPA or activated carbon filter counter. **Use it after physically replacing the filter.** If the device has no such filter, the command is refused with a warning in the log. |
 | **Identify** | Makes the device identify itself, if it supports that. |
 | **Get Info** | Writes device details to the live logs and device data. |
@@ -62,8 +61,7 @@ A given device fills in only the parts it actually has.
 |---|---|---|
 | **Sensor report frequency** | Medium — ±3 µg/m³ | How much the PM 2.5 reading must change before the device reports it. Very High (±1) through Very Low (±10). |
 | **CO₂ report frequency** | High — ±10 ppm | The same for CO₂. Very High (±5) through Very Low (±100). |
-| **Filter life time** | 6 months | Time between filter changes: 3, 6, 9 months, or 1 year. |
-| **Child lock** | Off | Locks the physical controls on the device, against accidental operation. |
+| **Filter life time** | 6 months | How long a HEPA filter is expected to last: 3, 6, 9 months, or 1 year. Hubitat uses it to work out `filterDaysRemaining`; it is not sent to the device. Most purifiers - the IKEA STARKVIND included - do not report the date the filter was last changed, so the estimate is usually derived from the filter condition the device does report. |
 | **Enable debug logging** | On | Turns itself off automatically after 24 hours. |
 | **Enable descriptionText logging** | On | One readable log line per change. |
 
@@ -72,7 +70,8 @@ traffic: a very high frequency on an air quality sensor produces a lot of events
 still busier than you want, the parent's **Spammy attributes minimum reporting interval** in
 [Preferences](../configuration/preferences.md) throttles at the subscription instead.
 
-**Child lock and filter life time are written to the device**, not just stored in Hubitat.
+None of these preferences are written to the device - Matter has no attribute for any of them. They
+affect only how Hubitat filters and interprets what the device reports.
 
 Two more settings on this tab — **Default Current State** and **Enable command retry logic** — come
 from the Hubitat platform rather than from this driver.

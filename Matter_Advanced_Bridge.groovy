@@ -66,18 +66,19 @@
  * ver. 1.8.6  2026-05-10 sbohrer   adds support for Matter Fan control (0x0202). This was tested with an Altitude Boca II ceiling fan (SmartCeilingFan Eran).
  * ver. 1.8.7  2026-05-25 kkossev   Matter Lock Codes - first TEST version; featureMap bug fix; 'ignored invalid illum/lux' warning for zero values is removed
  * ver. 1.8.8  2026-05-29 kkossev   Matter Lock Codes - improvements; changed the default timeout to be x2; exception handling in setSwitch() fixed
- * ver. 1.8.9  2026-05-30 kkossev   (dev. branch) Aqara G350 Video
- * ver. 1.9.0  2026-07-25 kkossev + Claude Opus 5 - (dev. branch) illuminance, temperature, pressure and humidity no longer report a fake 0 when the sensor says the measurement is invalid; root node battery
+ * ver. 1.8.9  2026-05-30 kkossev   Aqara G350 Video Camera support (cluster 0x0551)
+ * ver. 1.9.0  2026-07-25 kkossev + Claude Opus 5 - illuminance, temperature, pressure and humidity no longer report a fake 0 when the sensor says the measurement is invalid; root node battery
  *                                  (IKEA Thread devices); the health check is finally scheduled on a fresh install. <b>Illuminance throttling moved into the Matter subscription - the new 'spammyAttributesMinInterval'
  *                                  preference defaults to 0 (off), so the previous 10 seconds throttling is NOT applied until you set it!</b>
- * ver. 1.9.1  2026-08-13 kkossev + Claude Opus 5 - (dev. branch) child devices now show the bridged device's SerialNumber and UniqueID in their Device Data (community request #440); the individual gangs of a
+ * ver. 1.9.1  2026-08-13 kkossev + Claude Opus 5 - child devices now show the bridged device's SerialNumber and UniqueID in their Device Data (community request #440); the individual gangs of a
  *                                  multi-gang wall switch now inherit the real device name instead of all becoming a generic 'Switch' named after the bridge.
+ * ver. 1.9.2  2026-08-16 kkossev   (dev. branch) the 'Status' attribute is renamed to '_status_' (shown first in the Current States); stale 'status'/'Status' entries are removed automatically; setSpeed is refused on an endpoint with no fan
  *
  */
 
 
-static String version() { '1.9.1' }
-static String timeStamp() { '2026/08/13 7:00 PM' }
+static String version() { '1.9.2' }
+static String timeStamp() { '2026/08/16 9:58 PM' }
 
 
 @Field static final Boolean _DEBUG = false                  // make it FALSE for production!
@@ -122,6 +123,11 @@ static String timeStamp() { '2026/08/13 7:00 PM' }
 
 // Internal events that should be routed through parse() without requiring attribute declaration
 @Field static final List<String> INTERNAL_EVENTS = ['unprocessed', 'handleInChildDriver']
+// Attribute names that must never appear in Current States. Hubitat keeps Current States across a driver
+// change and never removes an attribute the new driver does not declare, so both have to be deleted explicitly:
+//   'Status' - this driver's own info line until 1.9.2, renamed to '_status_'
+//   'status' - a leftover from whichever driver owned the device before MAB (attribute names are case sensitive)
+@Field static final List<String> OBSOLETE_ATTRIBUTES = ['Status', 'status']
 
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
@@ -146,7 +152,7 @@ metadata {
         attribute 'batteryVoltage', 'number'
         attribute 'healthStatus', 'enum', ['unknown', 'offline', 'online']
         attribute 'rtt', 'number'
-        attribute 'Status', 'string'
+        attribute '_status_', 'string'      // leading/trailing underscores keep it at the top of the Current States list
         attribute 'productName', 'string'
         attribute 'nodeLabel', 'string'
         attribute 'softwareVersionString', 'string'
@@ -3004,6 +3010,9 @@ void deleteAllCurrentStates() {
         logDebug "deleting $it"
         device.deleteCurrentState("$it")
     }
+    // supportedAttributes lists the DECLARED attributes only, so a leftover from a previously assigned driver
+    // would survive the panic button - clear those explicitly.
+    removeObsoleteAttributes()
     logInfo 'All current states (attributes) DELETED'
 }
 
@@ -4084,8 +4093,19 @@ void componentClose(DeviceWrapper dw) {
 
 void componentSetSpeed(DeviceWrapper dw, String speed) {
     if (!dw.hasCommand('setSpeed')) { logError "componentSetSpeed(${dw}) driver '${dw.typeName}' does not have command 'setSpeed' in ${dw.supportedCommands}"; return }
-    Integer deviceNumber = HexUtils.hexStringToInt(dw.getDataValue('id'))
-    logDebug "Setting fan speed ${speed} for device# ${deviceNumber} (${dw.getDataValue('id')}) ${dw}"
+    String id = dw.getDataValue('id')
+    if (id == null) { logWarn "componentSetSpeed(): ${dw.displayName} has no 'id' device data value!"; return }
+    Integer deviceNumber = HexUtils.hexStringToInt(id)
+    if (deviceNumber == null || deviceNumber <= 0 || deviceNumber > 255) { logWarn "componentSetSpeed(): deviceNumber ${deviceNumber} is not valid!"; return }
+    // An endpoint can be assigned the Air Purifier child for its air quality clusters while having no fan at all -
+    // mapMatterCategory() checks 005B before 0202. Writing FanMode there is silently accepted by some bridges
+    // (confirmed 2026-08-16: an IKEA VINDSTYRKA answered the write with success:true and never reported a FanMode).
+    List<String> serverList = getDeviceServerList(dw)
+    if (!serverList.isEmpty() && !('0202' in serverList)) {
+        logWarn "componentSetSpeed(): ${dw.displayName} does not expose the Fan Control cluster 0x0202 (ServerList ${serverList}) - the fan speed cannot be set"
+        return
+    }
+    logDebug "Setting fan speed ${speed} for device# ${deviceNumber} (${id}) ${dw}"
 
     Integer fanMode = 0
     switch (speed) {
@@ -4854,6 +4874,7 @@ void checkDriverVersion() {
         final boolean fullInit = false
         initializeVars(fullInit)
         removeObsoleteIlluminanceThrottling()
+        removeObsoleteAttributes()
     }
 }
 
@@ -4897,6 +4918,24 @@ private void checkHubRebooted() {
  * Illuminance reporting is now throttled at the source - cluster 0x0400 is marked isSpammy and is
  * governed by the 'spammyAttributesMinInterval' preference.
  */
+/**
+ * Deletes Current States that this driver no longer writes - the pre-1.9.2 'Status' attribute and any
+ * lowercase 'status' inherited from a previously assigned driver.
+ *
+ * Hubitat preserves the Current States of a device when its driver type is changed, and it will not remove an
+ * attribute that the new driver does not declare - not even deleteAllCurrentStates(), which iterates
+ * device.properties.supportedAttributes and therefore only ever sees DECLARED attributes. A leftover is
+ * consequently impossible for the user to clear from the UI.
+ */
+private void removeObsoleteAttributes() {
+    OBSOLETE_ATTRIBUTES.each { String attributeName ->
+        if (device.currentState(attributeName) != null) {
+            device.deleteCurrentState(attributeName)
+            logDebug "removeObsoleteAttributes: the obsolete '${attributeName}' attribute was removed (this driver uses '_status_')"
+        }
+    }
+}
+
 private void removeObsoleteIlluminanceThrottling() {
     unschedule('sendDelayedEventIllum')
     if (settings?.minReportingTimeIllum != null) {
@@ -4930,11 +4969,11 @@ String getModel() {
 void sendInfoEvent(info = null, descriptionText = null) {
     if (info == null || info == 'clear') {
         logDebug 'clearing the Status event'
-        sendEvent(name: 'Status', value: 'clear', descriptionText: 'last info messages auto cleared', type: 'digital')
+        sendEvent(name: '_status_', value: 'clear', descriptionText: 'last info messages auto cleared', type: 'digital')
     }
     else {
         logInfo "${info}"
-        sendEvent(name: 'Status', value: info, descriptionText:descriptionText ?: '',  type: 'digital')
+        sendEvent(name: '_status_', value: info, descriptionText:descriptionText ?: '',  type: 'digital')
         runIn(INFO_AUTO_CLEAR_PERIOD, 'clearInfoEvent')            // automatically clear the Info attribute after 1 minute
     }
 }

@@ -88,13 +88,16 @@ and **component child drivers** in `Components\`. There is no profiles map — b
   at compile time, so the four parent libraries must be installed on the hub as Libraries Code.
 - A **library change** affects only this package (these libraries are not shared with the Zigbee drivers),
   but it affects **every component driver that includes it** (matterCommonLib / matterHealthStatusLib).
-- **`CHANGELOG.md` is authoritative for change detail; the in-file header history is a summary.**
-  Policy set 2026-08-13. A new `* ver. x.y.z` header line is **one or two lines, user-facing only** —
-  what a user would notice or must act on (behaviour changes on upgrade, new/removed preferences, new
-  device data). Internal method names, cluster/attribute IDs, rationale and investigation notes belong
-  in `CHANGELOG.md`, never in the header. Before shortening any header entry, confirm the detail
-  actually exists in `CHANGELOG.md` — as of 1.9.1 it is complete for the **parent driver only**;
-  component and library histories have never been transferred, so do not delete those.
+- **`CHANGELOG.md` is the single record for change detail, for EVERY file in this repo.**
+  Policy set 2026-08-13, scope corrected 2026-08-16. Parent driver, component drivers, libraries and
+  user-facing documentation all get their change detail written into the one root `CHANGELOG.md` —
+  there is no per-file changelog and no exemption for components or libraries.
+- **In-file `* ver. x.y.z` header lines are kept as short as possible.** One line, user-facing only —
+  what a user would notice or must act on. Prefer a single short clause per change; never wrap onto a
+  second line if one will do. Internal method names, cluster/attribute IDs, rationale and investigation
+  notes belong in `CHANGELOG.md`, never in a header. This applies to the parent, the components and the
+  libraries alike. Before shortening any header entry, confirm the detail actually exists in
+  `CHANGELOG.md`; if it does not, move it there first, then shorten.
 - Release checklist: bump `version()` + `timeStamp()` in the parent (and the `@Field static ...Version/Stamp`
   in a changed library/component), add a `* ver. x.y.z  date  kkossev - ...` header history line (short — see above),
   set `_DEBUG = false`, update `packageManifest.json` (`version`, `dateReleased`, prepend `releaseNotes`),
@@ -530,9 +533,10 @@ to Jira and report the blocker.
    resolution status. Internal source locations and speculative causes stay in `docs/maintainer/`.
 6. **A user-visible behavior change requires auditing the applicable page in `docs/user/`** in the
    same change, **and an entry in `CHANGELOG.md`**. Documentation-only edits do not require a driver
-   version bump or timestamp change. Note the split: `CHANGELOG.md` (repo root) is the technical
-   record for developers; `docs/user/project/revisions-history.md` is the user-facing narrative.
-   Both need touching for a behavior change; neither is generated from the other.
+   version bump or timestamp change, but they still get a `CHANGELOG.md` entry — the file records
+   changes to the docs as well as to the code. Note the split: `CHANGELOG.md` (repo root) is the
+   technical record for developers; `docs/user/project/revisions-history.md` is the user-facing
+   narrative. Both need touching for a behavior change; neither is generated from the other.
 7. **Every public support claim needs an evidence label:** Confirmed, Reported, Implemented
    unverified, Unsupported, Unknown, or Historical. Never write a bare `?`, `check`, or `TODO` in a
    compatibility table. "Confirmed" means tested on a named hub/bridge/device combination.

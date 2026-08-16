@@ -111,7 +111,7 @@ match the table. Values below are examples.
 
 | State | Example | Meaning |
 |---|---|---|
-| `Status` | `clear` | Important information messages. A message stays for 60 seconds, then reverts to `clear`. |
+| `_status_` | `clear` | Important information messages. A message stays for 60 seconds, then reverts to `clear`. Named with underscores so it sorts to the top of the Current States list. Called `Status` before 1.9.2 - the old entry is deleted automatically on update. |
 | `healthStatus` | `online` | `offline` after 3 consecutive failed checks. Polling is every 15 minutes by default — see [Preferences](preferences.md). Also forced to `offline` when the hub itself reports the node as unreachable. |
 | `rtt` | `117` | The last round-trip time measurement, in milliseconds. |
 | `deviceCount` | `7` | How many child devices were created. Usually lower than `endpointsCount`, because not every bridged device type is supported. |

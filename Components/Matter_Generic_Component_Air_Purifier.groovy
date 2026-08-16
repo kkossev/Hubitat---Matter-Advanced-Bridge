@@ -22,16 +22,20 @@
  * ver. 1.2.2  2026-02-19 kkossev   - moved common methods to matterCommonLib
  * ver. 1.2.3  2026-05-24 kkossev   - featureMap bug fix
  * ver. 1.2.4  2026-07-25 kkossev   - bug fixes; removed parse(String); added HEPA/carbon filter monitoring (0x0071/0x0072); Resource Monitoring moved into child
+ * ver. 1.2.5  2026-08-16 kkossev   - 'auto' is now reported; new 'filterDaysRemaining'; removed 'Child lock' and 'Set Indicator Status'; filter reset is refused when the device does not accept it
  *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentAirPurifierVersion = '1.2.4'
-@Field static final String matterComponentAirPurifierStamp   = '2026/07/27 7:42 PM'
+@Field static final String matterComponentAirPurifierVersion = '1.2.5'
+@Field static final String matterComponentAirPurifierStamp   = '2026/08/16 9:58 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 @Field static final Integer RESOURCE_MONITORING_COALESCE_MS = 250
+@Field static final Long MATTER_EPOCH_OFFSET_S = 946684800L   // Matter epoch-s is seconds from 2000-01-01 UTC; Unix epoch-s = Matter epoch-s + this
+@Field static final Integer DEFAULT_FILTER_LIFE_TIME_DAYS = 180
+@Field static final String FILTER_DUE_CHECK_CRON = '0 7 0 * * ?'   // daily, shortly after midnight
 
 metadata {
     definition(name: 'Matter Generic Component Air Purifier', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Air_Purifier.groovy') {
@@ -54,7 +58,6 @@ metadata {
         // Commands for devices.Ikea_E2006
         command 'setSpeed', [[name:'Fan speed*', type:'ENUM', description:'Select the desired fan speed', constraints:SUPPORTED_FAN_SPEEDS]]
         command 'toggle'
-        command 'setIndicatorStatus', [[name:'Status*', type:'ENUM', description:'Select LED indicators status on the device', constraints:['on', 'off']]]
         command 'resetFilterCondition', [[name:'Filter*', type:'ENUM', description:'Reset the filter condition counter - use it after physically replacing the filter', constraints:['HEPA', 'activated carbon']]]
         
         // Attributes for devices.Ikea_E2006
@@ -66,10 +69,10 @@ metadata {
         attribute 'carbonFilterInPlace', 'enum', ['present', 'not present']
         attribute 'filterLastChanged', 'number'                 // Matter epoch-s
         attribute 'carbonFilterLastChanged', 'number'           // Matter epoch-s
+        attribute 'filterDaysRemaining', 'number'               // HEPA filter, estimated in the driver from filterLastChanged or filterUsage + the 'Filter life time' preference
         attribute 'pm25', 'number'
         attribute 'auto', 'enum', ['on', 'off']
-        attribute 'indicatorStatus', 'enum', ['on', 'off']
-        
+
 
         if (_DEBUG_AIR_PURIFIER) {
             command 'getBridgeInfo', [
@@ -127,7 +130,7 @@ preferences {
         input(
             name: 'filterLifeTime', type: 'enum',
             title: 'Filter life time',
-            description: '<small>Configure time between filter changes (default 6 months).</small>',
+            description: '<small>Expected time between HEPA filter changes (default 6 months). Used by Hubitat to estimate <b>filterDaysRemaining</b>, from the filter reset date when the device reports one, otherwise from the reported filter condition - it is not sent to the device.</small>',
             options: [
                  '90': '3 months',
                 '180': '6 months',
@@ -136,12 +139,6 @@ preferences {
             ],
             defaultValue: '180',
             required: true
-        )
-        input(
-            name: 'childLock', type: 'bool',
-            title: 'Child lock',
-            description: '<small>Lock physical controls, safeguarding against accidental operation.</small>',
-            defaultValue: false
         )
     }
 }
@@ -197,8 +194,20 @@ void parse(List<Map> description) {
         else {
             logDescriptionText(d.descriptionText)
             sendEvent(d)
+            if (d.name == 'speed') { syncAutoAttribute(d.value as String) }
         }
     }
+}
+
+// The parent maps FanMode 5 (Auto) to speed 'auto' - mirror that into the 'auto' attribute.
+// Only 'auto' counts: FanMode 6 is mapped to 'smart', which is not a legal FanControl speed at all (see docs/TODO.md 3.2).
+private void syncAutoAttribute(final String speed) {
+    if (speed == null) { return }
+    String autoValue = speed == 'auto' ? 'on' : 'off'
+    if (device.currentValue('auto') == autoValue) { return }
+    String descriptionText = "${device.displayName} auto is ${autoValue}"
+    sendEvent(name: 'auto', value: autoValue, descriptionText: descriptionText)
+    logDescriptionText(descriptionText)
 }
 
 void identify() {
@@ -282,6 +291,16 @@ void resetFilterCondition(String filter = 'HEPA') {
         logWarn "resetFilterCondition: cluster 0x${clusterHex} is not in the ServerList ${getServerList()} - this device has no ${filterName}"
         return
     }
+    // The cluster being present does not mean ResetCondition (command 0x0000) is implemented: an IKEA STARKVIND
+    // behind a DIRIGERA bridge advertises 0x0071 with an EMPTY AcceptedCommandList, so the invoke was silently
+    // swallowed and the counter never moved (confirmed on device 2026-08-16). The list is only known once
+    // getInfo() has read 0xFFF9, so an unknown list is not treated as a refusal.
+    Object acceptedCommands = getResourceMonitoringState(clusterInt)['acceptedCommands']
+    if (acceptedCommands instanceof List && !('0x0000' in (acceptedCommands as List))) {
+        logWarn "resetFilterCondition: this device does not accept the ResetCondition command on cluster 0x${clusterHex} " +
+                "(AcceptedCommandList ${acceptedCommands}) - the ${filterName} counter has to be reset on the device itself"
+        return
+    }
     Integer endpointInt = getDeviceNumber()
     if (endpointInt == null) { return }
 
@@ -292,15 +311,10 @@ void resetFilterCondition(String filter = 'HEPA') {
     parent?.sendToDevice(cmd)
 }
 
-void setIndicatorStatus(String status) {
-    if (logEnable) { log.debug "Setting status indicator to: ${status}" }
-    sendEvent(name:'indicatorStatus', value:status, descriptionText:"Indicator status turned ${status}", type:'digital')
-    // TODO!
-}
-
 // Called when the device is first created
 void installed() {
     setStateDriverVersion(driverVersionAndTimeStamp())
+    scheduleFilterDueCheck()
     logInfo 'driver installed'
 }
 
@@ -317,7 +331,8 @@ void updated() {
         log.debug settings
         runIn(14400, 'logsOff')
     }
-    // TODO!
+    scheduleFilterDueCheck()
+    updateFilterDaysRemaining()     // the 'Filter life time' preference may have just changed
 }
 
 /* groovylint-disable-next-line UnusedPrivateMethod */
@@ -329,6 +344,7 @@ private void logsOff() {
 
 void refresh() {
     checkDriverVersion()
+    updateFilterDaysRemaining()
     parent?.componentRefresh(this.device)
 }
 
@@ -357,7 +373,19 @@ void checkDriverVersion() {
 
 // Reserved for non-destructive state migrations required by future child-driver versions.
 private void migrateDriverState(final String previousVersion, final String currentVersion) {
-    logTrace "migrateDriverState: no migration required from ${previousVersion ?: 'not stored'} to ${currentVersion}"
+    logTrace "migrateDriverState: migrating from ${previousVersion ?: 'not stored'} to ${currentVersion}"
+    // 1.2.5 - 'Set Indicator Status' and 'Child lock' are gone: Matter has no such attribute, so neither ever reached the device.
+    if (device.currentState('indicatorStatus') != null) {
+        device.deleteCurrentState('indicatorStatus')
+        logDebug 'migrateDriverState: removed the obsolete indicatorStatus attribute'
+    }
+    if (settings?.childLock != null) {
+        device.removeSetting('childLock')
+        logDebug 'migrateDriverState: removed the obsolete childLock preference'
+    }
+    // 1.2.5 - existing installs must pick up the daily filter-due job without a Save Preferences.
+    scheduleFilterDueCheck()
+    updateFilterDaysRemaining()
 }
 
 void processMatterMap(final Map descMap, final boolean isRefresh = false, final boolean isDiscovery = false) {
@@ -520,6 +548,8 @@ private void emitPendingResourceUsage(final Integer clusterInt) {
     String directionName = ResourceMonitoringDegradationDirection[direction]
     String descriptionText = "${device.displayName} ${resourceFilterName(clusterInt)} usage: ${usage}% (Condition:${condition}% direction:${directionName})"
     emitResourceReading(clusterInt, 'lastUsage', eventName, usage, '%', descriptionText, isRefresh, isDiscovery)
+    // The usage is passed in rather than read back: currentValue() does not reliably reflect the event just sent.
+    if (clusterInt == 0x0071) { computeFilterDaysRemaining(null, usage) }
 }
 
 private void processResourceChangeIndication(final Integer clusterInt, final Integer indication,
@@ -543,6 +573,88 @@ private void processResourceLastChanged(final Integer clusterInt, final Long las
     String eventName = clusterInt == 0x0071 ? 'filterLastChanged' : 'carbonFilterLastChanged'
     String descriptionText = "${device.displayName} ${resourceFilterName(clusterInt)} last changed: ${lastChanged} epoch-s"
     emitResourceReading(clusterInt, 'lastChanged', eventName, lastChanged, null, descriptionText, isRefresh, isDiscovery)
+    if (clusterInt == 0x0071) { computeFilterDaysRemaining(lastChanged, null) }
+}
+
+/*
+ * HEPA filter change estimate.
+ *
+ * Matter's Resource Monitoring cluster has no 'filter life time' attribute - it reports Condition (a percentage,
+ * surfaced as filterUsage) and, optionally, LastChangedTime. The 'Filter life time' preference supplies the
+ * missing lifetime and the estimate is made here, in the driver; nothing is written to the device.
+ *
+ * Two sources, in order of preference:
+ *   1. LastChangedTime (0x0004) - count the days elapsed since the filter was last reset.
+ *   2. Condition (0x0000, surfaced as filterUsage) - scale the lifetime by the percentage still left.
+ * Most bridged purifiers only offer the second: an IKEA STARKVIND behind a DIRIGERA bridge advertises an
+ * 0x0071 AttributeList of [0x0000, 0x0001, 0x0002] and never reports LastChangedTime (confirmed 2026-08-16).
+ */
+void scheduleFilterDueCheck() {
+    // Neither source moves on its own between reports - LastChangedTime only changes on a filter reset - so the
+    // remaining days have to be recomputed on a timer.
+    unschedule('updateFilterDaysRemaining')
+    schedule(FILTER_DUE_CHECK_CRON, 'updateFilterDaysRemaining')
+    logDebug "scheduleFilterDueCheck: the filter due check is scheduled daily (${FILTER_DUE_CHECK_CRON})"
+}
+
+// Public and deliberately parameterless - this is the schedule() target, so it must resolve by name alone.
+void updateFilterDaysRemaining() {
+    computeFilterDaysRemaining(null, null)
+}
+
+private void computeFilterDaysRemaining(final Long lastChangedPar, final Integer usagePar) {
+    Integer lifeTimeDays = safeToInt(settings?.filterLifeTime, DEFAULT_FILTER_LIFE_TIME_DAYS)
+    if (lifeTimeDays <= 0) { lifeTimeDays = DEFAULT_FILTER_LIFE_TIME_DAYS }
+
+    Integer daysRemaining
+    String basis
+
+    Long lastChanged = lastChangedPar
+    if (lastChanged == null) {
+        Object currentValue = device.currentValue('filterLastChanged')
+        lastChanged = currentValue instanceof Number ? (currentValue as Number).longValue() : null
+    }
+
+    if (lastChanged != null && lastChanged > 0) {
+        // Preferred: count the days elapsed since the device's own LastChangedTime (0x0004).
+        Long nowSeconds = (now() / 1000L) as Long
+        Long elapsedSeconds = nowSeconds - (lastChanged + MATTER_EPOCH_OFFSET_S)
+        if (elapsedSeconds < 0) {
+            logWarn "updateFilterDaysRemaining: LastChangedTime ${lastChanged} epoch-s is in the future - check the device clock"
+            elapsedSeconds = 0
+        }
+        Integer elapsedDays = (elapsedSeconds / 86400L) as Integer
+        daysRemaining = Math.max(0, lifeTimeDays - elapsedDays)
+        basis = "${elapsedDays} of ${lifeTimeDays} days used"
+    }
+    else {
+        // Fallback: scale the configured lifetime by the filter life still left. Confirmed 2026-08-16 on an
+        // IKEA STARKVIND behind a DIRIGERA bridge - its 0x0071 AttributeList is [0x0000, 0x0001, 0x0002] only,
+        // so LastChangedTime is never reported and the elapsed-time path above can never run there.
+        // Note the explicit null test: a usage of 0 is legitimate and would be swallowed by an Elvis operator.
+        Integer usage = usagePar
+        if (usage == null) {
+            Object usageValue = device.currentValue('filterUsage')
+            usage = usageValue instanceof Number ? (usageValue as Number).intValue() : null
+        }
+        if (usage == null) {
+            logDebug 'updateFilterDaysRemaining: the device reports neither LastChangedTime nor Condition - no estimate is possible'
+            return
+        }
+        usage = Math.max(0, Math.min(100, usage))
+        daysRemaining = Math.round(lifeTimeDays * (100 - usage) / 100.0d) as Integer
+        basis = "${usage}% of a ${lifeTimeDays} day filter life used"
+    }
+
+    if (device.currentValue('filterDaysRemaining') == daysRemaining) {
+        logDebug "filterDaysRemaining unchanged: ${daysRemaining} - event suppressed"
+        return
+    }
+    String descriptionText = daysRemaining > 0
+        ? "${device.displayName} HEPA filter is due in ${daysRemaining} days (${basis})"
+        : "${device.displayName} HEPA filter is due for replacement (${basis})"
+    sendEvent(name: 'filterDaysRemaining', value: daysRemaining, unit: 'days', descriptionText: descriptionText)
+    logDescriptionText(descriptionText)
 }
 
 private void emitResourceReading(final Integer clusterInt, final String stateKey, final String eventName,
@@ -787,6 +899,11 @@ private void processGlobalMatterAttribute(final Integer clusterInt, final Intege
             }
             List<String> formatted = formatCompatibilityIdentifierList(value as List)
             if (formatted == null) { return }
+            // Remember which commands a Resource Monitoring cluster actually accepts - resetFilterCondition()
+            // refuses to send ResetCondition to a device that does not list it.
+            if (attrInt == 0xFFF9 && clusterInt in [0x0071, 0x0072]) {
+                storeResourceMonitoringValue(clusterInt, 'acceptedCommands', formatted)
+            }
             if (isInfoMode) { logInfo "${prefix}${clusterName} ${attrName}: ${formatted}" }
             break
     }
