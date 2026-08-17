@@ -16,12 +16,13 @@
   * ver. 1.0.0  2024-03-16 kkossev  - first release
   * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib and matterCommonLib
   * ver. 1.1.1  2026-07-25 kkossev  - bug fixes
+  * ver. 1.1.2  2026-08-17 kkossev  - fixed the 'No signature of method: parse()' error logs
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentBatteryVersion = '1.1.1'
-@Field static final String matterComponentBatteryStamp   = '2026/07/25 9:23 AM'
+@Field static final String matterComponentBatteryVersion = '1.1.2'
+@Field static final String matterComponentBatteryStamp   = '2026/08/17 8:55 PM'
 
 metadata {
     definition(name: 'Matter Generic Component Battery', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Battery.groovy') {
@@ -57,6 +58,32 @@ preferences {
     }
 }
 
+
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
+// Every custom component driver must implement this - without it the parent's dw.parse(descMap)
+// throws MissingMethodException, which the platform logs as an error in THIS device's log.
+void parse(Map descMap) {
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleInvokeResponse(descMap)
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
+    }
+}
+
+private void handleInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+
+    if (invokeStatus == 0) {
+        logDebug "Matter command completed: endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+    else {
+        logWarn "Matter command failed: status=${invokeStatus} endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+}
 
 // parse commands from parent
 void parse(List<Map> description) {

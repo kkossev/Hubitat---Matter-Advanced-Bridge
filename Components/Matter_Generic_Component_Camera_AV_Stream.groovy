@@ -14,6 +14,7 @@
   *
   * ver. 1.0.0  2026-05-30 kkossev + Claude Sonnet 4.6 : first version - Aqara G350 Matter Camera AV Stream Management cluster 0x0551 support
   * ver. 1.0.1  2026-07-25 kkossev : bug fixes
+  * ver. 1.0.2  2026-08-17 kkossev : fixed the 'No signature of method: parse()' error logs
   *
   *             TODO: snapshot capture workflow (CaptureSnapshot 0x000C + CaptureSnapshotResponse 0x000D)
   *             TODO: privacy mode controls if attributes 0x0013/0x0014/0x0015 appear in AttributeList
@@ -26,8 +27,8 @@ import groovy.transform.Field
 import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
-@Field static final String CAMERA_DRIVER_VERSION = '1.0.1'
-@Field static final String CAMERA_DRIVER_STAMP   = '2026/07/27 7:42 PM'
+@Field static final String CAMERA_DRIVER_VERSION = '1.0.2'
+@Field static final String CAMERA_DRIVER_STAMP   = '2026/08/17 8:55 PM'
 
 @Field static final Boolean _DEBUG_CAMERA   = false         // set true only for development
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
@@ -204,6 +205,32 @@ private void logsOff() {
 // --------------------------------------------------------------------------------------------
 // parse() — receives events forwarded from parent driver
 // --------------------------------------------------------------------------------------------
+
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
+// Every custom component driver must implement this - without it the parent's dw.parse(descMap)
+// throws MissingMethodException, which the platform logs as an error in THIS device's log.
+void parse(Map descMap) {
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleInvokeResponse(descMap)
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
+    }
+}
+
+private void handleInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+
+    if (invokeStatus == 0) {
+        logDebug "Matter command completed: endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+    else {
+        logWarn "Matter command failed: status=${invokeStatus} endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+}
 
 void parse(List<Map> parsedEvents) {
     parsedEvents.each { d ->

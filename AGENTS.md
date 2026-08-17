@@ -109,6 +109,12 @@ and **component child drivers** in `Components\`. There is no profiles map — b
   (`timeStamp()` in the parent; the `@Field static ...Stamp` value in a component) using the current
   Europe/Sofia local date and time. This is required during development and does not authorize a version
   bump, history entry, manifest edit, or release-artifact rebuild.
+- **Every custom component driver must implement `parse(Map)`.** The parent forwards
+  `callbackType: Invoke` transaction callbacks to the child that owns the endpoint
+  (`routeInvokeToCustomChild()`). A child without `parse(Map)` throws
+  `MissingMethodException`, which the platform logs as an **error in that child's log** - the
+  parent's `try/catch` runs too late to suppress it (docs/BUGS.md B27). Check this when adding a
+  new component driver. The deprecated SwitchBot Button is the one deliberate exception.
 - Do not add fingerprints to the parent `metadata{}` — deliberately omitted so the stock driver is
   chosen at pairing (see the comment in `metadata{}`).
 - **Run a Groovy syntax check locally** wherever `groovy`/`groovyc` are available (they are on the

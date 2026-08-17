@@ -41,8 +41,9 @@ or driver update does not silently re-subscribe every attribute — see
 
 Not all of them appear — a bridge only publishes what it reports about itself.
 
-`_status_` was called `Status` until 1.9.2. **A rule, dashboard tile or app that referenced `Status`
-by name must be pointed at `_status_`** — the old attribute is removed from the device on update.
+`_status_` was called `Status` until 1.9.2. It carries the driver's own progress and information
+messages, not a device reading; the underscores keep it at the top of the Current States list. The
+old `Status` entry is removed from the device automatically on update.
 [Commands and states](../configuration/commands-and-states.md) explains each one, and covers the
 `ipAddress` and `networkStatus` states that Hubitat adds.
 

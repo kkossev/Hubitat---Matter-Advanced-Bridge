@@ -33,6 +33,10 @@ Verified against **v1.9.0** (`2026/07/25 5:17 PM`). Line numbers refer to that r
 used to sit in the parent driver's header block, moved here on 2026-08-13 and re-verified against
 **v1.9.1** at that date. Line numbers in section 7 refer to v1.9.1.
 
+**Section 9 has a different source thread.** *Should Shelly Gen4 plug report power EVERY second?*
+(topic **161449**, 20 posts, fully analyzed 2026-08-16) — separate from the main release thread
+135252. Verified against **v1.9.2**.
+
 ---
 
 ## 1. Child device naming / labels
@@ -167,8 +171,10 @@ list for quite a long time" — multi-gang devices are exposed as an `Aggregator
   So the plan's §4.2 topology work is **not** dead — it is the correct fix for this shape, with one
   corrected expectation: the inherited value is the **model** name, not a user name. `Aqara Wall Switch
   EU - 1` / `- 2` beats two identical `Switch` children, and that is the whole realistic benefit.
-  This also feeds **TODO 2.1** (spurious Button children): the parent-bridged-node-with-PartsList shape
-  is exactly what would produce children the user cannot account for.
+  This also fed **TODO 2.1** (spurious Button children): the parent-bridged-node-with-PartsList shape
+  is exactly what would produce children the user cannot account for. 2.1 was closed 2026-08-16 with
+  no evidence ever supplied — and the inheritance work below is precisely what would have fixed its
+  most likely cause.
 - Also visible: `0x35` reported `Reachable = false` (the wall switch was offline during this run) —
   MAB stores `Reachable` but does not act on it. Possible separate item.
 
@@ -341,8 +347,38 @@ Two follow-ups this run exposed:
 
 ## 2. Discovery / endpoint classification
 
-### 2.1 `[ ]` Spurious "Button" child devices from an Aqara G3 bridge — **VERIFY ON DEVICE**
-- Jira: `HUB-64`
+### 2.1 `[x]` Spurious "Button" child devices from an Aqara G3 bridge — **CLOSED, NO EVIDENCE**
+- Jira: `HUB-64` (Done, 2026-08-16)
+
+> **CLOSED 2026-08-16 — no evidence ever supplied; two hypotheses recorded below.** The completion
+> gate was never met: no `_DiscoverAll` log or endpoint fingerprint from the G3 arrived, redpaw did
+> not follow up on post #439, and no G3 is available to test. This is **not** a failed reproduction
+> — nobody attempted one, because there is no hardware. Nothing in the classification logic was
+> changed. **Reopen on** any `_DiscoverAll` debug log or `state` fingerprint dump from driver 1.9.1
+> or later showing unexplained Button children.
+>
+> **Hypothesis A — the 8 Buttons are correct and the real complaint is naming.** Matter models each
+> gang of a multi-gang remote as its own Generic Switch (0x000F) endpoint, and some Aqara firmware
+> adds a composite endpoint on top, so two H1 double-rockers can legitimately yield six to eight
+> endpoints. "Cannot match them to physical devices" is the expected result when every child is
+> named `Button` and carries the model name in `NodeLabel`. Under A the work belongs to item **1.1**,
+> which already owns it, and 2.1 has nothing of its own.
+>
+> **A is also already addressed by shipped work.** 1.1's "Remaining actionable work" — parent
+> bridged-node name inheritance — was implemented and hub-confirmed on 2026-08-13 in driver
+> **1.9.1**, so a gang endpoint with no `0x0039` of its own now inherits the nearest named ancestor's
+> `NodeLabel` plus a component suffix (`Aqara Wall Switch EU - 1` / `- 2`) instead of a row of
+> identical children. redpaw reported against 1.8.8/1.9.0, a month before that landed. Unaccountable
+> children on **1.9.1 or later** are new evidence, not this item.
+>
+> **Hypothesis B — the `003B` branch is missing the device-type check its siblings have** (the code
+> evidence below). Weaker than it looks: `0006` OnOff is tested *before* `003B`, so ordinary
+> wall-switch endpoints never reach the Button branch.
+>
+> **The deciding evidence is already instrumented** — `mapMatterCategory()` logs `ServerList` and
+> `DeviceType` for every endpoint (`Matter_Advanced_Bridge.groovy:3711`) whenever debug logging is
+> on. A device type of 0x000F on those endpoints means A; anything else means B. Nothing needs to be
+> built to make this investigable; only a reporter willing to send the log is missing.
 
 After a clean re-discovery @redpaw got **8 `Button` children he cannot match to any physical
 device** (he owns two H1 wireless switches, which he identified separately from the logs). Last
@@ -459,9 +495,9 @@ responding — check the bridge hub") would close these cases without a forum ro
 - `Queue full` itself is a platform message, not driver text (no occurrence in this repo).
 - Low priority / cosmetic.
 
-### 5.2 `[ ]` Do not start `_DiscoverAll` while the Matter bridge is offline
+### 5.2 `[x]` Do not start `_DiscoverAll` while the Matter bridge is offline
 
-Jira: HUB-125
+Jira: HUB-125 (Done)
 
 @stueyhughes started discovery after his Aqara G410 had stopped responding. Discovery removed the
 current subscriptions and then failed in `BRIDGE_GLOBAL_ELEMENTS_WAIT`, making recovery more
@@ -469,10 +505,10 @@ disruptive. kkossev explicitly proposed blocking discovery while the bridge is o
 
 - Posts: [#3](https://community.hubitat.com/t/-/162116/3) (failure and logs),
   [#4](https://community.hubitat.com/t/-/162116/4) (diagnosis and commitment)
-- Status: **OPEN**. The immediate incident was resolved by updating MAB, but the promised guard is a
-  separate preventative change.
-- Suggested behavior: before clearing subscriptions or state, require a successful bridge ping or
-  an online `networkStatus`; warn and leave the existing children/subscriptions untouched otherwise.
+- Status: **DONE**. `_DiscoverAll()` now starts at a `DISCOVER_ALL_STATE_PING_BRIDGE` state that
+  pings the bridge (up to 3 attempts, ~5s each) before `DISCOVER_ALL_STATE_INIT` clears subscriptions
+  or state; on no response it aborts to `DISCOVER_ALL_STATE_ERROR` with existing children and
+  subscriptions untouched. Shipped in v1.9.0 (commit `c65897f`, 2026-07-25), still present in v1.9.2.
 
 ### 5.3 `[ ]` Aqara U400 remains online and commandable but stops reporting lock state
 
@@ -595,6 +631,25 @@ now their only home. A fifth entry was an empty `TODO:` line and was simply drop
 - Verify on a cool-only device (the Air Conditioner on endpoint `0x50` of the M3) that
   `supportedThermostatModes` is correct **before** any thermostat command is issued.
 
+### 7.5 `[ ]` Button child never emits `supportedButtonValues`
+- Original: a `TODO:` in the Button child's header — *"send supportedButtonValues attribute event
+  depending on the featureMap (e.g. if MSM supported, send `supportedButtonValues =
+  'pushed, held, released, double'`) to help Hubitat apps know which button events to expect"*
+  (`Components\Matter_Generic_Component_Button.groovy:26`). Moved here 2026-08-16 when **HUB-77**
+  ("add Matter button handling") was closed as implemented — this is the one part of that request
+  still outstanding, so it must not be lost with the ticket.
+- Same shape as 7.4: the capability-level list an app reads to know what to expect is never
+  initialised. Apps must discover a button's abilities by observing events.
+- The data is already available — `getFeatureMap()` reads `003B_FFFB`/`003B_FFFC` and was made
+  reliable by BUGS **B1** (`safeHexToInt` with a numeric `0x1F` default). The bits map directly:
+  MSM → `doubleTapped`, MSL → `held`, and `released` follows the release handling the driver already
+  implements.
+- Note the two remaining header `TODO:`s alongside it — `featureMap` stored in decimal rather than
+  hex in `deviceFingerprintData` (readability only), and a proposed `getFeatureMap(cluster)` helper in
+  the commonLib. Both cosmetic; neither blocks this.
+- Verify on a real button whose FeatureMap is *not* `0x1F` (a device without MSM), so a wrong bit test
+  shows up as a missing value rather than being masked by the default.
+
 ---
 
 ## 8. Air Purifier / filter monitoring
@@ -610,6 +665,84 @@ reports the same `Condition` / `ChangeIndication` / `LastChangedTime` set and ge
   value for both would produce a confidently wrong number for the carbon filter.
 - No user has asked for it. The test unit (STARKVIND behind DIRIGERA) has no `0x0072` at all, so this
   cannot be verified locally — wait for a device that has both.
+
+## 9. Shelly Gen4 Matter power reporting (thread 161449)
+
+Source: *Should Shelly Gen4 plug report power EVERY second?*, topic **161449**, 20 posts, analyzed
+2026-08-16. Post links are `https://community.hubitat.com/t/-/161449/<post#>`. Not part of the main
+release thread (135252).
+
+### 9.1 `[ ]` `deviceTypeUpdated()` is a no-op stub — the driver-switch state repair kkossev agreed to never landed
+@TArman kept losing working power readings whenever hopping between the stock "Generic Matter
+Outlet" and MAB while chasing the reporting-rate issue below. @hubitrep suggested (post
+[#13](https://community.hubitat.com/t/-/161449/13)) that the platform's `deviceTypeUpdated()`
+callback — called whenever a device's driver type changes — could repair state automatically, and
+kkossev agreed (post [#14](https://community.hubitat.com/t/-/161449/14)) it "can be very useful in
+this case."
+- Code: `Matter_Advanced_Bridge.groovy:580-583` — `deviceTypeUpdated()` exists but only does
+  `log.warn "${device.displayName} driver change detected"`. It does not call `updated()`,
+  `ensureNewParseFlag()`, or trigger a subscribe, so switching a device *into* MAB still leaves it
+  inert until the user manually opens Preferences and hits Save.
+- Partially overtaken by events: since v1.9.0 `newParse` is unconditionally forced true and the
+  toggle preference was removed entirely (`ensureNewParseFlag()`,
+  `Matter_Advanced_Bridge.groovy:587-596`), so the *specific* failure mode in the thread (stock
+  driver leaving `newParse` stuck off) can no longer reproduce the same way. The broader gap —
+  nothing runs `updated()`/re-subscribe automatically on a driver-type switch — is still open.
+- **VERIFY ON DEVICE**: reproduce a stock-driver ↔ MAB switch on current 1.9.2 and confirm whether
+  the child still needs a manual Save Preferences before it reports again.
+
+### 9.2 `[?]` Readings "off by common multipliers" for the Power Energy child — **VERIFY ON DEVICE**
+
+Jira: HUB-76 (Inbox)
+
+@TArman reported (post [#8](https://community.hubitat.com/t/-/161449/8)) that "Matter Custom
+Component Power Energy" readings were off by common multipliers; kkossev replied "I see where the
+problem is... do not use it for this device for now" (post
+[#9](https://community.hubitat.com/t/-/161449/9)).
+- The very next release, `ver. 1.7.7` (2026-02-14), lists "bugfix: Power/Energy processing
+  exceptions" in the driver header — one week after the thread's last post.
+- Current code (`Components\Matter_Custom Component_Power_Energy.groovy:212-274`) divides
+  RMSVoltage/RMSCurrent/ActivePower/Frequency by `1000` (mV/mA/mW/mHz → V/A/W/Hz) and PowerFactor by
+  `10000` (`-10000..10000` → `-1.0..1.0`), which matches the Matter Electrical Power Measurement
+  cluster spec units.
+- No explicit changelog line ties 1.7.7 to *this specific* multiplier report, so treat as
+  **plausibly fixed, unconfirmed on Shelly hardware** rather than a hard close — flip to `[ ]` if a
+  Shelly Gen4 user reports it again.
+
+### 9.3 `[ ]` Every-1-second power reports flooding the hub — mitigation shipped, opt-in — **VERIFY ON DEVICE**
+
+Jira: HUB-117 (Verify on Device)
+
+@daniel.winks confirmed (post [#18](https://community.hubitat.com/t/-/161449/18)) Shelly Gen4 power
+devices report at 1 Hz over both WebSocket and Matter with no on-device configuration option, and
+suggested averaging N reports before each `sendEvent()` to cut hub load. kkossev noted (post
+[#17](https://community.hubitat.com/t/-/161449/17)) that HE-side filtering "would be a patch only"
+since driver-call overhead remains either way.
+- `SupportedMatterClusters[0x0090].subscriptions` marks `ActivePower`/`RMSVoltage`/`RMSCurrent`/
+  `Frequency`/`PowerFactor` as `isSpammy: true` (`Matter_Advanced_Bridge.groovy:293-301`), and the
+  `spammyAttributesMinInterval` preference (added **v1.9.0**, 2026-07-25 — five months after this
+  thread) routes `isSpammy` attributes into a second, additive `matter.subscribe()` with a longer
+  minimum interval (AGENTS.md §2.5).
+- This throttles at the Matter reporting-engine layer (the device itself sends less often), which is
+  a better fix than daniel.winks' driver-side averaging idea — no wasted `sendEvent()` calls at all,
+  vs. still waking the driver every second and only averaging afterward.
+- Already documented: `docs/user/drivers/power-energy.md:60-65` ("Known limitations" names Power/
+  Voltage/Current/Frequency/PowerFactor as frequently-reporting and points at the preference by
+  name), plus `docs/user/configuration/preferences.md:60`, `docs/user/drivers/air-purifier.md:70`,
+  and `docs/user/help/troubleshooting.md:95`. No documentation gap — retracts the "nothing points a
+  Shelly owner at this preference" note from the first pass of this analysis.
+- **Why this is still open despite shipping:** AGENTS.md §2.5 flags it as unverified whether the HE
+  Matter client keeps the *primary* subscription alive alongside a second `matter.subscribe()`. If
+  the primary dies whenever `spammyAttributesMinInterval` > 0, that breaks every attribute on the
+  bridge, not just the throttled ones. Verification step: set the preference above 0 on a bridge with
+  both spammy and non-spammy attributes, then confirm the non-spammy ones still report.
+- Never retested with the originating reporter's Shelly Gen4 (@TArman).
+- Remaining, deliberate: the preference **defaults to `0` = off** (per the v1.9.0 CHANGELOG entry,
+  called out explicitly as an upgrade-behavior change) — an affected user still has to find and set
+  it themselves rather than getting it automatically. That is a default-value product decision, not
+  a bug or a documentation miss; leaving it here only as a design note, not an action item.
+- Scope note: only `0x0090` power attributes carry `isSpammy`; `0x0091` cumulative energy does not
+  (almost certainly correct — cumulative energy is not a 1 Hz reporter).
 
 ## Already covered elsewhere (do not duplicate)
 

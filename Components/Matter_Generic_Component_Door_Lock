@@ -27,7 +27,7 @@
   * ver. 1.4.1  2026-05-27 kkossev   fixed EZ dashboards unhappy face; added unlockWithTimeout command; added UnboltDoor command; 
   *                                  DuplicateDoorLockEventFilter; added the needed data: Map required by the LCM; added overwriteCodes option; getInfo improvements; 
   *                                  added operation source 'Aliro' (UWB/Apple Watch); added auto discovery for new lock codes reported by the lock;
-  * ver. 1.5.0  2026-07-25 kkossev  (dev.branch) callbackType:Invoke handling; bugs fixes;
+  * ver. 1.5.0  2026-07-25 kkossev   callbackType:Invoke handling; bugs fixes;
   * 
   *                                  TODO: 
   *                                  TODO: 
@@ -53,7 +53,7 @@ import groovy.json.JsonOutput
 @Field static final String matterComponentLockStamp   = '2026/07/27 7:42 PM'
 
 @Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !
-@Field static final Boolean _DEFAULT_LOG_ENABLE = true     // disable on production
+@Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
 
 @Field static final Integer DELETE_TIMEOUT_SECONDS = 5      // time to wait for lock code deletion confirmation event before removing code from lockCodes attribute (to avoid ghost codes in case of failed deletion)
 @Field static final Integer SET_CODE_TIMEOUT_SECONDS = 45   // time to wait for lock code set confirmation event before clearing 'setting' status in lockCodes attribute (to avoid stuck 'setting' status in case of failed set)

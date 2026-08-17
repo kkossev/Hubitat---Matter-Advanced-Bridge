@@ -19,7 +19,8 @@
   * ver. 1.0.3  2026-01-25 kkossev + + GPT-5.2 : newParse=true fixes (evtId as Integer)
   * ver. 1.0.4  2026-01-29 kkossev  - common libraries
   * ver. 1.1.0  2026-02-21 kkossev  - added getInfo() command; code refactoring
-  * ver. 1.1.1  2026-07-25 kkossev  - (dev. branch) - bug fixes
+  * ver. 1.1.1  2026-07-25 kkossev  - bug fixes
+  * ver. 1.1.2  2026-08-17 kkossev  - fixed the 'No signature of method: parse()' error logs
   *
   *                                 TODO: featureMap in deviceFingerprintData is in decimal, maybe should be stored in hex for better readability?
   *                                 TODO: add getFeatureMap(cluster) method in the commonLib
@@ -29,8 +30,8 @@
 import groovy.transform.Field
 import groovy.json.JsonSlurper
 
-@Field static final String matterComponentButtonVersion = '1.1.1'
-@Field static final String matterComponentButtonStamp   = '2026/07/25 9:12 AM'
+@Field static final String matterComponentButtonVersion = '1.1.2'
+@Field static final String matterComponentButtonStamp   = '2026/08/17 8:55 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -56,6 +57,32 @@ preferences {
     }
 }
 
+
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
+// Every custom component driver must implement this - without it the parent's dw.parse(descMap)
+// throws MissingMethodException, which the platform logs as an error in THIS device's log.
+void parse(Map descMap) {
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleInvokeResponse(descMap)
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
+    }
+}
+
+private void handleInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+
+    if (invokeStatus == 0) {
+        logDebug "Matter command completed: endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+    else {
+        logWarn "Matter command failed: status=${invokeStatus} endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+}
 
 // parse commands from parent
 void parse(List<Map> description) {

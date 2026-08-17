@@ -16,15 +16,16 @@
  * ver. 1.1.0  2025-01-10 kkossev  - added ping command and RTT monitoring via matterHealthStatusLib
  * ver. 1.1.1  2025-01-29 kkossev  - common libraries
  * ver. 1.1.2  2026-02-14 kkossev  - getInfo(); bugfix: Power/Energy processing exceptions;
- * ver. 1.1.3  2026-02-19 kkossev  -  moved common methods to matterCommonLib
- * ver. 1.1.4  2026-07-25 kkossev  - (dev. branch) bug fixes
+ * ver. 1.1.3  2026-02-19 kkossev  - moved common methods to matterCommonLib
+ * ver. 1.1.4  2026-07-25 kkossev  - bug fixes
+ * ver. 1.1.5  2026-08-17 kkossev  - fixed the 'No signature of method: parse()' error logs
 *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentPowerEnergyVersion = '1.1.4'
-@Field static final String matterComponentPowerEnergyStamp   = '2026/07/25 5:17 PM'
+@Field static final String matterComponentPowerEnergyVersion = '1.1.5'
+@Field static final String matterComponentPowerEnergyStamp   = '2026/08/17 8:55 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom%20Component_Power_Energy.groovy') {
@@ -60,6 +61,32 @@ preferences {
     }
 }
 
+
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
+// Every custom component driver must implement this - without it the parent's dw.parse(descMap)
+// throws MissingMethodException, which the platform logs as an error in THIS device's log.
+void parse(Map descMap) {
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleInvokeResponse(descMap)
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
+    }
+}
+
+private void handleInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+
+    if (invokeStatus == 0) {
+        logDebug "Matter command completed: endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+    else {
+        logWarn "Matter command failed: status=${invokeStatus} endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+}
 
 // parse commands from parent
 void parse(List<Map> description) {

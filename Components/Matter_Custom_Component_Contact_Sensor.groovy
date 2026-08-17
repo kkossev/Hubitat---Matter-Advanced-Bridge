@@ -15,13 +15,14 @@
  *
  * ver. 1.0.0  2026-04-30 kkossev  - first release; adds sensitivityLevel attribute for devices with cluster 0x0080 (BooleanStateConfiguration), e.g. Aqara P100
  * ver. 1.0.1  2026-07-25 kkossev  - Bug fixes;
+ * ver. 1.0.2  2026-08-17 kkossev  - fixed the 'No signature of method: parse()' error logs
  *
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentContactSensorVersion = '1.0.1'
-@Field static final String matterComponentContactSensorStamp   = '2026/07/25 10:59 PM'
+@Field static final String matterComponentContactSensorVersion = '1.0.2'
+@Field static final String matterComponentContactSensorStamp   = '2026/08/17 8:55 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Contact Sensor', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom_Component_Contact_Sensor.groovy') {
@@ -47,6 +48,32 @@ preferences {
     }
 }
 
+
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
+// Every custom component driver must implement this - without it the parent's dw.parse(descMap)
+// throws MissingMethodException, which the platform logs as an error in THIS device's log.
+void parse(Map descMap) {
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleInvokeResponse(descMap)
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
+    }
+}
+
+private void handleInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+
+    if (invokeStatus == 0) {
+        logDebug "Matter command completed: endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+    else {
+        logWarn "Matter command failed: status=${invokeStatus} endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+}
 
 // parse commands from parent
 void parse(List<Map> description) {

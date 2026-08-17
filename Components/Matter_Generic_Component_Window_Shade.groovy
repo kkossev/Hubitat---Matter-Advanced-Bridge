@@ -24,15 +24,16 @@
  * ver. 1.2.2  2025-01-29 kkossev - common libraries
  * ver. 1.2.3  2026-02-11 kkossev - getInfo()
  * ver. 1.2.4  2026-02-19 kkossev - moved common methods to matterCommonLib
- * ver. 1.2.5  2026-07-25 kkossev - (dev. branch) bug fixes
+ * ver. 1.2.5  2026-08-16 kkossev - bug fixes
+ * ver. 1.2.6  2026-08-17 kkossev - fixed the 'No signature of method: parse()' error logs
  *
  *                                   TODO:
 */
 
 import groovy.transform.Field
 
-@Field static final String matterComponentWindowShadeVersion = '1.2.5'
-@Field static final String matterComponentWindowShadeStamp   = '2026/07/27 7:42 PM'
+@Field static final String matterComponentWindowShadeVersion = '1.2.6'
+@Field static final String matterComponentWindowShadeStamp   = '2026/08/17 8:55 PM'
 
 @Field static final Boolean _DEBUG = false
 
@@ -94,6 +95,32 @@ int getFullyOpen()   { return  OPEN }
 int getFullyClosed() { return CLOSED }
 boolean isFullyOpen(int position)   { return Math.abs(position - getFullyOpen()) < getDelta() }
 boolean isFullyClosed(int position) { return Math.abs(position - getFullyClosed()) < getDelta() }
+
+// Hubitat platform 2.5.1.132+ transaction callbacks. The parent passes these Maps unchanged.
+// Every custom component driver must implement this - without it the parent's dw.parse(descMap)
+// throws MissingMethodException, which the platform logs as an error in THIS device's log.
+void parse(Map descMap) {
+    switch (descMap?.callbackType) {
+        case 'Invoke':
+            handleInvokeResponse(descMap)
+            break
+        default:
+            logDebug "parse(Map): ignored callback: ${descMap}"
+            break
+    }
+}
+
+private void handleInvokeResponse(final Map descMap) {
+    Integer invokeStatus = safeNumberToInt(descMap.status, null)
+    Integer commandInt = safeNumberToInt(descMap.commandInt, null)
+
+    if (invokeStatus == 0) {
+        logDebug "Matter command completed: endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+    else {
+        logWarn "Matter command failed: status=${invokeStatus} endpoint=${descMap.endpointInt} cluster=${descMap.clusterInt} command=${commandInt}"
+    }
+}
 
 // parse commands from parent
 void parse(List<Map> description) {
@@ -486,11 +513,11 @@ void installed() {
 }
 
 void initialize() {
-    sendEvent(name: 'position', value: 0, descriptionText: "${device.displayName} initializing position to 0%", unit: '%', type: 'digital')
-    sendEvent(name: 'targetPosition', value: 0, descriptionText: "${device.displayName} initializing targetPosition to 0%", unit: '%', type: 'digital')
-    sendEvent(name: 'windowShade', value: 'open', descriptionText: "${device.displayName} initializeing windowShade to open", type: 'digital')
-    sendEvent(name: 'level', value: 0, descriptionText: "${device.displayName} initializing level to 0%", unit: '%', type: 'digital')
-    sendEvent(name: 'switch', value: 'on', descriptionText: "${device.displayName} initializing switch to on", type: 'digital')
+    sendEvent(name: 'position', value: CLOSED, descriptionText: "${device.displayName} initializing position to ${CLOSED}%", unit: '%', type: 'digital')
+    sendEvent(name: 'targetPosition', value: CLOSED, descriptionText: "${device.displayName} initializing targetPosition to ${CLOSED}%", unit: '%', type: 'digital')
+    sendEvent(name: 'windowShade', value: 'closed', descriptionText: "${device.displayName} initializing windowShade to closed", type: 'digital')
+    sendEvent(name: 'level', value: CLOSED, descriptionText: "${device.displayName} initializing level to ${CLOSED}%", unit: '%', type: 'digital')
+    sendEvent(name: 'switch', value: 'off', descriptionText: "${device.displayName} initializing switch to off", type: 'digital')
 }
 
 void on() { open() }

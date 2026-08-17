@@ -1,6 +1,6 @@
 # Known issues
 
-Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
+Applies to: 1.9.2 | Last verified: 2026-07-27 | Status: Current
 
 For a problem you are having right now, start with [Troubleshooting](troubleshooting.md).
 
@@ -18,6 +18,7 @@ not reproduced here), **Implemented, unverified** (the code is there, no live-de
 | Issue | Affects | Evidence | Workaround |
 |---|---|---|---|
 | **No composite devices.** A temperature and humidity sensor arrives as separate temperature, humidity, and battery children, because that is how the bridge exposes it. | All versions | Confirmed | None. Grouping attributes into one child device is on the TODO list. |
+| **Error entries in a child device's log on every command.** A shade, switch or metering child logs `MissingMethodException: No signature of method: ... parse()` each time it is commanded. | 1.9.0 and 1.9.1 | Reported | Update to 1.9.2, where it is fixed. The command itself always succeeded and the device responded normally, so the entry was log noise. |
 | **Lock Codes (PIN codes and users) are experimental.** Locking and unlocking work; code management was first added in 1.8.7 and is still labelled a test version. | 1.8.7 and later | Implemented, unverified | Use the lock's own app to manage codes. |
 
 ## Reporting something not listed here

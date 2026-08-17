@@ -72,13 +72,13 @@
  *                                  preference defaults to 0 (off), so the previous 10 seconds throttling is NOT applied until you set it!</b>
  * ver. 1.9.1  2026-08-13 kkossev + Claude Opus 5 - child devices now show the bridged device's SerialNumber and UniqueID in their Device Data (community request #440); the individual gangs of a
  *                                  multi-gang wall switch now inherit the real device name instead of all becoming a generic 'Switch' named after the bridge.
- * ver. 1.9.2  2026-08-16 kkossev   (dev. branch) the 'Status' attribute is renamed to '_status_' (shown first in the Current States); stale 'status'/'Status' entries are removed automatically; setSpeed is refused on an endpoint with no fan
+ * ver. 1.9.2  2026-08-17 kkossev   the 'Status' attribute is renamed to '_status_' (shown first in the Current States); stale 'status'/'Status' entries are removed automatically; setSpeed is refused on an endpoint with no fan; fixed the 'No signature of method: parse()' error logs in the child devices
  *
  */
 
 
 static String version() { '1.9.2' }
-static String timeStamp() { '2026/08/16 9:58 PM' }
+static String timeStamp() { '2026/08/17 9:14 PM' }
 
 
 @Field static final Boolean _DEBUG = false                  // make it FALSE for production!
@@ -1153,9 +1153,14 @@ private boolean routeInvokeToCustomChild(final Map descMap) {
         dw.parse(descMap)
     }
     catch (MissingMethodException e) {
-        // Custom component drivers opt in one by one by adding parse(Map). Do not turn an
-        // unimplemented handler into a warning, but never hide MissingMethodException thrown
-        // from inside a handler that does exist.
+        // WARNING - this catch is NOT a safety net for a child driver without parse(Map).
+        // The platform runs the child's script in the CHILD's context, so it logs
+        // "MissingMethodException: No signature of method: ...parse() ... (java.util.LinkedHashMap)"
+        // as an error in that child device's log before anything reaches this handler (BUGS.md B27,
+        // reported for the Window Shade children in community post #449). EVERY custom component
+        // driver shipped in this package must therefore implement parse(Map) - this only keeps a
+        // hand-installed stale child from breaking the parent, and never hides a
+        // MissingMethodException thrown from inside a handler that does exist.
         if (e.method == 'parse') {
             logDebug "routeInvokeToCustomChild: '${dw.typeName}' does not implement parse(Map) yet"
         }

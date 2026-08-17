@@ -1,14 +1,33 @@
 # Revision history
 
-Applies to: 1.9.1 | Last verified: 2026-08-13 | Status: Current
+Applies to: 1.9.2 | Last verified: 2026-08-17 | Status: Current
 
 User-visible changes, newest first. The driver file header carries the complete technical changelog,
 including internal refactoring not listed here.
 
-**The current released version is 1.8.8**, which is what Hubitat Package Manager installs.
-**1.9.0 and later are BETA** — available for testing, not yet the released package.
+**The current released version is 1.9.2**, which is what Hubitat Package Manager installs.
+1.9.1 was published on 2026-08-16 and 1.9.2 on 2026-08-17. Versions marked *(BETA)* below were
+development builds that were never published as a package.
 
-## 1.9.1 — 2026-08-13 *(BETA)*
+## 1.9.2 — 2026-08-17
+
+- **The `MissingMethodException: No signature of method: ... parse()` errors in the child device logs
+  are fixed.** Shades, switches, metering devices and others logged one of these on every command
+  since 1.9.0. Nothing was actually broken: the command itself always succeeded, the child device
+  simply could not accept the confirmation the bridge passed back to it. Reported in the community
+  thread for two window shades.
+- The bridge's own `Status` attribute is renamed to `_status_`, so that the driver's progress and
+  information messages appear at the top of the Current States list instead of being buried among the
+  device readings. The old entry is removed automatically on update.
+- **Window Shade** no longer shows a shade as both open and closed after Initialize.
+- **Motion Sensor** no longer reports motion when you toggle the *Invert Motion* preference.
+- **Air Purifier** improvements: the `auto` attribute is finally reported; a new
+  `filterDaysRemaining` attribute derived from the *Filter life time* preference; a filter reset is
+  refused, with an explanation, on a device that does not accept the command instead of silently
+  doing nothing; **Set Speed** is refused on an air quality sensor that has no fan. The unused
+  *Child lock* preference and *Set Indicator Status* command are removed.
+
+## 1.9.1 — 2026-08-16
 
 - Each child device's **Device Data** section now shows the bridged device's serial number and unique
   id, when the bridge reports them. These are whatever the bridge sends: on some bridges several
@@ -42,7 +61,7 @@ including internal refactoring not listed here.
 ## 1.8.x — 2026-02 to 2026-05
 
 - **1.8.9** Aqara G350 video camera support *(BETA)*.
-- **1.8.8** Lock code improvements; default timeouts doubled. **Current released version.**
+- **1.8.8** Lock code improvements; default timeouts doubled.
 - **1.8.7** Matter Lock Codes — first test version. Still experimental.
 - **1.8.6** Fan control (cluster `0x0202`), tested on an Altitude Boca II ceiling fan. Thanks
   @sbohrer.

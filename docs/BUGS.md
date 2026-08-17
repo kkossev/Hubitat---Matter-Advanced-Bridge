@@ -51,13 +51,14 @@ An earlier independent review (Codex, 2026-07-04) was **merged into this file on
 
 ---
 
-## Open items — index (refreshed 2026-08-13, v1.9.1)
+## Open items — index (refreshed 2026-08-17, v1.9.2)
 
-**48 closed, 9 open, 1 release gate.** Closed entries are kept deliberately: they carry the evidence
+**49 closed, 9 open, 1 release gate.** Closed entries are kept deliberately: they carry the evidence
 and the ruled-out hypotheses, several are cited by ID from the driver source, and they are what stops
 a finding being re-derived. See the note at the end of this section.
 
-Only three open items actually need code written. The rest are staged fixes waiting for hardware.
+No open item needs code written any more. Every remaining one is either a staged fix waiting for
+hardware, or deliberately not being worked.
 
 ### Needs a hub/device test — code already applied
 
@@ -67,14 +68,9 @@ Only three open items actually need code written. The rest are staged fixes wait
 | **B14** | Discovery reports fell through the ordinary duplicate filter | Same run as B12 |
 | **B16** | Camera FeatureMap/ClusterRevision parsed as decimal | A `0x0551` camera endpoint — none available |
 | **B21** | `VendorName` never stored for endpoint 0 | Any directly-paired (non-bridged) Matter device |
-
-### Needs code
-
-| ID | Item | Size |
-|---|---|---|
-| **B18** | Window Shade initialises 0% as both closed and open | small |
-| **B19** | Motion Sensor invert-setting update can throw or fabricate motion | small |
-| **C8** | `.hubitat\metadata.json` stale entry + duplicate ids | tooling data file only, no driver risk |
+| **B18** | Window Shade initialised 0% as both closed and open | Create/`initialize()` a shade child, inspect all five attributes |
+| **B19** | Motion Sensor invert-setting update could throw or fabricate motion | Toggle **Invert Motion** before the first report, then after `active` and `inactive` |
+| **B27** | Invoke callbacks crashed every component driver without `parse(Map)` (community post #449) | Open/close a blind with debug logging on — no `MissingMethodException`, one `Matter command completed` line instead |
 
 ### Open but deliberately not being worked
 
@@ -463,6 +459,10 @@ code.
 - Fix: seed `closed`/`off` consistently, or use `unknown` until the first position report.
 - Verify: create a child or call `initialize()` and inspect all five attributes before refreshing.
 - Confidence: High.
+- **Fix applied in the working copy (2026-08-16), awaiting the hub test:** `initialize()` now seeds all
+  five attributes to the closed end — `position`/`targetPosition`/`level` = `CLOSED` (the named constant
+  instead of a literal `0`), `windowShade` = `closed`, `switch` = `off`. The first real position report
+  still overrides everything. Parses locally.
 
 ### B19. `[ ]` Motion Sensor invert-setting update can throw or fabricate motion
 - Found 2026-07-25 against **v1.9.0**, component v1.1.2.
@@ -475,6 +475,10 @@ code.
   wait for the next physical report.
 - Verify: toggle before the first report (no event/no exception), then after active and inactive reports.
 - Confidence: Medium-High; null-to-active is certain, while missing-property behavior depends on HE.
+- **Fix applied in the working copy (2026-08-16), awaiting the hub test:** reads
+  `device.currentValue('motion')` and inverts only the exact values `active` and `inactive`; any other
+  value (including no report yet) sends no event and logs a debug line instead of fabricating `active`.
+  Parses locally.
 
 ### B20. `[x]` `getInfo()` reads a whole AttributeList in one request — ThreadNetworkDiagnostics times out
 - Found 2026-07-25 against **v1.9.0** (parent timeStamp `2026/07/25 5:17 PM`), from a user log of an
@@ -618,7 +622,7 @@ code.
 - `Matter_Advanced_Bridge.groovy:1889, 1892` — logs say "parseLevelControlCluster"/"unsupported LevelControl"
   inside parseColorControl.
 
-### C8. `[ ]` `.hubitat\metadata.json` stale entry + duplicate ids — `[Codex C5]`
+### C8. `[x]` `.hubitat\metadata.json` stale entry + duplicate ids — `[Codex C5]`
 - Lines 63–74: `Components/Matter Generic Component_Energy.groovy` does not exist and shares id 3802
   with the real Power_Energy entry. Local tooling only.
 - **Partial fix only**: the stale block was removed, but the 34-entry/id-unique conclusion was wrong.
@@ -626,6 +630,18 @@ code.
   as `/c:/Work/...` and once as `/c:/work/...`; id 3802 remains duplicated for the real Power/Energy file.
 - Fix: keep one canonical-cased record for each file/id, then re-parse JSON and assert id/path uniqueness.
 - Tooling only; HPM does not consume this file.
+- **Fixed 2026-08-16.** The 16 duplicate pairs were each the same file recorded once under
+  `/c:/Work/...` and once under `/c:/work/...`, an artifact of the folder having been opened under
+  both casings. Fixed by *normalising* the casing to `/c:/work/` and then collapsing by id, keeping
+  the higher `version` (the more recent push) — **not** by deleting the capital-`Work` records, which
+  would have silently dropped `matterHealthStatusLib` (id 199) and `Matter_Generic_Component_SwitchBot_Button`
+  (id 3431): those two existed *only* under the capital-`W` spelling. Result 35 records → **19**, with
+  19 unique ids and 19 unique paths. The item's own gate was executed: the file re-parses as JSON, id
+  and path uniqueness are asserted, and every one of the 19 paths was verified to exist on disk.
+  `Components/Matter_Generic_Component_Door_Lock` is recorded without a `.groovy` extension because
+  the file genuinely has none — deliberate, see `AGENTS.md` ("do not rename"). Formatting (2-space
+  indent, key order, LF endings) is unchanged. No hub test applies; this file is read only by the
+  Hubitat VS Code extension.
 
 ### C9. `[x]` Library `library()` header versions lag their `@Field` version strings
 - **No longer reproducible** (verified 2026-07-25): `matterLib.groovy` header and `matterLibVersion`
@@ -1060,6 +1076,43 @@ code.
 - Related: `requestAndCollectServerListAttributesList()` issues one read per cluster in a tight loop
   with no pacing — a different flavour of the same risk (concurrent in-flight reads rather than paths
   per read). Also unmeasured.
+
+### B27. `[ ]` Invoke callbacks crash every component driver that has no `parse(Map)`
+- Reported 2026-08-17 in community post
+  [#449](https://community.hubitat.com/t/release-matter-advanced-bridge-limited-device-support/135252/449)
+  against the released **v1.9.1**: two Window Shade children logging, on every blind command,
+  `groovy.lang.MissingMethodException: No signature of method: ...Matter_Generic_Component_Window_Shade_2488.parse()
+  is applicable for argument types: (java.util.LinkedHashMap) values: [[callbackType:Invoke, status:0,
+  endpointInt:5, clusterInt:258, ...]] Possible solutions: parse(java.util.List) ... on line 1147`.
+  `clusterInt:258` is `0x0102` WindowCovering and `status:0` means the command **succeeded** — the
+  blinds work, the error is log noise only, but it fires on every Open/Close/SetPosition.
+- Where: `Matter_Advanced_Bridge.groovy` `routeInvokeToCustomChild()` — line 1147 in the released
+  1.9.1 is its `dw.parse(descMap)`. The parent forwards every `callbackType: Invoke` Map to the child
+  that owns the endpoint, but only **Door Lock** and **Air Purifier** were ever given the matching
+  `parse(Map)` when the 1.9.0 callback contract was introduced. Every other custom component driver
+  declares `parse(List<Map>)` only, so Groovy throws.
+- **Why the `try/catch (MissingMethodException)` around that call does not help**: the platform runs
+  the child's script in the **child's** context and logs the exception there — the errors are stamped
+  with the child device ids (`dev:2327`, `dev:2328`), not the bridge's — before anything reaches the
+  parent's handler. The catch only protects the parent from a hand-installed stale child; it can
+  **never** suppress the user-visible error. The old comment claiming drivers "opt in one by one"
+  described a safety net that does not exist.
+- Routing is by **endpoint**, not by which child issued the command, so this is not limited to the
+  clusters a given child drives: the parent's `identify` utility and `setSwitch` can invoke on any
+  endpoint. Reachable in normal use today: **Window Shade** (`0x0102`, reported), **Switch**
+  (`0x0006`/`0x0008`/`0x0300`), **Custom Power Energy** (`0x0006`), **Camera AV Stream** (`0x0551`).
+  Reachable via a parent-side Identify/setSwitch: Contact Sensor, Motion Sensor, Battery, Button,
+  Signal. Hubitat stock children are already excluded by the `dw.typeName?.startsWith('Matter ')` test.
+- Fix applied 2026-08-17: `parse(Map)` + `handleInvokeResponse()` added to all nine remaining custom
+  component drivers, mirroring the Air Purifier — `Invoke` with `status == 0` logs debug
+  `Matter command completed`, a non-zero status logs a warn, any other `callbackType` is ignored at
+  debug. `Matter_Generic_Component_SwitchBot_Button.groovy` is deliberately **excluded** — deprecated
+  since 1.8.0 (see B8), no longer supported. The parent's misleading comment was replaced with the
+  context explanation above.
+- Verify: with debug logging on, open and close a blind. No `MissingMethodException` in the child's
+  log, and one `Matter command completed: endpoint=... cluster=258 command=...` debug line per
+  command instead. Repeat on a Switch child (on/off) for the `0x0006` path.
+- Confidence: High (the exception and its cause are both in the reported log).
 
 ### C25. `[x]` Diagnostics clusters have no attribute-name maps — values print as `UNKNOWN` (0x0035, 0x0036, 0x0004, 0x0005)
 - Found 2026-07-25 against **v1.9.0**, in the 23:27 log that verified B20. Direct consequence of that

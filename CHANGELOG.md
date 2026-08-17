@@ -26,9 +26,12 @@ and this project follows Semantic Versioning where applicable.
 >
 > No git tags or GitHub releases exist for this repository yet, so version headings are not linked.
 
-## [1.9.2] - 2026-08-16
+## [1.9.2] - 2026-08-17
 
-**In development.** Parent driver `1.9.2`; *Matter Generic Component Air Purifier* `1.2.5`.
+**Released via HPM 2026-08-17.** Parent driver `1.9.2`; component drivers *Air Purifier* `1.2.5`,
+*Window Shade* `1.2.6`, *Switch* `1.1.3`, *Custom Power Energy* `1.1.5`,
+*Camera AV Stream* `1.0.2`, *Custom Contact Sensor* `1.0.2`, *Custom Signal* `1.1.3`,
+*Battery* `1.1.2`, *Button* `1.1.2`, *Motion Sensor* `1.1.3`.
 
 ### Added
 
@@ -54,12 +57,40 @@ and this project follows Semantic Versioning where applicable.
   list alphabetically, which buried the driver's own info/progress line among the Matter readings;
   the leading and trailing underscores sort it to the top, where it is actually visible while a
   discovery is running. Renamed in the `metadata{}` declaration and in both `sendInfoEvent()`
-  emitters. **Breaking for anything that referenced the attribute by name** — a rule, dashboard tile
-  or app watching `Status` must be pointed at `_status_`. Note the PowerSource cluster's own
-  `Status` attribute (`0x002F:0x0000`, mapped to `powerSourceStatus`) is unrelated and unchanged.
+  emitters, and the old entry is deleted from the device on update. The attribute carries the
+  driver's own progress and information messages rather than a device reading, so nothing is expected
+  to reference it by name. Note the PowerSource cluster's own `Status` attribute (`0x002F:0x0000`,
+  mapped to `powerSourceStatus`) is unrelated and unchanged.
 
 ### Fixed
 
+- **Every custom component driver now implements `parse(Map)`, ending the `MissingMethodException`
+  error storm on the children.** Since 1.9.0 the parent forwards each `callbackType: Invoke`
+  transaction callback to the child that owns the endpoint (`routeInvokeToCustomChild()`), but only
+  the Door Lock and Air Purifier children were ever given the matching `parse(Map)`. Every other
+  custom child declared `parse(List<Map>)` only, so each forwarded callback threw
+  `groovy.lang.MissingMethodException: No signature of method: ...parse() ... (java.util.LinkedHashMap)`
+  — logged as an error in the **child's** log, on every command. Reported for two Window Shade
+  children in community post #449 (`clusterInt:258` = `0x0102` WindowCovering) against the released
+  1.9.1. Cosmetic only: `status:0` in those callbacks means the Matter command itself succeeded,
+  which is why the blinds kept working. `parse(Map)` and `handleInvokeResponse()` were added to
+  Window Shade, Switch, Custom Power Energy, Camera AV Stream, Custom Contact Sensor, Custom Signal,
+  Battery, Button and Motion Sensor, mirroring the Air Purifier: an `Invoke` with `status == 0` logs
+  a debug `Matter command completed` line, a non-zero status logs a warning naming the status,
+  endpoint, cluster and command, and any other `callbackType` is ignored at debug level.
+  `Matter Generic Component SwitchBot Button` is deliberately excluded — deprecated since 1.8.0 and
+  no longer supported. Note that routing is by endpoint, not by which child sent the command, so
+  this was never limited to the clusters a given child drives: the parent's `identify` utility and
+  `setSwitch` can invoke on any endpoint. `docs/BUGS.md` **B27**.
+- **The parent's `try/catch (MissingMethodException)` around `dw.parse(descMap)` is documented as
+  not being a safety net.** The platform runs the child's script in the child's own context and logs
+  the exception there — the reported errors carry the child device ids, not the bridge's — before
+  anything reaches the parent's handler, so the catch could never suppress the user-visible error.
+  Behaviour is unchanged (it still keeps a hand-installed stale child from breaking the parent, and
+  still rethrows a `MissingMethodException` raised from inside a handler that does exist), but the
+  comment claiming drivers "opt in one by one" was replaced: every custom component driver shipped
+  in this package must implement `parse(Map)`. The same requirement was added to the release
+  checklist in `AGENTS.md`.
 - **A filter reset is no longer sent to a device that cannot accept it.** `resetFilterCondition()`
   checked the ServerList — which is why the carbon-filter case correctly refused — but not the
   cluster's `AcceptedCommandList` (`0xFFF9`). An IKEA STARKVIND behind a DIRIGERA bridge advertises
@@ -88,6 +119,29 @@ and this project follows Semantic Versioning where applicable.
   `removeObsoleteAttributes()`, driven by the `OBSOLETE_ATTRIBUTES` list, deletes both on the
   version-change path in `checkDriverVersion()` — beside the existing
   `removeObsoleteIlluminanceThrottling()` — and `deleteAllCurrentStates()` now calls it too.
+- **Motion Sensor child: toggling *Invert Motion* no longer fabricates an `active` event**
+  (`BUGS.md` **B19**). `updated()` inverted `device.currentMotion`, which is not a declared accessor
+  on the device object; whatever Hubitat returned for it, the ternary mapped every non-`active`
+  value — including a child that has never reported — to `active`, so flipping the preference on a
+  fresh sensor announced motion that never happened. It now reads `device.currentValue('motion')`
+  and inverts only the exact values `active` and `inactive`; anything else sends no event and logs a
+  debug line, leaving the next physical report to establish the state. Static finding, not yet
+  reproduced on a hub.
+- **Window Shade child: `initialize()` no longer reports the shade as both closed and open**
+  (`BUGS.md` **B18**). It seeded `position`, `targetPosition` and `level` to `0` — which the driver's
+  own `OPEN=100`/`CLOSED=0` constants define as fully closed — while emitting `windowShade='open'`
+  and `switch='on'`, so a newly created or manually initialised child showed contradictory state
+  until the first position report arrived. All five attributes now seed to the closed end, and the
+  numeric seeds use the `CLOSED` constant rather than a literal. Behaviour after the first real
+  report is unchanged.
+- **`.hubitat/metadata.json` no longer carries 16 duplicated ids** (`BUGS.md` **C8**). The Hubitat
+  VS Code extension keys its records on the absolute file path, so opening the repository folder as
+  both `C:\Work\...` and `C:\work\...` made it record every file twice under one id. Fixed by
+  normalising the casing and then collapsing by id, keeping the higher `version`; deleting the
+  capital-`Work` records instead would have dropped `matterHealthStatusLib` and the SwitchBot Button
+  component, which existed only under that spelling. 35 records to 19, ids and paths both unique and
+  every path verified present. Local tooling data only — HPM does not read this file and no driver
+  behaviour depends on it.
 
 ### Changed
 
