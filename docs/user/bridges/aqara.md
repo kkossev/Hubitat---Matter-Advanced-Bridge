@@ -49,7 +49,7 @@ excludes it from Matter bridging, despite the original announcement of a future 
 | FP1E presence sensor | M3 | **Confirmed** [#124](https://community.hubitat.com/t/-/135252/124), [#137](https://community.hubitat.com/t/-/135252/137), [#164](https://community.hubitat.com/t/-/135252/164) |
 | Wireless Remote Switch H1, Double Rocker | M3 | **Partial** — battery works [#138](https://community.hubitat.com/t/-/135252/138); after Button support was added, Aqara exposed only single-click events [#299](https://community.hubitat.com/t/-/135252/299). |
 | Thermostat E1 TRV | M3, G410 | **Confirmed** — tested through M3 [#149](https://community.hubitat.com/t/-/135252/149); setpoint and internal temperature work through G410, with slow temperature updates [#278](https://community.hubitat.com/t/-/135252/278)–[#287](https://community.hubitat.com/t/-/135252/287). |
-| FP2 presence zones via Aqara **signals** | M3, M2 | **Confirmed, cloud-dependent** — M3 signals and zones [#237](https://community.hubitat.com/t/-/135252/237)–[#243](https://community.hubitat.com/t/-/135252/243); M2 workflow [#367](https://community.hubitat.com/t/-/135252/367)–[#368](https://community.hubitat.com/t/-/135252/368). This is Advanced Matter Bridging, not direct export of the FP2 device. |
+| FP2 presence zones via Aqara **signals** | M3, M2 | **Confirmed, cloud-dependent** — M3 signals and zones [#237](https://community.hubitat.com/t/-/135252/237)–[#243](https://community.hubitat.com/t/-/135252/243); M2 workflow [#367](https://community.hubitat.com/t/-/135252/367)–[#368](https://community.hubitat.com/t/-/135252/368). This is Advanced Matter Bridging, not direct export of the FP2 device. Walkthrough with screenshots: [Aqara Signals](aqara-signals.md). |
 | Ceiling Light T1 | M3 | **Confirmed** — remained controllable locally while FP2 signals stopped during an Internet outage [#240](https://community.hubitat.com/t/-/135252/240). |
 | U100 lock | E1 | **Export confirmed** [#90](https://community.hubitat.com/t/-/135252/90). The report predates working lock commands; MAB has supported lock/unlock since 1.5.5, but the thread contains no U100 bridge retest. |
 | Water Leak Sensor `SJCGQ11LM` | E1 | **Export confirmed; current mapping unverified** — initially appeared as a contact sensor [#266](https://community.hubitat.com/t/-/135252/266). MAB 1.6.0 later added automatic Water Leak Detector classification, with no posted follow-up test. |
@@ -107,6 +107,7 @@ These are bridge-export limitations or unresolved device-specific behavior found
 
 ## See also
 
+- [Aqara Signals](aqara-signals.md) — how to create one, the cloud-dependency caveat, and discovery gotchas
 - [Compatibility matrix](../compatibility/matrix.md)
 - [Which driver do I get?](../drivers/index.md)
 - [Aqara Advanced Matter Bridging — current Matter Bridge hub list](https://www.aqara.com/en/explore/introducing-advanced-matter-bridging/)

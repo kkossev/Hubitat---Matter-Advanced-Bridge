@@ -54,8 +54,12 @@ edge produces an event.
 
 Intended for devices behind an **Aqara** Matter bridge.
 
-> **Which Aqara devices?** Not yet documented. If you are using this driver successfully, please say
-> which device in the [community thread](../help/support-and-links.md) so this page can name it.
+> **Which Aqara devices?** Still not confirmed. The community thread documents Aqara **Signals**
+> (see [Aqara Signals](../bridges/aqara-signals.md)) as a mechanism, but every case found there —
+> FP2 presence zones — is state-based (active/inactive) and works with an ordinary Motion Sensor,
+> not this driver. This driver exists for a *momentary* report (motion `active` with no meaningful
+> `inactive`). If you are using it successfully, please say which device in the
+> [community thread](../help/support-and-links.md) so this page can name it.
 
 ## Known limitations
 
