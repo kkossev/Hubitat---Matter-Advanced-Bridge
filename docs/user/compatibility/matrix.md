@@ -44,7 +44,7 @@ Two different questions get confused here, so this page answers them separately:
 | Fan | `0x002B` | `0202` | `Generic Component Fan Control` |
 | Air Purifier | `0x002D` | `0071`, `0072` | [Air Purifier](../drivers/air-purifier.md) |
 | **Other** | | | |
-| Camera | — | `0551` | [Camera AV Stream](../drivers/camera-av-stream.md) — experimental, Matter 1.3+ |
+| Camera | — | `0551`, `0552` | [Camera AV Stream](../drivers/camera-av-stream.md) — experimental, Matter 1.5+ |
 | Battery reporting | — | `2F` | [Battery](../drivers/battery.md) |
 
 Not supported, and not planned as part of the device-type mapping:

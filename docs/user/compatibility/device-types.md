@@ -54,7 +54,7 @@ adds a `sensitivityLevel` setting. Aqara P100 is the known example.
 | Window coverings, blinds, curtain motors | `0x0102` Window Covering | [Window Shade](../drivers/window-shade.md) | |
 | Door locks | `0x0101` Door Lock | [Door Lock](../drivers/door-lock.md) | Locking and unlocking work. PIN code and user management is experimental — see [Known issues](../help/known-issues.md). |
 | Energy monitoring | `0x0090` Power, `0x0091` Energy | [Power Energy](../drivers/power-energy.md) | |
-| Cameras | `0x0551` Camera AV Stream | [Camera AV Stream](../drivers/camera-av-stream.md) | Matter 1.3 and later. Experimental. |
+| Cameras | `0x0551` Camera AV Stream, `0x0552` Camera AV Settings User Level Management | [Camera AV Stream](../drivers/camera-av-stream.md) | Matter 1.5 and later. Experimental. Settings, privacy and mechanical PTZ only — no video. |
 
 ## What is not supported
 

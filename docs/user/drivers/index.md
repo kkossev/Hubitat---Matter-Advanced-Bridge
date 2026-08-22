@@ -36,7 +36,7 @@ of these clusters gets the driver that appears earliest in the table. A colour b
 | 18 | `0x0006` | On/Off | [Switch](switch.md) | kkossev |
 | 19 | `0x003B` | Switch (button) | [Button](button.md) | kkossev |
 | 20 | `0x002F` | Power Source | [Battery](battery.md) | kkossev |
-| 21 | `0x0551` | Camera AV Stream Management (Matter 1.3+) | [Camera AV Stream](camera-av-stream.md) | kkossev |
+| 21 | `0x0551` or `0x0552` | Camera AV Stream Management / Camera AV Settings User Level Management (Matter 1.5+) | [Camera AV Stream](camera-av-stream.md) | kkossev |
 | — | *no match* | | `Generic Component Switch` | hubitat |
 
 ### Boolean State (`0x0045`)
