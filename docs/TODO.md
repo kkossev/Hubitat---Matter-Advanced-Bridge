@@ -523,7 +523,27 @@ restore feedback; Apple Home continues to receive it.
 - Next evidence: MAB 1.9.x retest, child and parent debug logs around `Re Subscribe`, a physical
   unlock, and a commanded unlock; capture `SubscriptionResult` and the raw Door Lock report.
 
-### 5.4 `[?]` Aqara Signal endpoints reported less reliable than Soft Sensor endpoints — **VERIFY ON DEVICE**
+### 5.4 `[x]` Aqara Signal endpoints reported less reliable than Soft Sensor endpoints — **CLOSED, MECHANICAL EXPLANATION FOUND**
+- Jira: `HUB-65` (Done, 2026-08-22)
+
+> **CLOSED 2026-08-22 — kkossev decided a byte-for-byte event-log comparison is not required; the
+> mechanical explanation below is sufficient to close the investigation.** No MAB code or parsing
+> change follows either way: both endpoint types already import correctly through the existing
+> generic Occupancy/Motion driver. Full write-up: [Aqara Soft
+> Sensor](user/drivers/signal.md#aqara-soft-sensors).
+>
+> **Confirmed against the maintainer's own hub (2026-08-22):** a live Soft Sensor child's
+> `fingerprintData` carries `UniqueID = virtual.696241…8040`, device type `0107` (Occupancy Sensor)
+> — the M3 hub itself marks the endpoint as a synthesized, hub-local construct, matching Aqara's own
+> description of Soft Sensor as locally fused/computed. Combined with the already-documented fact
+> that a Signal's Running Method is Cloud (see [Aqara
+> Signals](user/drivers/signal.md#cloud-dependency)), that is a sufficient mechanical
+> explanation: a Signal's state has to survive an Aqara-cloud round trip before Matter sees it; a
+> Soft Sensor's does not.
+>
+> **Reopen on** a Signal-vs-Soft-Sensor missed/delayed-transition log pair, captured over the same
+> time window, that contradicts this explanation — for example a Signal transition Hubitat shows
+> late or missing with no WAN interruption in that window.
 
 - **Reported** privately on 2026-08-15 for Aqara FP1 and FP2 presence devices. Equivalent Aqara
   Soft Sensor endpoints were described as reliably following state changes while Matter Signal
@@ -537,6 +557,23 @@ restore feedback; Apple Home continues to receive it.
   precise statement of which presence transitions were missing or delayed.
 - **Verification:** repeat controlled occupied/unoccupied transitions on FP1 and FP2 and compare
   both children over the same time window, including after rediscovery or resubscription.
+- **External research (2026-08-22), not device evidence:** Aqara's own forum describes the
+  Presence Soft Sensor as mechanically different from a Signal, not just a display variant. It is
+  a **Hub M3-only** feature (Aqara Home app 6.1.1+, hub firmware 4.5.40+) that fuses several
+  devices — cameras, locks, contact/motion sensors — into one room-level presence state via
+  **local preprocessing/AI computation on the hub itself**, with a user-configurable "No Presence"
+  delay. A Signal instead mirrors a single Aqara Home automation condition and, per the FP2
+  evidence already gathered for [Aqara Signals](user/drivers/signal.md#aqara-signals),
+  has its "Running Method" set to **Cloud**, not Hub. If that cloud round-trip also governs how a
+  Signal's state change reaches Matter, it is a plausible mechanical explanation for the reported
+  gap — local hub computation (Soft Sensor) versus an Aqara-cloud dependency (Signal). This is a
+  **hypothesis to test, not a substitute for the event-log evidence above.**
+  Sources: [Aqara forum — Presence Soft Sensor explainer](https://forum.aqara.com/t/what-is-the-presence-soft-sensor-and-how-to-set-it-up-for-better-automations/284575),
+  [Matter Alpha explainer](https://www.matteralpha.com/explainer/aqara-presence-soft-sensor-now-simplifies-complex-matter-automations).
+  Unrelated, flagged so it isn't mistaken for supporting evidence: a separate Aqara-forum thread,
+  [Soft Sensor broke FP2?](https://forum.aqara.com/t/soft-sensor-broke-fp2/285654), reports a
+  firmware reboot-loop bug triggered by enabling Soft Sensor on some FP2 units — a hardware crash,
+  not an event-reliability comparison.
 
 ## 6. Documentation
 

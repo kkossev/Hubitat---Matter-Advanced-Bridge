@@ -2,32 +2,28 @@
 
 Applies to: 1.9.0 | Last verified: 2026-08-22 | Status: Experimental
 
-A small driver that turns a motion report into a button press, for use with **Aqara** Matter
-bridges.
+Adds a button press to a motion-reporting endpoint, for Aqara Signals that should fire a rule
+rather than hold a state.
 
 - **Namespace:** `kkossev`
 - **Source:** `Components/Matter_Custom_Component_Signal.groovy` (driver version 1.1.3)
-- **Assigned to:** nothing automatically — **you assign this one by hand**
+- **Assigned to:** nothing automatically — you assign this one by hand
 
 ## What it is for
 
-An Aqara **Signal** (see [below](#aqara-signals-what-they-are-and-how-to-create-one)) is discovered
-like any other motion-reporting endpoint, and MAB's discovery assigns it the ordinary
-[Motion Sensor](motion-sensor.md) driver by default — being a Signal doesn't change that. If you
-want the device to also fire button-press rules instead of plain active/inactive state, assign this
-driver by hand: change the child device's **Type** in Hubitat and click **Save Device**.
+An Aqara [Signal](#aqara-signals) is discovered like any other motion-reporting endpoint, and
+discovery gives it the stock [Motion Sensor](motion-sensor.md) driver. For most Signals that is the
+correct driver: the ones documented so far are presence zones, which carry a state that goes active
+and later inactive again.
 
-When the device reports motion as `active`, this driver sends **both** a `motion` event and a
-`pushed` button event. That makes a device usable as a trigger in apps that expect a button, rather
-than only as a motion sensor.
+This driver covers the other case — a Signal that means "something just happened", where a rule
+needs a momentary trigger rather than a state to watch. On every `active` report it sends a `motion`
+event **and** a `pushed` button event, so the device can drive apps that expect a button.
 
-The `inactive` report is deliberately ignored: a button press has no "un-press", so only the leading
+The `inactive` report is deliberately ignored. A button press has no release, so only the leading
 edge produces an event.
 
-No confirmed real-world device actually needs this driver yet. Every Aqara Signal documented so far
-(FP2 presence zones, see below) is state-based and works fine on the default Motion Sensor driver.
-If you find a Signal that benefits from button semantics, say so in the
-[community thread](../help/support-and-links.md).
+To use it, change the child device's **Type** in Hubitat and click **Save Device**.
 
 ## Capabilities
 
@@ -37,10 +33,10 @@ If you find a Signal that benefits from button semantics, say so in the
 
 | Attribute | Values | Notes |
 |---|---|---|
-| `motion` | `active`, `inactive` | Passed through from the device. |
-| `pushed` | `1` | Sent whenever motion goes `active`. |
-| `numberOfButtons` | `1` | Fixed. |
-| `currentPosition` | string | Reported by the device where it sends one. |
+| `motion` | `active`, `inactive` | Passed through from the bridge unchanged. |
+| `pushed` | `1` | Sent whenever `motion` goes `active`. |
+| `numberOfButtons` | `1` | Set when the driver is saved. |
+| `currentPosition` | string | Declared, but nothing in this driver sets it. A value the parent forwards under this name is passed straight through. |
 | `rtt` | number | Round-trip time in milliseconds, from the last **Ping**. |
 
 ## Commands
@@ -60,30 +56,29 @@ If you find a Signal that benefits from button semantics, say so in the
 
 ## Known limitations
 
-- **Assign it deliberately.** It is not offered by discovery, and assigning it to a device that does
-  not report motion will produce nothing.
-- One button only. Multi-button devices should use the [Button](button.md) driver.
-- No timeout or debounce. Every `active` report is another button press, so a sensor that reports
-  repeatedly during sustained motion will push repeatedly.
+- **Assign it deliberately.** Discovery never selects it, and on an endpoint that does not report
+  motion it produces nothing at all.
+- One button only. Multi-button devices belong on the [Button](button.md) driver.
+- No debounce or timeout. Every `active` report is another button press, so a sensor that re-reports
+  during sustained motion pushes repeatedly.
+- A Signal brings Aqara's cloud dependency with it, whichever driver the child device uses. See
+  [Cloud dependency](#cloud-dependency).
 
-## Aqara Signals: what they are and how to create one
+## Aqara Signals
 
-A **Signal** is Aqara's own term for a rule defined in the Aqara Home app — "if this condition is
-met" — that can optionally be synced out to Matter as its own bridged device. It is how
-non-standard Aqara behavior (for example, an FP2 presence zone, which is not itself a Matter device
-type) gets a Matter identity that Hubitat can subscribe to. This section documents what the
-community thread shows about creating and using Signals; it is not Aqara's own documentation.
-
-Labels: **Confirmed** — reported working with MAB. **Unknown** — no MAB test found. See the
-[compatibility overview](../compatibility/overview.md).
+Aqara publishes no detailed specification for Signals. What follows was established by testing
+against M2 and M3 hubs.
 
 ### What a Signal is
 
-Aqara's Home app has a feature called **Scene and Signal Sync**, reached from **Profile → Third-party
-ecosystems → Matter**. It is marked "Limited Trial" as of the screenshots below (January 2025).
-**Scenes** sync Aqara automations outward; **Signals** sync conditions — the state of something,
-such as an FP2 zone's presence, or a device's on/off status — so that it can be read as a Matter
-device by a third-party ecosystem.
+A Signal is an Aqara Home condition — "if this is true" — exported to Matter as its own bridged
+device. It gives a Matter identity to Aqara behavior that has no Matter device type of its own; an
+FP2 presence zone is the standard example.
+
+The feature is **Scene and Signal Sync**, reached from **Profile → Third-party ecosystems → Matter**
+in the Aqara Home app, and marked "Limited Trial" as of January 2025. **Scenes** export Aqara
+automations outward; **Signals** export conditions — an FP2 zone's presence, a device's on/off state
+— so another ecosystem can read them as Matter devices.
 
 ![Aqara app: Connect to Ecosystems, with Matter selected](../assets/images/bridges-aqara-signals-01.png)
 
@@ -91,116 +86,114 @@ device by a third-party ecosystem.
 
 ### Creating a Signal
 
-1. In the Aqara Home app, open the automation editor and build the condition you want to expose
-   (for example, `Presence (zone) Oven` — "all conditions are met").
-2. Save it, giving it a descriptive name — this name becomes the Matter `ProductName`/`NodeLabel`
-   that MAB imports. For example, `Aqara FP2 Presence Oven Zone`.
+1. In the Aqara Home app, open the automation editor and build the condition you want to expose,
+   for example `Presence (zone) Oven` with "all conditions are met".
+2. Save it with a descriptive name. That name becomes the Matter `ProductName` / `NodeLabel` the
+   bridge publishes and MAB imports, for example `Aqara FP2 Presence Oven Zone`.
 3. Toggle **Add to Matter**.
 
 ![Aqara app: naming a Signal and enabling Add to Matter](../assets/images/bridges-aqara-signals-03.png)
 
-Source: [community thread, post #237](https://community.hubitat.com/t/-/135252/237),
-kkossev, 2025-01-30.
+### How a Signal reaches Hubitat
 
-### What it looks like on the hub and in Hubitat
-
-A Signal shows up in the Matter hub's `BridgedDeviceBasicInformation` cluster (`0x0039`) like any
-other bridged device, with a `ProductName` derived from the name you gave it in step 2 above — for
-example `Aqara FP2 Presence Signal` / `Aqara FP2 Absence Signal` for a presence/absence pair.
+A Signal appears in the hub's `BridgedDeviceBasicInformation` cluster (`0x0039`) like any other
+bridged device, with `ProductName` taken from the name given above — `Aqara FP2 Presence Signal`
+and `Aqara FP2 Absence Signal` for a presence/absence pair.
 
 ![Aqara M3 hub log: BridgedDeviceBasicInformation ProductName for two FP2 Signals](../assets/images/bridges-aqara-signals-04.png)
 
-**No driver change is needed for this** — kkossev confirmed it directly: *"No changes in this
-driver are needed."* MAB's existing NodeLabel import picks up the Signal's name normally, and the
-resulting child device works as a plain sensor with active/inactive state, using the default
-Motion Sensor driver described above. Per-zone Signals appear as separate child device tiles:
+No driver change is needed for this. MAB's existing NodeLabel import picks the name up, and the
+child device works as a plain sensor with active/inactive state on the stock Motion Sensor driver.
+Per-zone Signals arrive as separate child devices.
 
-![Hubitat device list: working FP2 Presence/Absence Signal child devices, including a per-zone Signal](../assets/images/bridges-aqara-signals-05.png)
+![Hubitat device list: FP2 Presence/Absence Signal child devices, including a per-zone Signal](../assets/images/bridges-aqara-signals-05.png)
 
-Source: [post #238](https://community.hubitat.com/t/-/135252/238), kkossev, 2025-01-30; confirmed
-independently by [post #239](https://community.hubitat.com/t/-/135252/239), iEnam, 2025-01-30 —
-*"I have now managed to create signals for my FP2 sensors as per your instructions! The child
-device with 'Presence' state shows both active and inactive motion states in your driver."*
+### Cloud dependency
 
-### The cloud-dependency caveat
-
-**A Signal's "Running Method" is Cloud, not Hub** — unlike an ordinary Aqara Automation, which runs
-locally on the hub. This is set when the Signal is created and is not something MAB or Hubitat can
-change.
+**A Signal's Running Method is Cloud, not Hub**, unlike an ordinary Aqara Automation, which runs
+locally. It is fixed when the Signal is created and cannot be changed from MAB or Hubitat.
 
 ![Aqara app: a Signal's Running Method is Cloud, contrasted with an Automation's Running Method of Hub](../assets/images/bridges-aqara-signals-06.jpeg)
 
-The practical effect was demonstrated, not just theorized: during a WAN outage, a Signal-derived
-FP2 presence child device stopped updating, while a directly-bridged device (an Aqara Ceiling Light
-T1) kept responding to Hubitat locally.
+The effect is observable rather than theoretical. During a WAN outage, a Signal-derived FP2 presence
+child stopped updating entirely, while an Aqara Ceiling Light T1 bridged directly from the same M3
+hub carried on responding to Hubitat. The local Matter connection between hub and Hubitat keeps
+working; what breaks is the Signal's own path through Aqara's cloud.
 
-> "Unfortunately, there is a cloud dependency somewhere in Aqara M3 hub or in the FP2 sensor. I have
-> a problem with my router WAN Internet access at the moment, and the FP2 presence sensor is not
-> working anymore. At the same time, I can still control the Aqara Ceiling light T1 from Hubitat,
-> i.e. the local Matter connection between the Aqara M3 and HE is working offline for some Aqara
-> devices, but not working for some others…"
->
-> — kkossev, [post #240](https://community.hubitat.com/t/-/135252/240), 2025-01-30
+The hub is required in any case. An FP2's zones are not exported over Matter by the sensor itself,
+only by an M2 or M3 hub.
 
-> "Yeah, there is cloud dependency which is a shame 😐"
->
-> — iEnam, [post #241](https://community.hubitat.com/t/-/135252/241), 2025-01-30
-
-> "No, the Matter connection to FP2 requires Aqara M3 hub."
->
-> — kkossev, [post #243](https://community.hubitat.com/t/-/135252/243), 2025-01-31, answering
-> whether it works with just the FP2 sensor (without the M3 hub in the loop)
-
-**If you plan to automate on a Signal-derived device, know that it depends on the Aqara hub's own
-Internet connectivity, not just your local network.** A directly-bridged Matter device on the same
-hub is not affected the same way.
+**Automating on a Signal-derived device means depending on the Aqara hub's Internet connectivity,
+not only on your local network.** A directly-bridged Matter device on the same hub is unaffected.
 
 ### Discovery and removal
 
-Newly created Signals do not appear as Hubitat child devices automatically:
+A newly created Signal does not become a Hubitat child device on its own:
 
 1. Run **Discover All** on the MAB bridge device.
 2. Wait for discovery to finish.
-3. Refresh the bridge device's web page (**F5**) — existing browser sessions do not update on
-   their own.
+3. Refresh the bridge device's page (**F5**). An already-open browser session does not update by
+   itself.
 
-Existing child devices are preserved across a rediscovery; only genuinely new devices are added.
-Removing a Signal on the Aqara side does **not** remove its Hubitat child device automatically —
-you must remove it manually.
+Existing children are preserved across a rediscovery; only genuinely new devices are added. Deleting
+a Signal on the Aqara side does **not** delete its Hubitat child device — remove that one yourself.
 
-> "New devices (including Aqara-specific 'signals') should be discovered and added as child devices
-> after clicking on the 'Discover All' command button, and waiting the discovery process to finish.
-> All the existing devices should be preserved, any new devices should be added automatically. If
-> you remove a device at the bridged hub, the child device will not be deleted automatically in
-> this driver, you must remove it manually. Make sure you refresh the bridge device web page (F5)
-> after running a new discovery command."
->
-> — kkossev, [post #368](https://community.hubitat.com/t/-/135252/368), 2026-05-13, answering a
-> report ([post #367](https://community.hubitat.com/t/-/135252/367), user6870) that a Signal added
-> after initial setup did not appear until the M2 hub device was removed and re-added
+If a Signal created after initial setup does not appear, a discovery run followed by the page
+refresh is the fix. Removing and re-adding the bridge device is not necessary.
 
-### Which Aqara devices use Signals
+## Aqara Soft Sensors
 
-**Confirmed:** FP2 presence-sensor zones, via Signals synced from an M3 or M2 hub. This is Advanced
-Matter Bridging, not a direct export of the FP2 device — the FP2 itself has no standard Matter
-device type for presence zones. See also the
-[Aqara bridge page](../bridges/aqara.md#community-confirmed-devices).
+A Soft Sensor is a different mechanism from a Signal, not a second name for the same thing, and the
+difference determines how each one behaves once bridged.
 
-### Sources
+### What a Soft Sensor is
 
-All from the [MAB community thread](https://community.hubitat.com/t/-/135252/1), topic 135252:
-[#237](https://community.hubitat.com/t/-/135252/237)–[#243](https://community.hubitat.com/t/-/135252/243)
-(kkossev, iEnam, BorrisTheCat, 2025-01-30 to 2025-01-31) and
-[#367](https://community.hubitat.com/t/-/135252/367)–[#368](https://community.hubitat.com/t/-/135252/368)
-(user6870, kkossev, 2026-05-13). Cross-checked against the full 447-post thread on 2026-08-21 —
-these are the only posts that mention "signal" in the Aqara sense (two further hits, #342/#343, are
-an unrelated use of the word "signal" in an HPM packaging discussion).
+A [Presence Soft Sensor](https://forum.aqara.com/t/what-is-the-presence-soft-sensor-and-how-to-set-it-up-for-better-automations/284575)
+fuses several devices — cameras, locks, contact, motion and presence sensors — into a single
+room-level presence state, computed on the hub itself, with a configurable "No Presence" delay set
+when the sensor is created. It requires a Hub M3 on firmware 4.5.40 or later with Aqara Home 6.1.1
+or later.
+
+### How a Soft Sensor reaches Hubitat
+
+A Soft Sensor arrives as a standard Matter Occupancy Sensor, so discovery assigns the stock
+[Motion Sensor](motion-sensor.md) driver and no classification change is needed. A working example
+imports with this fingerprint:
+
+| Field | Value |
+|---|---|
+| `deviceType` | `0013` Bridged Node, `0107` Occupancy Sensor |
+| `deviceTypeName` | `Occupancy Sensor` |
+| `VendorName` | `Aqara` |
+| `ProductName` / `ProductLabel` / `NodeLabel` | `Soft Human Presence Sensor` |
+| `ServerList` | `001D` Descriptor, `0003` Identify, `0039` Bridged Device Basic Information, `0406` Occupancy Sensing |
+| `UniqueID` | `virtual.696241…8040` |
+
+The `virtual.` prefix on `UniqueID` is the hub's own marking: this endpoint is synthesized on the
+hub rather than passed through from one physical radio. That matches a fused, locally computed state
+rather than a mirrored condition.
+
+### Signal and Soft Sensor compared
+
+| | Signal | Soft Sensor |
+|---|---|---|
+| Computed where | Aqara's cloud — Running Method is `Cloud` | On the hub |
+| Built from | One Aqara Home condition | Several devices, fused into one state |
+| Hub requirement | M2 and M3 confirmed | Hub M3 only |
+| Matter identity | Depends on the condition; presence zones arrive as motion-reporting endpoints | Occupancy Sensor (`0107`) |
+| Cloud round trip in the reporting path | Yes, and it has been observed failing during a WAN outage | Not by design — the state is computed locally |
+
+A Signal's state change has to complete a round trip through Aqara's cloud before Matter sees it; a
+Soft Sensor's does not. Where a Soft Sensor is available, expect it to be the more reliable of the
+two for presence. The difference is in Aqara's architecture, not in the bridging: MAB imports both
+correctly through the same generic driver, and neither needs a driver or parsing change.
 
 ## See also
 
 - [Which driver do I get?](index.md)
 - [Button](button.md)
 - [Motion Sensor](motion-sensor.md)
-- [Aqara bridge](../bridges/aqara.md)
+- [Aqara bridge](../bridges/aqara.md) — per-device compatibility reports and their sources
 - [Compatibility matrix](../compatibility/matrix.md)
 - [Aqara Advanced Matter Bridging — current Matter Bridge hub list](https://www.aqara.com/en/explore/introducing-advanced-matter-bridging/)
+- [Aqara — Presence Soft Sensor explainer](https://forum.aqara.com/t/what-is-the-presence-soft-sensor-and-how-to-set-it-up-for-better-automations/284575)
