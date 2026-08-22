@@ -510,18 +510,33 @@ disruptive. kkossev explicitly proposed blocking discovery while the bridge is o
   or state; on no response it aborts to `DISCOVER_ALL_STATE_ERROR` with existing children and
   subscriptions untouched. Shipped in v1.9.0 (commit `c65897f`, 2026-07-25), still present in v1.9.2.
 
-### 5.3 `[ ]` Aqara U400 remains online and commandable but stops reporting lock state
+### 5.3 `[x]` Aqara U400 remains online and commandable but stops reporting lock state — **CLOSED, FIXED BY `_DiscoverAll`**
+
+> **CLOSED 2026-08-22.** The thread was re-read to the end while updating the Door Lock
+> documentation (HUB-82); it had been resolved on the forum on 2026-08-15 and this item was never
+> updated. `_DiscoverAll` on the parent restored the feedback and the reporter confirmed the fix.
 
 @jbasen reports that MAB 1.8.8 can still lock/unlock the U400 and reports `networkStatus: online`,
 but physical and commanded state changes no longer update the lock attribute. Disabling/re-enabling
 Matter, `Re Subscribe`, hub reboot, lock battery removal, and current U400 firmware 3.1.1.0 did not
 restore feedback; Apple Home continues to receive it.
 
-- Posts: [#1](https://community.hubitat.com/t/-/165667/1)–[#6](https://community.hubitat.com/t/-/165667/6)
-- Status: **NEEDS_EVIDENCE** — likely subscription/routing state, but no MAB debug capture of a
-  physical lock/unlock or subscription callback is posted yet.
-- Next evidence: MAB 1.9.x retest, child and parent debug logs around `Re Subscribe`, a physical
-  unlock, and a commanded unlock; capture `SubscriptionResult` and the raw Door Lock report.
+- Posts: [#1](https://community.hubitat.com/t/-/165667/1)–[#11](https://community.hubitat.com/t/-/165667/11)
+- **Resolution:** kkossev advised running `_DiscoverAll()` on the parent to refresh endpoint
+  information and subscriptions while preserving the child device IDs
+  ([#7](https://community.hubitat.com/t/-/165667/7)). The reporter confirmed — *"That fixed it"*
+  ([#8](https://community.hubitat.com/t/-/165667/8)).
+- **Cause:** subscriptions and endpoint information out of step, most likely from a *Load All
+  Defaults* click or from running `_DiscoverAll` while the device was offline
+  ([#10](https://community.hubitat.com/t/-/165667/10)). Item 5.2 (HUB-125, shipped in 1.9.0) closes
+  the second of those — discovery now pings the bridge and aborts rather than clearing
+  subscriptions against an unreachable device.
+- **Carved out:** the reporter asked whether the driver could detect and repair this by itself
+  ([#9](https://community.hubitat.com/t/-/165667/9)). That is unanswered and is a real feature
+  question — a subscription health check that notices "commandable but never reports" and
+  re-subscribes. No Jira item raised; it was not a request kkossev committed to.
+- **Documentation:** written up in `help/known-issues.md` as Confirmed with the `_DiscoverAll`
+  workaround, and as step 4 of *Child devices have stopped updating* in `help/troubleshooting.md`.
 
 ### 5.4 `[x]` Aqara Signal endpoints reported less reliable than Soft Sensor endpoints — **CLOSED, MECHANICAL EXPLANATION FOUND**
 - Jira: `HUB-65` (Done, 2026-08-22)

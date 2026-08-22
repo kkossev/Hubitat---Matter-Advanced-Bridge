@@ -1,6 +1,6 @@
 # Device types
 
-Applies to: 1.9.0 | Last verified: 2026-07-27 | Status: Current
+Applies to: 1.9.3 | Last verified: 2026-08-22 | Status: Current
 
 What kinds of device this package understands. **Supported here means the driver implements the
 Matter cluster involved** — whether your particular device works also depends on what your bridge
@@ -52,7 +52,7 @@ adds a `sensitivityLevel` setting. Aqara P100 is the known example.
 | Device type | Matter cluster | Driver | Notes |
 |---|---|---|---|
 | Window coverings, blinds, curtain motors | `0x0102` Window Covering | [Window Shade](../drivers/window-shade.md) | |
-| Door locks | `0x0101` Door Lock | [Door Lock](../drivers/door-lock.md) | Locking and unlocking work. PIN code and user management is experimental — see [Known issues](../help/known-issues.md). |
+| Door locks | `0x0101` Door Lock | [Door Lock](../drivers/door-lock.md) | Locking, unlocking, and PIN code management all work. Whether a given lock allows code management is decided by its FeatureMap — see [Known issues](../help/known-issues.md). |
 | Energy monitoring | `0x0090` Power, `0x0091` Energy | [Power Energy](../drivers/power-energy.md) | |
 | Cameras | `0x0551` Camera AV Stream, `0x0552` Camera AV Settings User Level Management | [Camera AV Stream](../drivers/camera-av-stream.md) | Matter 1.5 and later. Experimental. Settings, privacy and mechanical PTZ only — no video. |
 

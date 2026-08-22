@@ -92,7 +92,7 @@ These are bridge-export limitations or unresolved device-specific behavior found
 
 | Device type | Earlier result | Current MAB status |
 |---|---|---|
-| Door lock — U100 | Exported, but commands did not work in 2024 | Lock/unlock has worked since 1.5.5; lock codes remain experimental. See [Door Lock](../drivers/door-lock.md). |
+| Door lock — U100 | Exported, but commands did not work in 2024 | Lock/unlock has worked since 1.5.5, and lock code management since 1.9.0 — though neither has been retested on a bridged U100. Both are confirmed on the U200 and U400, which pair to Hubitat directly rather than through a hub. See [Door Lock](../drivers/door-lock.md). |
 | Buttons — H1, Xiaomi/Lumi | Events were not handled in 2024 | Button subscriptions were fixed in 1.5.6. Actual events still depend on what the Aqara hub exports. See [Button](../drivers/button.md). |
 | Water leak sensors | Exported as contact sensors in 2025 | Automatic Water Leak Detector classification was added in 1.6.0. |
 | PM 2.5 — TVOC sensor | Driver did not support it | `pm25` has been supported since 1.3.0. See [Air Purifier](../drivers/air-purifier.md). |

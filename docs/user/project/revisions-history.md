@@ -56,13 +56,17 @@ development builds that were never published as a package.
   The bridge itself can now report battery too.
 - The health check and ping jobs are scheduled automatically on a fresh installation. Previously
   nothing was scheduled until you pressed Save Preferences.
+- **Lock codes work properly.** The driver now receives Hubitat's Matter transaction callbacks, so it
+  reads the lock's actual answer to a code command instead of guessing from whatever event followed.
+  Setting, deleting and listing PIN codes from Lock Code Manager is confirmed on the Aqara U200 and
+  U400 — see [Door Lock](../drivers/door-lock.md).
 - Fixed endless `colorMode is CT` log messages on the bridge device.
 
 ## 1.8.x — 2026-02 to 2026-05
 
 - **1.8.9** Aqara G350 video camera support *(BETA)*.
 - **1.8.8** Lock code improvements; default timeouts doubled.
-- **1.8.7** Matter Lock Codes — first test version. Still experimental.
+- **1.8.7** Matter Lock Codes — first test version, superseded by 1.9.0.
 - **1.8.6** Fan control (cluster `0x0202`), tested on an Altitude Boca II ceiling fan. Thanks
   @sbohrer.
 - **1.8.4** Refresh now reads attributes in chunks, to stay within Matter message size limits.

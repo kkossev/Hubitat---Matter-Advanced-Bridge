@@ -45,6 +45,11 @@ never changes.
    is the problem: click **Re Subscribe**.
 3. If Refresh logs `no attributes to refresh!`, nothing has been discovered yet — run
    **_DiscoverAll**.
+4. If the device still accepts commands and reports `networkStatus: online`, yet its state never
+   follows — a lock that locks and unlocks on demand but whose `lock` attribute never moves — the
+   endpoint information and subscriptions are out of step. **_DiscoverAll** rebuilds both and keeps
+   the existing child devices, so dashboards and rules survive it. This is the fix when Refresh and
+   Re Subscribe have both failed, and it is worth trying before removing anything.
 
 ## Discovery finds nothing, or stops early
 
