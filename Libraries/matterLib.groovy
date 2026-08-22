@@ -34,6 +34,8 @@ library(
   * ver. 1.4.3  2026-02-16 kkossev  - added BooleanStateConfiguration
   * ver. 1.4.4  2026-02-16 kkossev  - (dev. branch) added Camera AV Stream Management cluster attributes
   * ver. 1.4.5  2026-07-25 kkossev  - added ResourceMonitoring cluster attributes (HEPA 0x0071 and activated carbon 0x0072 filter monitoring)
+  * ver. 1.4.5  2026-08-19 kkossev  - added the Camera privacy mode attributes (0x0013..0x0015) to CameraAvStreamManagementClusterAttributes;
+  *                                   added CameraAvSettingsUserLevelManagementClusterAttributes (0x0552 mechanical PTZ)
   *
 */
 
@@ -41,7 +43,7 @@ import groovy.transform.Field
 
 /* groovylint-disable-next-line ImplicitReturnStatement */
 @Field static final String matterLibVersion = '1.4.5'
-@Field static final String matterLibStamp   = '2026/07/25 9:53 AM'
+@Field static final String matterLibStamp   = '2026/08/19 10:05 PM'
 
 // no metadata section for matterLib
 
@@ -204,7 +206,8 @@ Map getAttributesMapByClusterId(String cluster) {
     if (cluster == '0406') { return OccupancySensingClusterAttributes }
     if (cluster == '040D') { return ConcentrationMeasurementClustersAttributes }    // CarbonDioxideConcentrationMeasurement - same attribute set
     if (cluster == '042A') { return ConcentrationMeasurementClustersAttributes }    // used for PM2.5 and others!
-    if (cluster == '0551') { return CameraAvStreamManagementClusterAttributes }     // Camera AV Stream Management (Matter 1.3+)
+    if (cluster == '0551') { return CameraAvStreamManagementClusterAttributes }     // Camera AV Stream Management (Matter 1.5.1)
+    if (cluster == '0552') { return CameraAvSettingsUserLevelManagementClusterAttributes }  // Camera AV Settings User Level Management - PTZ (Matter 1.5.1)
     /* groovylint-disable-next-line ReturnsNullInsteadOfEmptyCollection */
     return null
 }
@@ -841,10 +844,13 @@ String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, Str
     0x0026  : 'SupportedOperatingModes'// bitmap8
 ]
 
-// Camera AV Stream Management Cluster 0x0551 (Matter 1.3+)
-// Only the 9 subscribed attributes are listed here (for parent-side getAttributeName() resolution).
-// The full 28-entry attribute map lives in the child driver.
+// Camera AV Stream Management Cluster 0x0551 (Matter 1.5.1, ClusterRevision 2)
+// Only the subscribed attributes are listed here (for parent-side getAttributeName() resolution).
+// The full attribute map lives in the child driver.
 @Field static final Map<Integer, String> CameraAvStreamManagementClusterAttributes = [
+    0x0013  : 'SoftRecordingPrivacyModeEnabled',
+    0x0014  : 'SoftLivestreamPrivacyModeEnabled',
+    0x0015  : 'HardPrivacyModeOn',
     0x0016  : 'NightVision',
     0x0019  : 'SpeakerMuted',
     0x001A  : 'SpeakerVolumeLevel',
@@ -854,6 +860,20 @@ String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, Str
     0x001E  : 'MicrophoneVolumeLevel',
     0x001F  : 'MicrophoneMaxLevel',
     0x0020  : 'MicrophoneMinLevel'
+]
+
+// Camera AV Settings User Level Management Cluster 0x0552 (Matter 1.5.1, ClusterRevision 1)
+// Mechanical PTZ. Only the subscribed attributes are listed here; the full map lives in the child driver.
+@Field static final Map<Integer, String> CameraAvSettingsUserLevelManagementClusterAttributes = [
+    0x0000  : 'MPTZPosition',
+    0x0001  : 'MaxPresets',
+    0x0002  : 'MPTZPresets',
+    0x0004  : 'ZoomMax',
+    0x0005  : 'TiltMin',
+    0x0006  : 'TiltMax',
+    0x0007  : 'PanMin',
+    0x0008  : 'PanMax',
+    0x0009  : 'MovementState'
 ]
 
 @Field static final Map<Integer, String> DoorLockClusterEvents = [
@@ -1160,6 +1180,9 @@ String getSemanticTagName(Integer mfgCode, Integer namespaceId, Integer tag, Str
     0x0302: 'Temperature Sensor',
     0x0307: 'Humidity Sensor',
     0x002C: 'Air Quality Sensor',
+
+    // Cameras (Matter 1.5)
+    0x0142: 'Camera',
 ]
 
 // Normalizes a single element like "0016", "0x0016", "16" to int 0x0016

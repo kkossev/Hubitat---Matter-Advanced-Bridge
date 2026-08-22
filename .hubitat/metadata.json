@@ -4,7 +4,7 @@
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Matter_Advanced_Bridge.groovy",
       "id": 2764,
       "codeType": "driver",
-      "version": 1813
+      "version": 1816
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Libraries/matterUtilitiesLib.groovy",
@@ -16,7 +16,7 @@
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Libraries/matterLib.groovy",
       "id": 145,
       "codeType": "library",
-      "version": 75
+      "version": 77
     },
     {
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Libraries/Matter_State_Machines.groovy",
@@ -112,7 +112,7 @@
       "filepath": "/c:/work/Hubitat---Matter-Advanced-Bridge/Components/Matter_Generic_Component_Camera_AV_Stream.groovy",
       "id": 5195,
       "codeType": "driver",
-      "version": 14
+      "version": 18
     }
   ]
 }

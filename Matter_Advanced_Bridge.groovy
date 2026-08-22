@@ -73,12 +73,14 @@
  * ver. 1.9.1  2026-08-13 kkossev + Claude Opus 5 - child devices now show the bridged device's SerialNumber and UniqueID in their Device Data (community request #440); the individual gangs of a
  *                                  multi-gang wall switch now inherit the real device name instead of all becoming a generic 'Switch' named after the bridge.
  * ver. 1.9.2  2026-08-17 kkossev   the 'Status' attribute is renamed to '_status_' (shown first in the Current States); stale 'status'/'Status' entries are removed automatically; setSpeed is refused on an endpoint with no fan; fixed the 'No signature of method: parse()' error logs in the child devices
+ * ver. 1.9.3  2026-08-19 kkossev + Claude Opus 5 - Matter 1.5.1 camera: added cluster 0x0552 (mechanical PTZ) discovery, subscription and routing; subscribed the camera privacy modes (0x0013..0x0015);
+ *                                  a camera endpoint is no longer created as a Motion Sensor when it also exposes vision OccupancySensing (0x0406)
  *
  */
 
 
-static String version() { '1.9.2' }
-static String timeStamp() { '2026/08/17 9:14 PM' }
+static String version() { '1.9.3' }
+static String timeStamp() { '2026/08/19 10:05 PM' }
 
 
 @Field static final Boolean _DEBUG = false                  // make it FALSE for production!
@@ -382,9 +384,14 @@ metadata {
     0x042A : [attributes: 'ConcentrationMeasurementClustersAttributes', parser: 'parseConcentrationMeasurement',
               subscriptions : [0x0000: [isSpammy: true]]
     ],
-    // Camera AV Stream Management Cluster (Matter 1.3+)
+    // Camera AV Stream Management Cluster (Matter 1.5.1)
+    // Every attribute below is filtered against the endpoint's 0551_FFFB AttributeList in
+    // fingerprintsToSubscriptionsList(), so cameras that lack the optional ones simply skip them.
     0x0551 : [attributes: 'CameraAvStreamManagementClusterAttributes', parser: 'parseCameraAvStreamManagement',
-              subscriptions : [0x0016: [:],   // NightVision
+              subscriptions : [0x0013: [:],   // SoftRecordingPrivacyModeEnabled
+                               0x0014: [:],   // SoftLivestreamPrivacyModeEnabled
+                               0x0015: [:],   // HardPrivacyModeOn
+                               0x0016: [:],   // NightVision
                                0x0019: [:],   // SpeakerMuted
                                0x001A: [:],   // SpeakerVolumeLevel
                                0x001B: [:],   // SpeakerMaxLevel
@@ -393,6 +400,18 @@ metadata {
                                0x001E: [:],   // MicrophoneVolumeLevel
                                0x001F: [:],   // MicrophoneMaxLevel
                                0x0020: [:]]   // MicrophoneMinLevel
+    ],
+    // Camera AV Settings User Level Management Cluster - mechanical PTZ (Matter 1.5.1)
+    0x0552 : [attributes: 'CameraAvSettingsUserLevelManagementClusterAttributes', parser: 'parseCameraAvSettingsUserLevelManagement',
+              subscriptions : [0x0000: [:],   // MPTZPosition  (pan/tilt/zoom)
+                               0x0001: [:],   // MaxPresets
+                               0x0002: [:],   // MPTZPresets
+                               0x0004: [:],   // ZoomMax
+                               0x0005: [:],   // TiltMin
+                               0x0006: [:],   // TiltMax
+                               0x0007: [:],   // PanMin
+                               0x0008: [:],   // PanMax
+                               0x0009: [:]]   // MovementState (Idle/Moving) - subscribing to this is what makes PTZ feedback work
     ],
 ]
 
@@ -425,7 +444,8 @@ metadata {
     0x0406 : 'parseOccupancySensing',
     0x040D : 'parseCarbonDioxideConcentrationMeasurement',
     0x042A : 'parseConcentrationMeasurement',
-    0x0551 : 'parseCameraAvStreamManagement'           // Camera AV Stream Management (Matter 1.3+)
+    0x0551 : 'parseCameraAvStreamManagement',          // Camera AV Stream Management (Matter 1.5.1)
+    0x0552 : 'parseCameraAvSettingsUserLevelManagement' // Camera AV Settings User Level Management - mechanical PTZ (Matter 1.5.1)
 ]
 
 // FanControl cluster (0x0202) attribute 0x0001 FanModeSequence -> the Hubitat 'supportedFanSpeeds' list.
@@ -2043,7 +2063,7 @@ void parseCarbonDioxideConcentrationMeasurement(final Map descMap) { // 040D
     ], descMap, ignoreDuplicates = false)
 }
 
-void parseCameraAvStreamManagement(final Map descMap) { // 0551 - Camera AV Stream Management (Matter 1.3+)
+void parseCameraAvStreamManagement(final Map descMap) { // 0551 - Camera AV Stream Management (Matter 1.5.1)
     if (descMap.cluster != '0551') { logWarn "parseCameraAvStreamManagement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
     if (routeInvokeToCustomChild(descMap)) { return }
     logDebug "parseCameraAvStreamManagement: routing cluster 0x0551 attr ${descMap.attrId} to child driver"
@@ -2051,6 +2071,17 @@ void parseCameraAvStreamManagement(final Map descMap) { // 0551 - Camera AV Stre
         name: 'handleInChildDriver',
         value: descMap,
         descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} Camera AV Stream Management cluster 0x0551 attr ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
+    ], descMap, ignoreDuplicates = false)
+}
+
+void parseCameraAvSettingsUserLevelManagement(final Map descMap) { // 0552 - mechanical PTZ (Matter 1.5.1)
+    if (descMap.cluster != '0552') { logWarn "parseCameraAvSettingsUserLevelManagement: unexpected cluster:${descMap.cluster} (attrId:${descMap.attrId})"; return }
+    if (routeInvokeToCustomChild(descMap)) { return }
+    logDebug "parseCameraAvSettingsUserLevelManagement: routing cluster 0x0552 attr ${descMap.attrId} to child driver"
+    sendHubitatEvent([
+        name: 'handleInChildDriver',
+        value: descMap,
+        descriptionText: "${getDeviceDisplayName(descMap?.endpoint)} Camera PTZ cluster 0x0552 attr ${descMap.attrId} <i>(to be re-processed in the child driver!)</i>"
     ], descMap, ignoreDuplicates = false)
 }
 
@@ -3789,6 +3820,11 @@ Map mapMatterCategory(Map d) {
     if ('0405' in d.ServerList) {   // HumidityMeasurement
         return [ driver: 'Generic Component Omni Sensor', product_name: 'Humidity Sensor' ]
     }
+    // Camera must be checked BEFORE OccupancySensing: a Matter 1.5 camera endpoint carries 0x0406 with
+    // the VIS (vision) feature bit alongside 0x0551, and would otherwise be created as a Motion Sensor.
+    if ('0551' in d.ServerList || '0552' in d.ServerList) {   // Camera AV Stream Management / PTZ (Matter 1.5.1)
+        return [ namespace: 'kkossev', driver: 'Matter Generic Component Camera AV Stream', product_name: 'Camera' ]
+    }
     if ('0406' in d.ServerList) {   // OccupancySensing (motion)
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Motion Sensor', product_name: 'Motion Sensor' ]
     }
@@ -3809,9 +3845,6 @@ Map mapMatterCategory(Map d) {
     }
     if ('002F' in d.ServerList) {   // Power Source
         return [ namespace: 'kkossev', driver: 'Matter Generic Component Battery', product_name: 'Battery' ]
-    }
-    if ('0551' in d.ServerList) {   // Camera AV Stream Management (Matter 1.3+)
-        return [ namespace: 'kkossev', driver: 'Matter Generic Component Camera AV Stream', product_name: 'Camera' ]
     }
 
     return [ driver: 'Generic Component Switch', product_name: 'Unknown' ]

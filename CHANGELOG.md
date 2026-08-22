@@ -26,6 +26,152 @@ and this project follows Semantic Versioning where applicable.
 >
 > No git tags or GitHub releases exist for this repository yet, so version headings are not linked.
 
+## [1.9.3] - 2026-08-19
+
+**Not yet released via HPM.** Parent driver `1.9.3`; *Camera AV Stream* component `1.1.0`,
+`matterLib` `1.4.5`. Matter 1.5.1 camera support, developed and hardware-verified against an
+**Aqara Camera Hub G350 on firmware 4.5.70** (`SpecificationVersion` 1.5.1.0).
+
+### Added
+
+- **Camera child: mechanical PTZ (cluster `0x0552` CameraAvSettingsUserLevelManagement).** The
+  parent now discovers, subscribes and routes `0x0552`, and the *Camera AV Stream* child exposes
+  `pan`, `tilt`, `zoom` and `movementState` attributes plus five commands — **Ptz Set Position**,
+  **Ptz Relative Move**, **Ptz Move To Preset**, **Ptz Save Preset** and **Ptz Remove Preset**,
+  mapping to `MPTZSetPosition` (`0x00`), `MPTZRelativeMove` (`0x01`), `MPTZMoveToPreset` (`0x02`),
+  `MPTZSavePreset` (`0x03`) and `MPTZRemovePreset` (`0x04`). Every field of the two move commands
+  is optional in the spec, so only the axes the caller actually supplies are sent — a single-axis
+  move never disturbs the other two. Values are clamped to the camera's own reported limits
+  (`PanMin`/`PanMax` `0x0007`/`0x0008`, `TiltMin`/`TiltMax` `0x0005`/`0x0006`, `ZoomMax` `0x0004`)
+  rather than to an assumed 0–100 range: the Aqara G350 reports pan ±170, tilt only −15…+24 and
+  zoom 0…81. `MovementState` (`0x0009`) is subscribed — without it there is no feedback that a move
+  finished. The position is re-read two seconds after the camera returns to `Idle`, but only if the
+  camera has not reported it in the previous four seconds: the G350 does send the final
+  `MPTZPosition` just before going `Idle`, so an unconditional read was a wasted round-trip on every
+  move, while a quieter camera still gets the readback. Digital PTZ (`DPTZ`, feature bit 0) is
+  deliberately not implemented: it needs an allocated video stream id, and the G350 does not
+  advertise it.
+
+  Verified on hardware: `ptzRelativeMove(panDelta: 5)` moved pan 40 → 45, and
+  `ptzSetPosition(pan: -10, tilt: 20, zoom: 2)` landed all three axes exactly, confirming the signed
+  little-endian encoding for negative values. Two G350 behaviours are worth knowing and are
+  documented for users — panning trips the camera's own vision occupancy (`motion active` fired
+  0.8 s after the command), and one pan-only *relative* move also shifted the reported tilt by two
+  units even though no tilt field was transmitted.
+
+  `MPTZSavePreset` is built differently from the other four commands: its `Name` argument is a
+  `char_string`, which `matter.cmdField()` cannot express, so the payload is hand-built as raw TLV
+  (`15` / `24 00 <id>` / `2C 01 <len> <utf8>` / `18`) and sent through the `invoke()` overload that
+  takes a TLV string — the same approach the Door Lock component driver uses for `SetCredential`.
+  Verified on hardware: `tlv=152400012C0105746573743218` saved preset 1 as `test2`, and the camera
+  reported it back as `MPTZPresets=1:test2`.
+
+  After a save, remove, or move, the affected attribute is re-read only if the camera has not
+  already reported it within the last four seconds — the G350 reports both `MPTZPresets` and the
+  final `MPTZPosition` on its own, so the unconditional readback was a duplicate every time.
+
+- **Camera child: moving to a preset that does not exist is refused up front.** The camera silently
+  ignored `MPTZMoveToPreset` for an unsaved preset, returning no InvokeResponse at all. The driver
+  now checks the ID against the camera's `MPTZPresets` table when it has read one. Preset IDs are
+  also 1-based per the Matter spec (`min="1"`), so `0` is correctly rejected.
+- **Camera child: privacy modes and a master on/off switch.** `SoftRecordingPrivacyModeEnabled`
+  (`0x0013`), `SoftLivestreamPrivacyModeEnabled` (`0x0014`) and the read-only `HardPrivacyModeOn`
+  (`0x0015`) are now subscribed, named and surfaced as `softRecordingPrivacy`,
+  `softLivestreamPrivacy` and `hardPrivacy`, with **Set Soft Recording Privacy** and **Set Soft
+  Livestream Privacy** commands. The child also gains the `Switch` capability as a master control,
+  mapped the way the SmartThings Matter camera driver maps it: `off()` enables both soft privacy
+  modes, `on()` clears them; `switch` reads `on` when neither is enabled. `HardPrivacyModeOn`
+  reflects the physical shutter and is never written.
+
+  **Verified on hardware 2026-08-19, and worth recording because it contradicts the usual reading
+  of the spec:** on the G350, a plain Matter soft-privacy write also closes the physical shutter.
+  `off()` wrote `0x0013` and `0x0014` at 21:57:33, and the camera reported `HardPrivacyModeOn=true`
+  1.25 s later, unprompted. The soft modes are normally described as a software-only stop that is
+  independent of the hard/physical state; Aqara has wired the two together on firmware 4.5.70. The
+  practical consequence for users is that **Off closes the shutter**, which is a stronger action
+  than the capability name suggests.
+- **Camera child: Night Vision is now settable.** `NightVision` (`0x0016`) is a writable
+  `TriStateAutoEnum`, not the read-only value the driver and the documentation previously described.
+  New **Set Night Vision** command with `Off`/`On`/`Auto`.
+- **Camera child: vision occupancy.** A Matter 1.5 camera endpoint carries `OccupancySensing`
+  (`0x0406`) with the `VIS` feature bit alongside `0x0551` — the G350 reports FeatureMap `0x0080`.
+  The child gained the `MotionSensor` capability and maps `Occupancy` bit 0 to `motion`.
+
+### Fixed
+
+- **Camera child: the `0x0551` FeatureMap was decoded with an early draft bit map, so it reported
+  the wrong feature names.** The released cluster (Matter 1.5.1, ClusterRevision 2) numbers the bits
+  `0 Audio, 1 Video, 2 Snapshot, 3 Privacy, 4 Speaker, 5 ImageControl, 6 Watermark, 7 OnScreenDisplay,
+  8 LocalStorage, 9 HighDynamicRange, 10 NightVision`. The driver had Video and Audio transposed,
+  reported Snapshot as `Speaker`, Speaker as `NightVision`, and invented a `TwoWayTalk` bit at 10 —
+  there is no such feature bit, two-way talk is advertised by the `TwoWayTalkSupport` attribute
+  (`0x0009`) alone. The practical effect on the Aqara G350 (FeatureMap `0x041F`) was that snapshot
+  support was hidden and a non-existent TwoWayTalk feature was announced; it now correctly reads
+  `[Audio, Video, Snapshot, Privacy, Speaker, NightVision]`.
+- **Camera child: `TwoWayTalkSupport` was decoded one value low.** The enum started at `HalfDuplex`
+  instead of `NotSupported`, so the G350's `FullDuplex` (raw `2`) was logged as `Unknown(2)`.
+  Corrected to `0 NotSupported, 1 HalfDuplex, 2 FullDuplex`.
+- **A camera endpoint is no longer created as a Motion Sensor.** `getDeviceDriver()` tested
+  `0x0406` before `0x0551`, and a Matter 1.5 camera endpoint carries both, so a freshly discovered
+  camera resolved to *Matter Generic Component Motion Sensor*. The camera test now runs first, and
+  also matches on `0x0552` for a camera that exposes PTZ on a separate endpoint. Existing installs
+  were unaffected only because their child devices predate the firmware that added `0x0406`.
+- **Camera child: capability structs are decoded instead of dumped raw.** `VideoSensorParams`,
+  `MinViewportResolution` (previously mis-named `MinViewport`), `MicrophoneCapabilities`,
+  `SpeakerCapabilities`, `SnapshotCapabilities`, `Viewport`, `SupportedStreamUsages` and
+  `StreamUsagePriorities` now render as readable text — `1920x1080 @120fps` rather than
+  `[3:120, 0:1920, 1:1080, 2:120]`. Both Matter struct wire shapes are handled (a flat map keyed by
+  field id, and a list of `[tag:, value:]` entries). The attribute-name map also gained the
+  remaining `0x0551` attributes (`HDRModeEnabled`, `NightVisionIllum`, `MicrophoneAGCEnabled`, the
+  image-control, local-recording and status-light attributes) so other cameras decode cleanly.
+- **Camera child: `Get Info` now covers both camera clusters.** Its progress bookkeeping is keyed by
+  `cluster_attribute` rather than by attribute id alone, so `0x0551` and `0x0552` no longer collide,
+  and attribute ids are normalised before comparison because the parent stores AttributeList
+  entries as variable-width hex (`00`, `13`, `4000`).
+
+### Documentation
+
+- **SwitchBot Hub Mini Matter Enabled moved from Unknown to Confirmed.** A community report
+  (forum user Radial, 2026-08-16) confirmed SwitchBot Bot and SwitchBot Curtain bridged
+  successfully through the Hub Mini Matter Enabled. `docs/user/bridges/switchbot.md` records both
+  devices, adds a setup note that each device must be explicitly added as a bridged device in the
+  SwitchBot app's Hub Mini Matter setup, and keeps the non-Matter original Hub Mini distinguished.
+  The compatibility matrix needed no change: the confirmed device type it tracks for this evidence
+  (Window Covering) already read Confirmed for SwitchBot.
+- **Aqara Soft Sensors documented, and HUB-65 closed with a mechanical explanation.** New "Aqara Soft
+  Sensors" section in `docs/user/drivers/signal.md`, alongside the Aqara Signals section it is
+  compared against. A Soft Sensor is a Hub M3-only feature (Aqara Home app 6.1.1+, hub firmware
+  4.5.40+) that fuses several devices into one room-level presence state computed on the hub;
+  confirmed against a live child device, whose fingerprint imports as a standard Occupancy Sensor
+  device type (`0107`) with `UniqueID` prefixed `virtual.` and needs no dedicated driver. Combined
+  with a Signal's Cloud Running Method, that explains reports of Signal endpoints being less
+  reliable than Soft Sensor endpoints — the difference is in Aqara's architecture, so no parsing or
+  classification change follows. `docs/user/bridges/aqara.md` gained a matching table row and
+  cross-reference; `docs/TODO.md` item 5.4 closed accordingly.
+- **Camera documentation corrected against the 1.1.0 driver.** Four fixes found by re-checking the
+  pages against the source. The *Camera AV Stream* component version read `1.0.2` in both
+  `drivers/camera-av-stream.md` and this file's 1.9.3 heading, predating the `1.1.0` line. Three
+  pages outside the camera page still described the clusters as **Matter 1.3** and knew nothing of
+  `0x0552` — `compatibility/device-types.md`, `compatibility/matrix.md` and `drivers/index.md` now
+  say Matter 1.5 and name both clusters. A new limitation records that **two-way talk is not
+  available** even where the camera supports it: the driver decodes `TwoWayTalkSupport` and **Get
+  Info** reports it (`FullDuplex` on the G350), but the audio rides the same WebRTC transport as the
+  video, so the attribute describes the camera rather than anything this driver can do. The camera
+  page's "See also" gained the compatibility matrix and Aqara bridge links the sibling pages carry.
+- **`drivers/signal.md` rewritten to the standard driver-doc structure.** It was the only driver page
+  written as a community-thread digest: verbatim forum blockquotes, `Source: post #NNN, <handle>,
+  <date>` lines after most paragraphs, contributors named in the body text, and a callout asking
+  readers to report a device that needs the driver. All of it is now plain technical statement, in
+  the same skeleton every other driver page uses (What it is for / Capabilities / Attributes /
+  Commands / Preferences / Known limitations). Per-report evidence with post citations stays on
+  `bridges/aqara.md`, which is the page that owns it, so nothing is lost. Two corrections came out of
+  re-checking the driver source: `currentPosition` is declared but never set by the driver (it was
+  described as reported by the device), and `numberOfButtons` is set when the driver is saved rather
+  than being a fixed constant. Section anchors changed — `#aqara-signals`, `#cloud-dependency`,
+  `#aqara-soft-sensors` — and the inbound links in `bridges/aqara.md` and `docs/TODO.md` were
+  updated to match.
+
+
 ## [1.9.2] - 2026-08-17
 
 **Released via HPM 2026-08-17.** Parent driver `1.9.2`; component drivers *Air Purifier* `1.2.5`,
