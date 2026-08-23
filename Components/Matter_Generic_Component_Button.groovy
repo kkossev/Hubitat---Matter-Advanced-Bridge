@@ -31,7 +31,7 @@ import groovy.transform.Field
 import groovy.json.JsonSlurper
 
 @Field static final String matterComponentButtonVersion = '1.1.2'
-@Field static final String matterComponentButtonStamp   = '2026/08/17 8:55 PM'
+@Field static final String matterComponentButtonStamp   = '2026/08/22 9:34 PM'
 
 @Field static final JsonSlurper jsonParser = new JsonSlurper()
 
@@ -503,7 +503,7 @@ void clearInfoMode() {
 }
 
 void refresh() {
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }
 
 // Capability command: PushableButton

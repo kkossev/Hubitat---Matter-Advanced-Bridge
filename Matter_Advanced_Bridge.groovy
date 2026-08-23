@@ -75,12 +75,13 @@
  * ver. 1.9.2  2026-08-17 kkossev   the 'Status' attribute is renamed to '_status_' (shown first in the Current States); stale 'status'/'Status' entries are removed automatically; setSpeed is refused on an endpoint with no fan; fixed the 'No signature of method: parse()' error logs in the child devices
  * ver. 1.9.3  2026-08-19 kkossev + Claude Opus 5 - Matter 1.5.1 camera: added cluster 0x0552 (mechanical PTZ) discovery, subscription and routing; subscribed the camera privacy modes (0x0013..0x0015);
  *                                  a camera endpoint is no longer created as a Motion Sensor when it also exposes vision OccupancySensing (0x0406)
+ * ver. 1.9.4  2026-08-23 kkossev + Claude Opus 5 - no functional changes: platform 2.5.1.164 briefly refused to compile the driver and the Door Lock child, 2.5.1.167 fixed the platform and the workarounds were reverted; the Door Lock event mask decoders are passed as closures
  *
  */
 
 
-static String version() { '1.9.3' }
-static String timeStamp() { '2026/08/19 10:05 PM' }
+static String version() { '1.9.4' }
+static String timeStamp() { '2026/08/23 8:11 AM' }
 
 
 @Field static final Boolean _DEBUG = false                  // make it FALSE for production!
@@ -575,11 +576,11 @@ private void processParsedDescription(final Map descMap) {
 
     if (parserFunc) {
         if (_DEBUG) {
-            this."${parserFunc}"(descMap)
+            "${parserFunc}"(descMap)
         }
         else {
             try {
-                this."${parserFunc}"(descMap)
+                "${parserFunc}"(descMap)
             } catch (e) {
                 logWarn "parserFunc: exception ${e} <br> Failed to parse descMap: ${descMap}"
             }

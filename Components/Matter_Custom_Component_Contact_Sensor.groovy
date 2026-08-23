@@ -22,7 +22,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentContactSensorVersion = '1.0.2'
-@Field static final String matterComponentContactSensorStamp   = '2026/08/17 8:55 PM'
+@Field static final String matterComponentContactSensorStamp   = '2026/08/22 9:34 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Contact Sensor', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom_Component_Contact_Sensor.groovy') {
@@ -124,7 +124,7 @@ private void logsOff() {
 }
 
 void refresh() {
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }
 
 #include kkossev.matterCommonLib

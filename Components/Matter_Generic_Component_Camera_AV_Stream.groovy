@@ -33,7 +33,7 @@ import hubitat.helper.HexUtils
 import hubitat.matter.DataType
 
 @Field static final String CAMERA_DRIVER_VERSION = '1.1.0'
-@Field static final String CAMERA_DRIVER_STAMP   = '2026/08/19 10:05 PM'
+@Field static final String CAMERA_DRIVER_STAMP   = '2026/08/22 9:34 PM'
 
 // Matter cluster ids handled by this child driver
 @Field static final String CLUSTER_AV_STREAM = '0551'   // CameraAvStreamManagement
@@ -1111,7 +1111,7 @@ void testCameraRead(String attrHexStr) {
 // --------------------------------------------------------------------------------------------
 void refresh() {
     logInfo 'refresh(): requesting subscribed camera attributes from parent...'
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }
 
 // --------------------------------------------------------------------------------------------

@@ -22,7 +22,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentSwitchBotButtonVersion = '1.0.2'
-@Field static final String matterComponentSwitchBotButtonStamp   = '2026/02/21 11:29 AM'
+@Field static final String matterComponentSwitchBotButtonStamp   = '2026/08/22 9:34 PM'
 
 metadata {
     definition(name: 'Matter Generic Component SwitchBot Button', namespace: 'kkossev', author: 'Yves Mercier', description: 'DEPRECATED: use Matter Generic Component Button instead', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/main/Components/Matter_Generic_Component_SwitchBot_Button.groovy') {
@@ -122,5 +122,5 @@ private void logsOff() {
 }
 
 void refresh() {
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }

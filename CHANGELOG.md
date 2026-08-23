@@ -26,6 +26,48 @@ and this project follows Semantic Versioning where applicable.
 >
 > No git tags or GitHub releases exist for this repository yet, so version headings are not linked.
 
+## [1.9.4] - 2026-08-23
+
+**Not yet released via HPM.** Parent driver `1.9.4`; *Door Lock* component `1.5.1`.
+**No functional change to either.** This version records a short platform episode and the cosmetic
+edits left behind by it.
+
+### Fixed
+
+- **Door Lock child `1.5.1`: the six event mask decoders are passed as closures instead of method pointers.**
+  `handleLockMessage()` handed `processEventMaskAttribute()` six `this.&decode...EventMask` references
+  (RemoteOperation, ManualOperation, RFIDOperation, KeypadProgramming, RemoteProgramming,
+  RFIDProgramming, lines 574-596); each is now `{ Integer m -> decodeRemoteOperationEventMask(m) }` and
+  the helper's `Closure decoder` parameter takes them unchanged. Equivalent behaviour, kept because it
+  reads no worse than the method pointers did.
+- **Cosmetic: `parent?.componentRefresh(this.device)` is now `componentRefresh(device)`** in eleven
+  component drivers, and the cluster parser dispatch in `parse()` dropped its redundant `this.`
+  receiver. Identical behaviour in every case.
+
+### Platform note
+
+Hub platform **2.5.1.164** (2026-08-22) made `SecureASTCustomizerHub` reject any method call whose name
+is not a compile time constant, and all method pointers:
+
+```
+Expression [MethodCallExpression] is not allowed: this.$parserFunc(descMap) at line number 578
+MethodPointerExpressions are not allowed: this.&decodeRemoteOperationEventMask at line number 574
+```
+
+It was enforced when a driver class is *loaded*, not only when code is saved, so installed and
+untouched drivers threw on every `parse()` and scheduled method. The parse dispatch
+(`"${parserFunc}"(descMap)`, present since 0.4.3) and the `UtilitiesMap` dispatch in `matterUtilitiesLib`
+were temporarily rewritten as explicit switch statements to get the driver running again.
+**2.5.1.167 fixed the platform, and both switches were reverted** - the driver and the library are back
+to dynamic dispatch and `matterUtilitiesLib` is byte for byte unchanged from 1.9.3.
+
+Two things are worth remembering if this returns. The error text is misleading: Groovy's
+`MethodCallExpression.getText()` renders *every* call with a `this.` receiver, so a message naming
+`this.$func(x)` says nothing about whether the code wrote `this`, and removing it changes nothing.
+And the `"$func"(args)` idiom is not rare - it appears in more than fifty driver files across this
+author's repositories, mostly as inlined copies inside `*_lib_included.groovy` builds, so fixing the
+shared libraries alone would not have been enough.
+
 ## [1.9.3] - 2026-08-19
 
 **Not yet released via HPM.** Parent driver `1.9.3`; *Camera AV Stream* component `1.1.0`,

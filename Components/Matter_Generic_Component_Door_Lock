@@ -28,6 +28,7 @@
   *                                  DuplicateDoorLockEventFilter; added the needed data: Map required by the LCM; added overwriteCodes option; getInfo improvements; 
   *                                  added operation source 'Aliro' (UWB/Apple Watch); added auto discovery for new lock codes reported by the lock;
   * ver. 1.5.0  2026-07-25 kkossev   callbackType:Invoke handling; bugs fixes;
+  * ver. 1.5.1  2026-08-23 kkossev + Claude Opus 5 - the event mask decoders are passed as closures instead of method pointers;
   * 
   *                                  TODO: 
   *                                  TODO: 
@@ -49,8 +50,8 @@ import hubitat.matter.DataType
 import groovy.json.JsonOutput
 
 
-@Field static final String matterComponentLockVersion = '1.5.0'
-@Field static final String matterComponentLockStamp   = '2026/07/27 7:42 PM'
+@Field static final String matterComponentLockVersion = '1.5.1'
+@Field static final String matterComponentLockStamp   = '2026/08/23 9:02 AM'
 
 @Field static final Boolean _DEBUG_LOCK = false             // MAKE IT false for PRODUCTION !
 @Field static final Boolean _DEFAULT_LOG_ENABLE = false     // disable on production
@@ -571,29 +572,29 @@ void processDoorLockAttributeReport(Map descMap) {
             message = "${prefix}ExpiringUserTimeout: ${expiringUserTimeout} minutes"
             break
         case '0042': // RemoteOperationEventMask
-            message = processEventMaskAttribute('0042', 'RemoteOperationEventMask', descMap, this.&decodeRemoteOperationEventMask)
+            message = processEventMaskAttribute('0042', 'RemoteOperationEventMask', descMap, { Integer m -> decodeRemoteOperationEventMask(m) })
             useDebugLog = true
             break
         case '0043': // ManualOperationEventMask
-            message = processEventMaskAttribute('0043', 'ManualOperationEventMask', descMap, this.&decodeManualOperationEventMask)
+            message = processEventMaskAttribute('0043', 'ManualOperationEventMask', descMap, { Integer m -> decodeManualOperationEventMask(m) })
             useDebugLog = true
             break
         case '0044': // RFIDOperationEventMask
-            message = processEventMaskAttribute('0044', 'RFIDOperationEventMask', descMap, this.&decodeRFIDOperationEventMask)
+            message = processEventMaskAttribute('0044', 'RFIDOperationEventMask', descMap, { Integer m -> decodeRFIDOperationEventMask(m) })
             useDebugLog = true
             break
         case '0045': // KeypadProgrammingEventMask
-            message = processEventMaskAttribute('0045', 'KeypadProgrammingEventMask', descMap, this.&decodeKeypadProgrammingEventMask)
+            message = processEventMaskAttribute('0045', 'KeypadProgrammingEventMask', descMap, { Integer m -> decodeKeypadProgrammingEventMask(m) })
             // NOTE: Nuki disables PINCleared (0x08) and PINChanged (0x10) events
             // This means PIN deletion/modification events won't be received automatically
             useDebugLog = true
             break
         case '0046': // RemoteProgrammingEventMask
-            message = processEventMaskAttribute('0046', 'RemoteProgrammingEventMask', descMap, this.&decodeRemoteProgrammingEventMask)
+            message = processEventMaskAttribute('0046', 'RemoteProgrammingEventMask', descMap, { Integer m -> decodeRemoteProgrammingEventMask(m) })
             useDebugLog = true
             break
         case '0047': // RFIDProgrammingEventMask
-            message = processEventMaskAttribute('0047', 'RFIDProgrammingEventMask', descMap, this.&decodeRFIDProgrammingEventMask)
+            message = processEventMaskAttribute('0047', 'RFIDProgrammingEventMask', descMap, { Integer m -> decodeRFIDProgrammingEventMask(m) })
             useDebugLog = true
             break
         case '0080': // Nuki non-standard attribute (spec=0x40 AlarmMask)
@@ -2430,7 +2431,7 @@ private void logsOff() {
 void refresh() {
     logInfo "refreshing device state and attributes..."
     clearOldStateVariables()
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }
 
 

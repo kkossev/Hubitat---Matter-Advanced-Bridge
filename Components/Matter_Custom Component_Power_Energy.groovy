@@ -25,7 +25,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentPowerEnergyVersion = '1.1.5'
-@Field static final String matterComponentPowerEnergyStamp   = '2026/08/17 8:55 PM'
+@Field static final String matterComponentPowerEnergyStamp   = '2026/08/22 9:34 PM'
 
 metadata {
     definition(name: 'Matter Custom Component Power Energy', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Custom%20Component_Power_Energy.groovy') {
@@ -153,7 +153,7 @@ private void logsOff() {
 }
 
 void refresh() {
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }
 
 

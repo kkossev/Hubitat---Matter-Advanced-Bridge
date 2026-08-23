@@ -24,7 +24,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentMotionVersion = '1.1.3'
-@Field static final String matterComponentMotionStamp   = '2026/08/17 8:55 PM'
+@Field static final String matterComponentMotionStamp   = '2026/08/22 9:34 PM'
 
 metadata {
     definition(name: 'Matter Generic Component Motion Sensor', namespace: 'kkossev', author: 'Krassimir Kossev', importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat---Matter-Advanced-Bridge/development/Components/Matter_Generic_Component_Motion_Sensor.groovy') {
@@ -156,7 +156,7 @@ private void logsOff() {
 }
 
 void refresh() {
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }
 
 #include kkossev.matterCommonLib

@@ -796,6 +796,25 @@ since driver-call overhead remains either way.
 - Scope note: only `0x0090` power attributes carry `isSpammy`; `0x0091` cumulative energy does not
   (almost certainly correct — cumulative energy is not a 1 Hz reporter).
 
+## 10. Camera (clusters 0x0551 / 0x0552)
+
+### 10.1 `[ ]` Adopt the `ImageCapture` capability once snapshot capture is implemented
+From a 2026-08-22 review of Hubitat's standard camera capabilities. `ImageCapture` (attribute
+`image`, command `take()`) is the one worth adopting: it has a real dashboard image tile behind it,
+and neither name collides with the child's current set.
+- **Blocked on** the snapshot TODO already in the child driver header — `CaptureSnapshot` (`0x0551`
+  command `0x000C`) + `CaptureSnapshotResponse` (`0x000D`). `cameraSnapshotDiagnostics()` only
+  reports whether the camera claims support; it does not fetch an image. Declaring `ImageCapture`
+  before that lands would ship a `take()` that does nothing.
+- Pattern to follow: tomwpublic's UniFi Protect integration — `take()` writes the image into
+  Hubitat's File Manager (platform 2.3.4.132+), with a companion app to display it.
+- **Rejected, do not revisit without new evidence:** `VideoCamera` (its `mute` attribute and
+  `mute()`/`unmute()` duplicate `AudioVolume`'s, its `on()`/`off()` duplicate the `Switch` privacy
+  control, and `camera`/`flip()` have no Matter equivalent) and `VideoCapture` (clips need Push AV
+  `0x0555`, already ruled out in `docs/user/drivers/camera-av-stream.md`). Hubitat staff describe
+  both as SmartThings compatibility carryovers that nothing consumes —
+  [thread 15960](https://community.hubitat.com/t/videocapture-and-videocamera-capabilities/15960).
+
 ## Already covered elsewhere (do not duplicate)
 
 - Aqara G350 camera control (speaker mute / volume) — demoed by kkossev in

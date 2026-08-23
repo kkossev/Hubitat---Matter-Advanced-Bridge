@@ -29,7 +29,7 @@
 import groovy.transform.Field
 
 @Field static final String matterComponentAirPurifierVersion = '1.2.5'
-@Field static final String matterComponentAirPurifierStamp   = '2026/08/16 9:58 PM'
+@Field static final String matterComponentAirPurifierStamp   = '2026/08/22 9:34 PM'
 
 @Field static final Boolean _DEBUG_AIR_PURIFIER = false    // make it FALSE for production!
 @Field static final Integer RESOURCE_MONITORING_COALESCE_MS = 250
@@ -345,7 +345,7 @@ private void logsOff() {
 void refresh() {
     checkDriverVersion()
     updateFilterDaysRemaining()
-    parent?.componentRefresh(this.device)
+    parent?.componentRefresh(device)
 }
 
 String driverVersionAndTimeStamp() {
